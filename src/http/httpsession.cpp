@@ -1713,7 +1713,9 @@ int HttpSession::processNewReqInit()
                 pVHost->getThrottleLimits());
 
         const char *reason = NULL;
-        if (isUseRecaptcha())
+        if (isUseRecaptcha()
+            || (m_request.isCaptchaVerify() && m_request.getMethod() == HttpMethod::HTTP_POST
+                && isRecaptchaEnabled()))
         {
             ret = rewriteToRecaptcha(2, HSPS_HKPT_HTTP_BEGIN, reason);
             if (ret != 0)
@@ -2072,6 +2074,8 @@ int HttpSession::processVHostRewrite()
             setProcessState(HSPS_DROP_CONNECTION);
             return 0;
         }
+        if (ret == URL_RECAP_SUSPEND)
+            return LSI_SUSPEND;
         if (ret == URL_MODIFIED)      //rewrite happens
         {
             if (m_request.postRewriteProcess(
@@ -2436,6 +2440,8 @@ int HttpSession::processContextRewrite()
         setProcessState(HSPS_DROP_CONNECTION);
         return 0;
     }
+    if (ret == URL_RECAP_SUSPEND)
+        return LSI_SUSPEND;
     if (ret == URL_MODIFIED)
     {
         ret = 0;

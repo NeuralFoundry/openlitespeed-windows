@@ -76,7 +76,7 @@ enum
 #define EXEC_EXT_CMD            (1<<27)
 #define MP4_SEEK                (1<<28)
 #define EXEC_CMD_PARSE_RES      (1<<29)
-#define GLOBAL_VH_CTX           (1<<29)
+#define GLOBAL_VH_CTX           (1<<30)
 
 #define UA_UNKNOWN              0
 #define UA_SAFARI               1

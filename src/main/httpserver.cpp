@@ -4893,8 +4893,19 @@ int HttpServerImpl::configLsrecaptchaContexts()
     pStaticContext->setHeaderOps(ConfigCtx::getCurConfigCtx()->getLogId(),
                                  headers, sizeof(headers) - 1);
 
+#ifdef _WIN32
+    if (ConfigCtx::getCurConfigCtx()->getAbsoluteFile(achPath, "$SERVER_ROOT/bin/lsrecaptcha.exe") != 0
+        || access(achPath, F_OK) != 0)
+    {
+        LS_NOTICE(ConfigCtx::getCurConfigCtx(), "Recaptcha verifier %s is missing.", achPath);
+        return -1;
+    }
+    HttpContext *pVerifierCtx = pGlobalVHost->addContext(Recaptcha::getDynUrl()->c_str(),
+            HandlerType::HT_CGI, achPath, NULL, 1);
+#else
     HttpContext *pVerifierCtx = pGlobalVHost->addContext(Recaptcha::getDynUrl()->c_str(),
             HandlerType::HT_LSAPI, NULL, "lsrecaptcha", 1);
+#endif
     if (NULL == pVerifierCtx)
     {
         LS_NOTICE(ConfigCtx::getCurConfigCtx(), "Failed to add static lsrecaptcha context.");
@@ -4918,9 +4929,11 @@ int HttpServerImpl::initLsrecaptcha(const XmlNode *pNode)
     if (HttpServerConfig::getInstance().getGlobalVHost()->configRecaptcha(pNode))
         return -1;
 
+#ifndef _WIN32
     int ret = configLsrecaptchaWorker( pNode );
     if (ret)
         return ret;
+#endif
 
     return configLsrecaptchaContexts();
 }

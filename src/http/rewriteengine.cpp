@@ -1458,7 +1458,8 @@ int RewriteEngine::processRewrite(const RewriteRule *pRule,
     char *pBuf;
     int flag = pRule->getFlag();
     int eef_flags = 0;
-    expandEnv(pRule, pSession, cacheCtlStr, &eef_flags);
+    if (expandEnv(pRule, pSession, cacheCtlStr, &eef_flags) == URL_RECAP_SUSPEND)
+        return URL_RECAP_SUSPEND;
     m_rewritten |= 1;
     if (eef_flags & EEF_CACHE_KEY_MOD)
         // This environment variable is only used by the callback set in the
@@ -1675,6 +1676,8 @@ int RewriteEngine::processRuleSet(const RewriteRuleList *pRuleList,
         ret = processRule(pRule, pSession, cacheCtlStr);
         if (pSession->isDropConnection())
             return SC_403;
+        if (ret == URL_RECAP_SUSPEND)
+            return URL_RECAP_SUSPEND;
         if (ret)
         {
             pRule = getNextRule(pRule, pContext, pRootContext);

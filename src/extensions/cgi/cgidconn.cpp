@@ -379,6 +379,8 @@ int CgidConn::buildReqHeader()
     int ret;
     uid_t uid;
     gid_t gid;
+    if (!realPath)
+        return LS_FAIL;
     pReal = realPath->c_str();
     ret = pReq->getUGidChroot(&uid, &gid, &psChroot);
     if (ret)

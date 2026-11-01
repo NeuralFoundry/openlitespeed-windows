@@ -4906,6 +4906,9 @@ int HttpReq::rewriteToRecaptcha(const char *reason)
         LS_DBG_M(getLogSession(), "[RECAPTCHA] Already a captcha request.");
         m_pContext = Recaptcha::getDynCtx();
         m_pHttpHandler = m_pContext->getHandler();
+#ifdef _WIN32
+        setRealPath(m_pContext->getLocation(), m_pContext->getLocationLen());
+#endif
         return 0;
     }
 

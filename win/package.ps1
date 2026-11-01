@@ -9,12 +9,14 @@ if (-not $Out) { $Out = Join-Path $Top "build\OpenLiteSpeed-$Version-win64" }
 
 if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
 foreach ($d in 'bin', 'conf\vhosts\Example', 'conf\cert', 'admin\conf', 'admin\tmp', 'admin\logs',
-               'Example\logs', 'logs', 'tmp', 'share') {
+               'Example\logs', 'logs', 'tmp', 'share', 'lsrecaptcha') {
     New-Item -ItemType Directory -Force (Join-Path $Out $d) | Out-Null
 }
 
 Copy-Item (Join-Path $Top 'build\openlitespeed.exe') (Join-Path $Out 'bin')
 Copy-Item (Join-Path $Top 'build\olstray.exe') (Join-Path $Out 'bin')
+Copy-Item (Join-Path $Top 'build\lsrecaptcha.exe') (Join-Path $Out 'bin')
+Copy-Item (Join-Path $Dist 'lsrecaptcha\_recaptcha.shtml') (Join-Path $Out 'lsrecaptcha')
 Get-ChildItem (Join-Path $Top 'build') -Directory -Filter 'lsphp-*' | ForEach-Object {
     $exe = Join-Path $_.FullName 'lsphp.exe'
     if (Test-Path $exe) {

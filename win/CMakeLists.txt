@@ -136,6 +136,8 @@ target_link_libraries(openlitespeed
 add_executable(olstray WIN32 "${OLS_TOP}/win/tray/olstray.c" "${OLS_TOP}/win/tray/olstray.rc")
 target_include_directories(olstray PRIVATE "${OLS_TOP}/win/common")
 target_link_libraries(olstray user32 gdi32 shell32 advapi32 ole32 version comdlg32)
+add_executable(lsrecaptcha "${OLS_TOP}/win/recaptcha/lsrecaptcha.c")
+target_link_libraries(lsrecaptcha winhttp)
 add_executable(setup WIN32 "${OLS_TOP}/win/setup/setup.c" "${OLS_TOP}/win/setup/setup.rc")
 target_include_directories(setup PRIVATE "${OLS_TOP}/win/common")
 target_link_libraries(setup user32 gdi32 shell32 ole32 advapi32 comctl32 cabinet uuid ws2_32 version)
