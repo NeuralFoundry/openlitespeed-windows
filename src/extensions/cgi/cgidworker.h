@@ -67,6 +67,9 @@ public:
     {   return s_iCgidWorkerPid;     }
 
     static const char *getCgidSecret();
+#ifdef _WIN32
+    static void winInit(const char *pServerRoot, int isMain);
+#endif
     LS_NO_COPY_ASSIGN(CgidWorker);
 };
 

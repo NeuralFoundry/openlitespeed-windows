@@ -893,7 +893,7 @@ struct Conf
     int rewriteOn = -1;
     std::map<S, S> errors;
     SV notes;
-    bool noScript = false, sslRequire = false;
+    bool noScript = false, sslRequire = false, cgiAll = false;
 
     bool access_rules() const { return reqSet || compatSet || satisfy >= 0 || hasAuthType || hasUserFile; }
 };
@@ -1492,6 +1492,17 @@ struct Importer
                 c.authMerge = ieq(a[0], "and") ? 1 : ieq(a[0], "or") ? 2 : 0;
             else if (key == "sslrequiressl")
                 c.sslRequire = true;
+            else if (key == "sethandler" && !a.empty() && ieq(a[0], "cgi-script"))
+            {
+                c.cgiAll = true;
+                if (n->key == "files" || n->key == "filesmatch")
+                {
+                    c.reqSet = true;
+                    c.req = Access();
+                    c.req.denied = true;
+                    add_unique(c.accNotes, k->where() + "  " + k->raw + "  CGI by file name is not converted, access denied");
+                }
+            }
             else if (key == "options")
                 c.options.push_back(a);
             else if (key == "allowoverride" && dirLevel && !a.empty())
@@ -1614,9 +1625,12 @@ struct Importer
             d.notes.push_back(n);
         d.noScript = d.noScript || s.noScript;
         d.sslRequire = d.sslRequire || s.sslRequire;
+        d.cgiAll = d.cgiAll || s.cgiAll;
     }
 
-    static int indexes(const Conf &c)
+    static int indexes(const Conf &c) { return option(c, "indexes"); }
+
+    static int option(const Conf &c, const S &name)
     {
         int on = 0;
         for (auto &list : c.options)
@@ -1629,15 +1643,15 @@ struct Importer
             {
                 on = 0;
                 for (auto &t : list)
-                    if (ieq(t, "indexes") || ieq(t, "all"))
+                    if (ieq(t, name) || ieq(t, "all"))
                         on = 1;
             }
             else
                 for (auto &t : list)
                 {
-                    if (ieq(t, "+indexes"))
+                    if (ieq(t, "+" + name))
                         on = 1;
-                    else if (ieq(t, "-indexes"))
+                    else if (ieq(t, "-" + name))
                         on = 0;
                 }
         }
@@ -2439,6 +2453,24 @@ struct Importer
         }
     }
 
+    static void cgi_suffixes(const Node *scope, SV &exts)
+    {
+        for (auto &k : scope->kids)
+        {
+            if (k->key == "addhandler" && k->args.size() >= 2 && ieq(k->args[0], "cgi-script"))
+                for (size_t i = 1; i < k->args.size(); ++i)
+                {
+                    S e = lower(k->args[i]);
+                    while (starts(e, "."))
+                        e.erase(0, 1);
+                    if (!e.empty())
+                        add_unique(exts, e);
+                }
+            if (k->block && k->key != "virtualhost")
+                cgi_suffixes(k.get(), exts);
+        }
+    }
+
     void detect_apache_php()
     {
         std::vector<const Node *> stack{&top};
@@ -2620,8 +2652,7 @@ struct Importer
                 }
                 roots.push_back({u, d, k->key == "scriptalias", SV()});
                 if (k->key == "scriptalias")
-                    add_unique(site.warnings, "CGI programs in " + u + " are not run by OpenLiteSpeed for Windows; "
-                                              "requests there fail and the scripts are never served as text");
+                    add_unique(site.converted, "CGI programs in " + u);
             }
         };
         add_aliases(prim->n);
@@ -2647,7 +2678,8 @@ struct Importer
         std::map<S, SV> realms;
         std::vector<Ctx> prefix;
         std::vector<std::pair<long long, Ctx>> ordered;
-        std::vector<std::pair<S, S>> noScriptDirs;
+        std::vector<std::pair<S, S>> noScriptDirs, cgiAllDirs;
+        std::vector<std::pair<S, int>> execDirs;
         SV sslUris;
         std::map<S, std::vector<std::pair<S, S>>> restrictedDirs;
         Conf rootConf = effective(st, site.docroot, "/", true);
@@ -2655,7 +2687,9 @@ struct Importer
         Access rootAcc = final_access(rootConf, n0, w0);
         int rootIdx = indexes(rootConf);
         SV rootIndex = rootConf.indexSet ? rootConf.index : SV{"index.html"};
-        bool autoUsed = rootIdx == 1, anyOverride = rootConf.override_ == 1;
+        bool autoUsed = rootIdx == 1, anyOverride = rootConf.override_ == 1, cgiAny = false;
+        for (auto *s : st.secs)
+            cgiAny = cgiAny || s->conf.cgiAll;
 
         auto report = [&](const S &where, const SV &notes, const SV &warns) {
             for (auto &n : notes)
@@ -2686,10 +2720,10 @@ struct Importer
             for (auto &h : st.ht)
                 if (h->kind == Sec::HT && under(h->path, r.dir))
                     dirs[lower(h->path)] = h->path;
-            if (r.cgi)
-                for (auto &d : r.dirs)
-                    if (!ends(lower(d), "/.git") && !ends(lower(d), "/node_modules") && !ends(lower(d), "/.svn"))
-                        dirs[lower(d)] = d;
+            for (auto &d : r.dirs)
+                if (!ends(lower(d), "/.git") && !ends(lower(d), "/node_modules") && !ends(lower(d), "/.svn")
+                    && (r.cgi || (cgiAny && !dirs.count(lower(d)) && effective(st, d, uri_of(r, d), true).cgiAll)))
+                    dirs[lower(d)] = d;
             for (auto *s : st.secs)
                 if (s->kind == Sec::LOC && s->path != "/" && starts(s->path + "/", r.uri))
                 {
@@ -2711,6 +2745,17 @@ struct Importer
                     anyOverride = true;
                 if (c.noScript && (isRoot || !pc.noScript))
                     noScriptDirs.push_back({u, dir});
+                int exec = option(c, "execcgi"), pexec = isRoot ? 0 : option(pc, "execcgi");
+                bool runCgi = r.cgi || (c.cgiAll && exec);
+                if (!r.cgi)
+                {
+                    if (isRoot || exec != pexec)
+                        execDirs.push_back({u, exec});
+                    if (c.cgiAll && !exec && (isRoot || !pc.cgiAll || pexec))
+                        cgiAllDirs.push_back({u, dir});
+                    if (runCgi && (isRoot || !pc.cgiAll || !pexec))
+                        add_unique(site.converted, "CGI programs in " + u);
+                }
                 if (c.sslRequire && (isRoot || !pc.sslRequire))
                     sslUris.push_back(u);
                 SV notes, warns, pn, pw;
@@ -2719,7 +2764,7 @@ struct Importer
                 Ctx x;
                 x.uri = u;
                 x.location = dir + "/";
-                x.cgi = r.cgi;
+                x.cgi = runCgi;
                 x.acc = a;
                 if (!a.required.empty() && !a.denied)
                 {
@@ -2736,7 +2781,7 @@ struct Importer
                 bool differs;
                 if (isRoot && r.uri == "/")
                     differs = !a.open() || !c.headers.empty() || !c.php.empty() || !x.rewrite.empty();
-                else if (isRoot || r.cgi)
+                else if (isRoot || runCgi)
                     differs = true;
                 else
                     differs = !(pa == a) || realm_key(c, a) != realm_key(pc, pa) || indexes(pc) != x.autoIndex
@@ -2968,6 +3013,56 @@ struct Importer
             ordered.push_back({400000000000LL + (long long)comps(ns.second).size(), x});
             add_unique(site.converted, "PHP turned off in " + ns.first + " (PHP files there are blocked)");
         }
+        SV cgiExts;
+        cgi_suffixes(&top, cgiExts);
+        cgi_suffixes(prim->n, cgiExts);
+        cgiExts.erase(std::remove_if(cgiExts.begin(), cgiExts.end(),
+                                     [&](const S &e) {
+                                         return e == "php" || std::find(exts.begin(), exts.end(), e) != exts.end();
+                                     }),
+                      cgiExts.end());
+        bool cgiRun = false;
+        if (!cgiExts.empty())
+        {
+            S cgiExt, cgiList;
+            for (auto &e : cgiExts)
+            {
+                cgiExt += (cgiExt.empty() ? "" : "|") + re_escape(e);
+                cgiList += (cgiList.empty() ? "." : ", .") + e;
+            }
+            for (auto &d : execDirs)
+            {
+                if (d.second)
+                {
+                    cgiRun = true;
+                    continue;
+                }
+                S excl;
+                for (auto &o : execDirs)
+                    if (o.second && o.first.size() > d.first.size() && starts(o.first, d.first))
+                        excl += (excl.empty() ? "" : "|") + re_escape(o.first.substr(d.first.size()));
+                Ctx x;
+                x.regex = true;
+                x.acc.denied = true;
+                x.uri = "exp:(?i)^" + re_escape(d.first) + (d.first == "/" ? aliasExcl : S())
+                      + (excl.empty() ? S() : "(?!(?:" + excl + "))") + "(?=(?:.*/)?[^/]*\\.(?:" + cgiExt + ")(?:/|$))";
+                x.why = "noscript";
+                ordered.push_back({400000000000LL + (long long)comps(d.first).size(), x});
+            }
+            if (cgiRun)
+                add_unique(site.converted, "CGI programs (" + cgiList + ") in folders with Options ExecCGI");
+            else
+                add_unique(site.converted, "CGI files (" + cgiList + ") blocked, Options ExecCGI is off");
+        }
+        for (auto &d : cgiAllDirs)
+        {
+            Ctx x;
+            x.regex = true;
+            x.acc.denied = true;
+            x.uri = "exp:(?i)^" + re_escape(d.first) + (d.first == "/" ? aliasExcl : S());
+            x.why = "noscript";
+            ordered.push_back({400000000000LL + (long long)comps(d.second).size(), x});
+        }
         std::stable_sort(ordered.begin(), ordered.end(),
                          [](const std::pair<long long, Ctx> &a, const std::pair<long long, Ctx> &b) {
                              return a.first > b.first;
@@ -3057,11 +3152,14 @@ struct Importer
             site.converted.push_back("PHP through the FastCGI server at " + fcgi);
             exts.insert(exts.begin(), "php");
         }
-        if (!exts.empty())
+        if (!exts.empty() || cgiRun)
         {
             conf += "\nscriptHandler  {\n";
             for (auto &e : exts)
                 conf += kv("add", handler + " " + e, 2);
+            if (cgiRun)
+                for (auto &e : cgiExts)
+                    conf += kv("add", "cgi:lscgid " + e, 2);
             conf += "}\n";
         }
 

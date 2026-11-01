@@ -12,7 +12,8 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - Uses every CPU core: up to 32 HTTP worker processes on the same ports, restarted automatically after a crash, with zero downtime reload
 - PHP 8.2, 8.3, 8.4 and 8.5 through LSAPI (`lsphp.exe` for Windows is included) or FastCGI (`php-cgi.exe`)
 - Finds installed PHP versions, Laragon and XAMPP and configures itself for them
-- Imports Apache sites from `httpd.conf`: virtual hosts, SSL certificates, redirects, aliases, proxies, access rules and password protection, including the rules in `.htaccess` files
+- Imports Apache sites from `httpd.conf`: virtual hosts, SSL certificates, redirects, aliases, proxies, CGI, access rules and password protection, including the rules in `.htaccess` files
+- CGI programs: `.exe`, `.bat` and `.cmd` files and scripts with a `#!` line such as Perl or Python, each in its own job object with a restricted token
 - Local development sites: every folder in the projects folder becomes `http://folder.test/`
 - HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache and the WebAdmin console
 - `.htaccess` files work as in Apache: rewrite rules, access rules (`Require`, `Order`, `Allow`, `Deny`), passwords, `<Files>` sections, `Options Indexes` and `php_flag engine off`, applied within a second when a file changes

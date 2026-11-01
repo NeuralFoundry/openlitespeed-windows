@@ -19,10 +19,11 @@ This port builds OpenLiteSpeed 1.9.4 as a native Win32 program with Microsoft Vi
 ## Processes
 
 ```
-openlitespeed.exe            main process, HTTP worker #1, WebAdmin, HTTP/3
- ├─ openlitespeed.exe        HTTP worker #2 .. #N
- ├─ lsphp.exe / php-cgi.exe  PHP pool of worker #1
- └─ ...                      each worker has its own PHP pool
+openlitespeed.exe                main process, HTTP worker #1, WebAdmin, HTTP/3
+ ├─ openlitespeed.exe            HTTP worker #2 .. #N
+ ├─ openlitespeed.exe --lscgid   CGI daemon, starts the CGI programs
+ ├─ lsphp.exe / php-cgi.exe      PHP pool of worker #1
+ └─ ...                          each worker has its own PHP pool
 ```
 
 ### HTTP workers
@@ -50,6 +51,14 @@ PHP runs in separate processes, so PHP work always uses every CPU, whatever the 
 - **FastCGI**: `php-cgi.exe` from any PHP build, listening on a Unix socket per worker.
 - `openlitespeed --set-php <dir>` detects the PHP version and build type, copies the matching `lsphp.exe` into the PHP directory, starts it once with `-v` to prove it loads, and falls back to FastCGI if it does not.
 - PHP processes run with a restricted token that holds no privileges, inside a job object owned by their worker.
+
+### CGI
+
+CGI programs are started by `lscgid`, the CGI daemon of OpenLiteSpeed. On Windows it is `openlitespeed.exe --lscgid`, started by the main process with the same restricted token as PHP and started again if it exits. HTTP workers send it requests over a Unix socket, each signed with a random key that only the server processes know. For every request it starts the program with standard input and output connected to the request, inside a job object that ends the program and everything it started when the request is over or the server stops.
+
+- `.exe` and `.com` files run directly.
+- `.bat` and `.cmd` files run through `cmd.exe` and never receive arguments from the query string.
+- Other scripts run with the interpreter on their `#!` line, for example `#!C:/Perl64/bin/perl.exe` or `#!/usr/bin/env python`. A Unix path such as `#!/usr/bin/perl` finds `perl.exe` on the `PATH`. A script without a `#!` line answers 500.
 
 ### Windows service
 

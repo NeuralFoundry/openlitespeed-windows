@@ -81,6 +81,8 @@ int main(int argc, char *argv[])
     }
     if (argc >= 3 && strcmp(argv[1], "--set-php") == 0)
         return ols_set_php(argv[2]);
+    if (argc >= 3 && strcmp(argv[1], "--lscgid") == 0)
+        return ols_lscgid_main(argc, argv);
     if (argc >= 2 && strcmp(argv[1], "--import-apache") == 0)
         return ols_import_apache(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--dev-hosts") == 0)

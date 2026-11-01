@@ -36,6 +36,7 @@
 #include <extensions/localworker.h>
 #include <extensions/registry/extappregistry.h>
 #include <lsdef.h>
+#include <config.h>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -50,6 +51,10 @@
 #include <pwd.h>
 
 extern char *argv0;
+
+#ifdef _WIN32
+static int s_winStarted = 0;
+#endif
 
 CgidWorker *CgidWorker::s_pCgid = NULL;
 int CgidWorker::s_iCgidWorkerPid = -1;
@@ -104,6 +109,10 @@ int CgidWorker::start(const char *pServerRoot, const char *pChroot,
     int i, n;
     memccpy(p, config.getSocket(), 0, 128);
     setURL(p);
+#ifdef _WIN32
+    (void)fd; (void)i; (void)n; (void)uid; (void)gid; (void)priority; (void)pChroot; (void)ret;
+    return 0;
+#endif
     fd = ExtWorker::startServerSock(&config, 200);
     if (fd == -1)
     {
@@ -183,6 +192,60 @@ static int dupStdErrLogFd()
 
 
 //return 0 means OK, -1 means ERROR
+#ifdef _WIN32
+int CgidWorker::spawnCgid(int fd, char *pData, const char *secret)
+{
+    (void)fd;
+    const char *pSock = getConfig().getServerAddrUnixSock();
+    snprintf(pData, 255, "uds:/%s", pSock);
+    wchar_t wexe[MAX_PATH];
+    char exe[MAX_PATH * 3];
+    DWORD n = GetModuleFileNameW(NULL, wexe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH
+        || WideCharToMultiByte(CP_UTF8, 0, wexe, -1, exe, sizeof(exe), NULL, NULL) <= 0)
+        return LS_FAIL;
+    AutoStr2 dir(pSock);
+    char *slash = strrchr(dir.buf(), '/');
+    if (slash && slash != dir.buf())
+    {
+        *slash = 0;
+        mkdir(dir.c_str(), 0700);
+    }
+    const char *pStdErrLog = StdErrLogger::getInstance().getLogFileName();
+    char achRoot[MAX_PATH * 3 + 16];
+    const char *root = getenv("OLS_ROOT");
+    snprintf(achRoot, sizeof(achRoot), "OLS_ROOT=%s", root ? root : "");
+    char *envp[] = { achRoot, NULL };
+    char *argv[] = { exe, (char *)"--lscgid", (char *)pSock,
+                     (char *)(pStdErrLog ? pStdErrLog : ""), NULL };
+    HANDLE hr, hw;
+    if (!CreatePipe(&hr, &hw, NULL, 0))
+        return LS_FAIL;
+    int fdr = ols_fd_from_handle(hr);
+    if (fdr == -1)
+    {
+        CloseHandle(hr);
+        CloseHandle(hw);
+        return LS_FAIL;
+    }
+    pid_t pid = ols_spawn(exe, argv, root ? envp : NULL, DEFAULT_TMP_DIR, fdr, -1, -1, 0);
+    if (pid > 0)
+    {
+        DWORD w;
+        WriteFile(hw, secret, LSCGID_SECRET_LEN, &w, NULL);
+    }
+    close(fdr);
+    CloseHandle(hw);
+    if (pid <= 0)
+    {
+        LS_ERROR("[PID: %d]: cannot start cgid: %s", getpid(), strerror(errno));
+        return LS_FAIL;
+    }
+    LS_NOTICE("[PID: %d]: started cgid: %d", getpid(), pid);
+    m_pid = pid;
+    return pid;
+}
+#else
 int CgidWorker::spawnCgid(int fd, char *pData, const char *secret)
 {
     int pid;
@@ -220,6 +283,61 @@ int CgidWorker::spawnCgid(int fd, char *pData, const char *secret)
         return LS_FAIL;
     }
 }
+#endif
+
+
+#ifdef _WIN32
+void CgidWorker::winInit(const char *pServerRoot, int isMain)
+{
+    CgidWorker *pWorker = (CgidWorker *)ExtAppRegistry::getApp(EA_CGID, LSCGID_NAME);
+    if (!pWorker)
+        return;
+    CgidConfig &config = pWorker->getConfig();
+    if (!config.getSocket() || strlen(config.getSocket()) > 100)
+    {
+        char achSocket[] = "uds:/" DEFAULT_TMP_DIR "/cgid.sock";
+        config.setSocket(achSocket);
+        config.setMaxConns(100);
+        config.setRetryTimeout(0);
+        config.setBuffering(HEC_RESP_NOBUFFER);
+        config.setTimeout(HttpServerConfig::getInstance().getConnTimeout());
+    }
+    char *pSecret = config.getSecretBuf();
+    char hex[LSCGID_SECRET_LEN * 2 + 1];
+    if (isMain)
+    {
+        generateSecret(pSecret);
+        for (int i = 0; i < LSCGID_SECRET_LEN; ++i)
+            snprintf(hex + i * 2, 3, "%02x", (unsigned char)pSecret[i]);
+        SetEnvironmentVariableA("OLS_CGID_SECRET", hex);
+        _putenv_s("OLS_CGID_SECRET", hex);
+    }
+    else
+    {
+        const char *p = getenv("OLS_CGID_SECRET");
+        if (!p || strlen(p) != LSCGID_SECRET_LEN * 2)
+            return;
+        for (int i = 0; i < LSCGID_SECRET_LEN; ++i)
+        {
+            unsigned v;
+            if (sscanf(p + i * 2, "%2x", &v) != 1)
+                return;
+            pSecret[i] = (char)v;
+        }
+    }
+    CgidWorker::setCgidWorker(pWorker);
+    char achSocket[256];
+    lstrncpy(achSocket, config.getSocket(), sizeof(achSocket));
+    pWorker->setURL(achSocket);
+    pWorker->setState(ST_GOOD);
+    if (isMain)
+    {
+        s_winStarted = 1;
+        char achData[256];
+        pWorker->spawnCgid(-1, achData, config.getSecret());
+    }
+}
+#endif
 
 
 int CgidWorker::getCgidPid()
@@ -243,6 +361,10 @@ int CgidWorker::checkRestartCgid(const char *pServerRoot,
 int CgidWorker::watchDog(const char *pServerRoot, const char *pChroot,
                          int priority, int switchToLscgid)
 {
+#ifdef _WIN32
+    if (!s_winStarted)
+        return 0;
+#endif
     if ((switchToLscgid == 1) && (m_pid != -1))
     {
         kill(m_pid, SIGTERM);

@@ -44,7 +44,8 @@ Stop Apache before reloading OpenLiteSpeed, both cannot listen on the same ports
 | `DocumentRoot`, `DirectoryIndex`, `Options Indexes` | Document root, index files, directory listing |
 | `RewriteEngine`, `RewriteCond`, `RewriteRule`, `RewriteOptions Inherit` | Rewrite rules of the site |
 | `Redirect`, `RedirectMatch`, `RedirectPermanent`, `RedirectTemp` | Rewrite rules with `R=` or `G` |
-| `Alias`, `ScriptAlias` | Contexts, including the aliases of the main server |
+| `Alias`, `ScriptAlias` | Contexts, including the aliases of the main server. `ScriptAlias` folders run CGI programs. |
+| `AddHandler cgi-script`, `SetHandler cgi-script`, `Options ExecCGI` | CGI for those extensions or folders where `ExecCGI` is on. Where it is off, OpenLiteSpeed answers 403, as Apache does. |
 | `ProxyPass` to an `http://` backend, `ProxyPass ... !` | Proxy external app and rewrite rules in the same order |
 | `Require`, `RequireAll`, `RequireAny`, `Order`, `Allow`, `Deny`, `Satisfy`, `AuthMerging` | IP access control in contexts. `Require` and `Order`/`Allow`/`Deny` are evaluated separately and both apply, as in Apache. |
 | `AuthType Basic`, `AuthName`, `AuthUserFile`, `AuthGroupFile` | Realm with the same password and group files |
@@ -76,7 +77,7 @@ An access rule is either converted exactly or made stricter:
 
 The one exception are rules that block particular clients by host name or environment variable, such as `Deny from env=bad_bot` or `Require not host`. Turning them into a deny for everyone would take the site offline, so they are left out and listed as warnings.
 
-This Windows build does not run CGI programs. Folders from `ScriptAlias` are imported so that requests there fail and the scripts are never served as text; the report warns about them.
+CGI programs run as in Apache on Windows: `.exe` files directly, `.bat` and `.cmd` files through `cmd.exe`, and scripts with the interpreter named on their `#!` line. `SetHandler cgi-script` inside `<Files>` or `<FilesMatch>` is not converted; those files are blocked. How CGI runs is described in [ARCHITECTURE.md](ARCHITECTURE.md#cgi).
 
 ## Not converted
 
@@ -86,6 +87,7 @@ These are listed in the report:
 - `ProxyPass` to `https://`, `ws://`, `unix:` or `balancer://` backends, and `ProxyPassReverse`
 - `Header` with `env=` or `expr=`, `RequestHeader`, `SetEnvIf`, `<If>` without access rules
 - `ErrorDocument` with a text message
+- `ScriptInterpreterSource Registry`; CGI scripts need a `#!` line
 
 Sites that require client certificates (`SSLVerifyClient`) are skipped, as are sites without `ServerName`, Apache's sample sites (`www.example.com`, `dummy-host.example.com`) and sites whose domain OpenLiteSpeed already serves, for example a Laragon project that is already in the projects folder. The main Apache server outside `<VirtualHost>` is not imported, OpenLiteSpeed keeps its own default site.
 

@@ -24,6 +24,10 @@ SET(cgi_STAT_SRCS
    rootcheck.c
 )
 
+if(WIN32)
+    list(APPEND cgi_STAT_SRCS lscgid_win.cpp)
+endif()
+
 add_library(cgi STATIC ${cgi_STAT_SRCS})
 
 

@@ -1409,6 +1409,7 @@ int LshttpdMain::init(int argc, char *argv[])
             MultiplexerFactory::getMultiplexer()->add(
                 new AdminSockReactor(this, m_fdAdmin), POLLIN | POLLHUP | POLLERR);
         }
+        CgidWorker::winInit(MainServerConfig::getInstance().getServerRoot(), !iWorker);
         if (!iWorker)
             m_pServer->startWorkers();
 #endif
