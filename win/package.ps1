@@ -45,6 +45,19 @@ if ($LASTEXITCODE -ne 0) { throw 'building setup.exe failed' }
 
 $zip = "$Out.zip"
 if (Test-Path $zip) { Remove-Item -Force $zip }
-Compress-Archive -Path $Out -DestinationPath $zip
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+$base = (Split-Path -Parent $Out).Length + 1
+$zs = [IO.File]::Open($zip, [IO.FileMode]::CreateNew)
+$za = New-Object IO.Compression.ZipArchive($zs, [IO.Compression.ZipArchiveMode]::Create)
+foreach ($item in @(Get-Item -LiteralPath $Out) + @(Get-ChildItem -LiteralPath $Out -Recurse)) {
+    $name = $item.FullName.Substring($base).Replace('\', '/')
+    if ($item.PSIsContainer) {
+        if (-not (Get-ChildItem -LiteralPath $item.FullName -Force | Select-Object -First 1)) { [void]$za.CreateEntry("$name/") }
+    } else {
+        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($za, $item.FullName, $name, [IO.Compression.CompressionLevel]::Optimal)
+    }
+}
+$za.Dispose()
+$zs.Dispose()
 Write-Host "package: $Out"
 Write-Host "zip:     $zip ($([int]((Get-Item $zip).Length / 1MB)) MB)"
