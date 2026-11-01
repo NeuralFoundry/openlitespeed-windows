@@ -95,14 +95,14 @@ void LocalWorker::moveToStopList()
     PidList::iterator iter;
     for (iter = m_pidList->begin(); iter != m_pidList->end();
          iter = m_pidList->next(iter))
-        m_pidListStop->add((int)(long)iter->first(), DateTime::s_curTime);
+        m_pidListStop->add((int)(intptr_t)iter->first(), DateTime::s_curTime);
     m_pidList->clear();
 }
 
 
 void LocalWorker::moveToStopList(int pid)
 {
-    PidList::iterator iter = m_pidList->find((void *)(long)pid);
+    PidList::iterator iter = m_pidList->find((void *)(intptr_t)pid);
     if (iter != m_pidList->end())
     {
         killProcess(pid);
@@ -121,8 +121,8 @@ void LocalWorker::cleanStopPids()
         PidList::iterator iter, iterDel;
         for (iter = m_pidListStop->begin(); iter != m_pidListStop->end();)
         {
-            pid = (pid_t)(long)iter->first();
-            long delta = DateTime::s_curTime - (long)iter->second();
+            pid = (pid_t)(intptr_t)iter->first();
+            long delta = DateTime::s_curTime - (intptr_t)iter->second();
             int sig = 0;
             iterDel = iter;
             iter = m_pidListStop->next(iter);
@@ -161,7 +161,7 @@ void LocalWorker::detectDiedPid()
     PidList::iterator iter;
     for (iter = m_pidList->begin(); iter != m_pidList->end();)
     {
-        pid_t pid = (pid_t)(long)iter->first();
+        pid_t pid = (pid_t)(intptr_t)iter->first();
         if ((kill(pid, 0) == -1) && (errno == ESRCH))
         {
             LS_INFO("Process with PID: %d is dead ", pid);
@@ -180,14 +180,23 @@ void LocalWorker::detectDiedPid()
 
 void LocalWorker::addPid(pid_t pid)
 {
-    m_pidList->insert((void *)(unsigned long)pid, this);
+    m_pidList->insert((void *)(uintptr_t)pid, this);
 }
 
 
 void LocalWorker::removePid(pid_t pid)
 {
     m_pidList->remove(pid);
+#ifdef _WIN32
+    if (m_pidListStop->remove(pid) == 0 && getState() != ST_NOTSTARTED && getfd() != -1
+        && !getConfig().isDetached() && getCurInstances() < getConfig().getInstances())
+    {
+        LS_DBG_L("[%s] worker %d exited, starting a replacement.", getName(), pid);
+        startWorker();
+    }
+#else
     m_pidListStop->remove(pid);
+#endif
 }
 
 
@@ -261,7 +270,7 @@ int LocalWorker::stop()
     {
         for (iter = getPidList()->begin(); iter != getPidList()->end();)
         {
-            pid = (pid_t)(long)iter->first();
+            pid = (pid_t)(intptr_t)iter->first();
             iter = getPidList()->next(iter);
             killProcess(pid);
             LS_DBG_L("[%s] kill pid: %d", getName(), pid);
@@ -416,6 +425,40 @@ int LocalWorker::getCurInstances() const
 
 int LocalWorker::workerExec(LocalWorkerConfig &config, int fd)
 {
+#ifdef _WIN32
+    {
+        char achCmd[4096];
+        char achDir[4096];
+        char *argvw[256];
+        char *pDirW;
+        const char *pCommand = config.getCommand();
+        if (!pCommand || memccpy(achCmd, pCommand, 0, sizeof(achCmd)) == NULL)
+        {
+            LS_ERROR("[LocalWorker::workerExec] Config[%s]: command is missing "
+                     "or too long.", config.getName());
+            return LS_FAIL;
+        }
+        SUExec::buildArgv(achCmd, &pDirW, argvw, 256);
+        const char *pExe = argvw[0];
+        const char *pCwd = NULL;
+        if (pDirW)
+        {
+            lstrncpy(achDir, pDirW, sizeof(achDir));
+            pCwd = achDir;
+            *(argvw[0] - 1) = '/';
+            pExe = pDirW;
+        }
+        int pid = ols_spawn(pExe, argvw, config.getEnv()->get(), pCwd, fd, -1, -1,
+                            OLS_SPAWN_FCGI);
+        if (pid == -1)
+            LS_ERROR("[LocalWorker::workerExec] Config[%s]: failed to start %s: %s",
+                     config.getName(), pExe, strerror(errno));
+        else
+            LS_NOTICE("[LocalWorker::workerExec] Config[%s]: started %s pid %d.",
+                      config.getName(), pExe, pid);
+        return pid;
+    }
+#endif
     ServerProcessConfig &procConfig = ServerProcessConfig::getInstance();
     if (SUExec::getSUExec() == NULL)
         return LS_FAIL;
@@ -1032,7 +1075,7 @@ int LocalWorker::startDetachedWorker(int force)
     if (m_tmResourceLimited == DateTime::s_curTime)
         return -SC_508;
 
-TRY_AGAIN:
+LS_TRY_AGAIN:
     ret = isDetachedAlreadyRunning();
     if (ret == 1)
     {
@@ -1077,7 +1120,7 @@ TRY_AGAIN:
                               getName(), bufPidFile);
                     unlink(bufPidFile);
                 }
-                goto TRY_AGAIN;
+                goto LS_TRY_AGAIN;
             }
         }
         LS_ERROR("[%s]: Failed to lock pid file for [%s]: %s",

@@ -20,7 +20,7 @@
 
 void PidList::add(pid_t pid, long tm)
 {
-    insert((void *)(unsigned long)pid, (void *)tm);
+    insert((void *)(uintptr_t)pid, (void *)(intptr_t)tm);
 }
 
 
@@ -28,10 +28,10 @@ long PidList::remove(pid_t pid)
 {
     long tm = 0;
     PidList::iterator iter;
-    iter = find((void *)(unsigned long)pid);
+    iter = find((void *)(uintptr_t)pid);
     if (iter != end())
     {
-        tm = (long)iter->second();
+        tm = (intptr_t)iter->second();
         erase(iter);
     }
     return tm;

@@ -1231,6 +1231,15 @@ void plainconf::checkInFile(const char *path)
     if (stat(new_path, &sb) == -1 ||
         (sb.st_mtime < sb0.st_mtime && sb0.st_size != sb.st_size))
     {
+#ifdef _WIN32
+        ret = ols_copy_file(path, new_path);
+        if (ret != 0)
+        {
+            logToMem(LOG_LEVEL_INFO, "Failed to backup the conf file %s, ret %d.",
+                    path, ret);
+        }
+        return ;
+#else
         buf.setStr("cp -f \"");
         buf.append(path, strlen(path));
         buf.append("\" \"", 3);
@@ -1243,6 +1252,7 @@ void plainconf::checkInFile(const char *path)
                     path, ret);
             return ;
         }
+#endif
 
         buf.setStr("ci -l -q -t-\"");
         buf.append(new_path, strlen(new_path));

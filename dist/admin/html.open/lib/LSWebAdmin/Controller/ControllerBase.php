@@ -153,7 +153,7 @@ class ControllerBase
 
 	public static function getServerLoad()
 	{
-		$avgload = \sys_getloadavg();
+		$avgload = \function_exists('sys_getloadavg') ? \sys_getloadavg() : false;
 		if ($avgload === false) {
 			return 'N/A';
 		}

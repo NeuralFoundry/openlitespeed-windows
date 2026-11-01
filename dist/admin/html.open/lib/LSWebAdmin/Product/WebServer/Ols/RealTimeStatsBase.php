@@ -8,7 +8,7 @@ class RealTimeStatsBase extends ProductRealTimeStatsBase
 {
     protected function getStatsDir()
     {
-        return '/tmp/lshttpd';
+        return (isset($_SERVER['LS_TMP_DIR']) ? $_SERVER['LS_TMP_DIR'] : '/tmp') . '/lshttpd';
     }
 
     protected function getReportProcessCount()

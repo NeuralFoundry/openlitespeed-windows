@@ -64,6 +64,9 @@ public:
     int generateRTJsonReport(AutoBuf *buf, int type, int *did);
     int generateResetAppsJson(AutoBuf *buf);
     int resetStats(int type);
+#ifdef _WIN32
+    void splitForWorkers(int procNo, int workers);
+#endif
 
     LS_NO_COPY_ASSIGN(ExtAppSubRegistry);
 };
@@ -101,6 +104,9 @@ public:
     static int generateResetAppsJson(AutoBuf *buf);
     static int resetStats();
     static int hasUri(const char *uri);
+#ifdef _WIN32
+    static void splitForWorkers(int procNo, int workers);
+#endif
 
     static void getUniAppUri(const char *app_uri, char *dst, int dst_len, int uid, uint loop = 0);
     static int configVhostOwnPhp(HttpVHost *pVHost);

@@ -55,7 +55,7 @@
 
 #if __linux__ && defined(IP_RECVORIGDSTADDR)
 #   define DST_MSG_SZ sizeof(struct sockaddr_in)
-#elif __linux__
+#elif __linux__ || defined(_WIN32)
 #   define DST_MSG_SZ sizeof(struct in_pktinfo)
 #else
 #   define DST_MSG_SZ sizeof(struct sockaddr_in)
@@ -235,6 +235,22 @@ void UdpListener::deleteCidListenerEntry(const lsquic_cid_t *cid)
 }
 
 
+#if __linux__ && defined(IP_RECVORIGDSTADDR)
+#define UDP_RECV_DST_OPT1 IP_RECVORIGDSTADDR
+#define UDP_RECV_DST_OPT2 IP_RECVORIGDSTADDR
+#elif __linux__ || __APPLE__ || defined(_WIN32)
+#define UDP_RECV_DST_OPT1 IP_PKTINFO
+#if __linux__ || defined(_WIN32)
+#define UDP_RECV_DST_OPT2 IP_PKTINFO
+#else
+#define UDP_RECV_DST_OPT2 IP_RECVDSTADDR
+#endif
+#else
+#define UDP_RECV_DST_OPT1 IP_RECVDSTADDR
+#define UDP_RECV_DST_OPT2 IP_RECVDSTADDR
+#endif
+
+
 int UdpListener::start()
 {
     //unsigned versions;
@@ -246,15 +262,7 @@ int UdpListener::start()
         return -1;
     int val = 1;
     if (AF_INET == m_addr.get()->sa_family)
-        ret = setsockopt(fd, IPPROTO_IP,
-#if __linux__ && defined(IP_RECVORIGDSTADDR)
-                         IP_RECVORIGDSTADDR,
-#elif __linux__ || __APPLE__
-                         IP_PKTINFO,
-#else
-                         IP_RECVDSTADDR,
-#endif
-                         &val, sizeof(val));
+        ret = setsockopt(fd, IPPROTO_IP, UDP_RECV_DST_OPT1, &val, sizeof(val));
     else
         ret = setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &val, sizeof(val));
     if (ret != 0)
@@ -357,7 +365,7 @@ proc_ancillary (struct msghdr *msg, struct sockaddr_storage *storage
             cmsg->cmsg_type  ==
 #if __linux__ && defined(IP_RECVORIGDSTADDR)
                                 IP_ORIGDSTADDR
-#elif __linux__ || __APPLE__
+#elif __linux__ || __APPLE__ || defined(_WIN32)
                                 IP_PKTINFO
 #else
                                 IP_RECVDSTADDR
@@ -366,7 +374,7 @@ proc_ancillary (struct msghdr *msg, struct sockaddr_storage *storage
         {
 #if __linux__ && defined(IP_RECVORIGDSTADDR)
             memcpy(storage, CMSG_DATA(cmsg), sizeof(struct sockaddr_in));
-#elif __linux__ || __APPLE__
+#elif __linux__ || __APPLE__ || defined(_WIN32)
             const struct in_pktinfo *in_pkt;
             in_pkt = (struct in_pktinfo *) CMSG_DATA(cmsg);
             ((struct sockaddr_in *) storage)->sin_addr = in_pkt->ipi_addr;
@@ -485,7 +493,7 @@ setup_control_msg (struct msghdr *msg, int cw, int ecn,
     struct cmsghdr *cmsg;
     struct sockaddr_in *local_sa;
     struct sockaddr_in6 *local_sa6;
-#if __linux__ || __APPLE__
+#if __linux__ || __APPLE__ || defined(_WIN32)
     struct in_pktinfo info;
 #endif
     struct in6_pktinfo info6;
@@ -507,7 +515,15 @@ setup_control_msg (struct msghdr *msg, int cw, int ecn,
 	    if (AF_INET == local_sockaddr->sa_family)
 	    {
 		local_sa = (struct sockaddr_in *) local_sockaddr;
-#if __linux__ || __APPLE__
+#if defined(_WIN32)
+		memset(&info, 0, sizeof(info));
+		info.ipi_addr = local_sa->sin_addr;
+		cmsg->cmsg_level    = IPPROTO_IP;
+		cmsg->cmsg_type     = IP_PKTINFO;
+		cmsg->cmsg_len      = CMSG_LEN(sizeof(info));
+                ctl_len += CMSG_SPACE(sizeof(info));
+		memcpy(CMSG_DATA(cmsg), &info, sizeof(info));
+#elif __linux__ || __APPLE__
 		memset(&info, 0, sizeof(info));
 		info.ipi_spec_dst = local_sa->sin_addr;
 		cmsg->cmsg_level    = IPPROTO_IP;
@@ -575,24 +591,25 @@ setup_control_msg (struct msghdr *msg, int cw, int ecn,
 }
 
 
+#if __linux__ || defined(_WIN32)
+#define UDP_ANCIL_V4 sizeof(struct in_pktinfo)
+#else
+#define UDP_ANCIL_V4 sizeof(struct in_addr)
+#endif
+#define UDP_ANCIL_MAX MAX(UDP_ANCIL_V4, sizeof(struct in6_pktinfo))
+#if ECN_SUPPORTED
+#define UDP_ANCIL_ECN ECN_SZ
+#else
+#define UDP_ANCIL_ECN 0
+#endif
+
 ssize_t UdpListener::sendPacket(struct iovec *iov, size_t iovlen,
             const struct sockaddr *src, const struct sockaddr *dest, int ecn)
 {
     struct msghdr msg;
     union {
         /* cmsg(3) recommends union for proper alignment */
-        unsigned char buf[ CMSG_SPACE(
-                                MAX(
-#if __linux__
-                                      sizeof(struct in_pktinfo)
-#else
-                                      sizeof(struct in_addr)
-#endif
-                                        , sizeof(struct in6_pktinfo))
-#if ECN_SUPPORTED
-            + ECN_SZ
-#endif
-                                                                )];
+        unsigned char buf[ CMSG_SPACE(UDP_ANCIL_MAX + UDP_ANCIL_ECN) ];
         struct cmsghdr cmsg;
     } ancil;
     socklen_t socklen;
@@ -909,8 +926,8 @@ void UdpListener::processPacketsInBatch(struct read_ctx *rctx)
     unsigned n, n_uniq_cids, n_uniq_pids;
     const lsquic_cid_t *cid;
     packet_buf_t **const packet_bufs = m_pPacketsIn->packet_bufs;   /* Shorthand */
-    lsquic_cid_t uniq_cids[rctx->rc_riter.ri_idx];
-    int uniq_cid_idxs[rctx->rc_riter.ri_idx];   /* Dual-use: points into `pids', too */
+    lsquic_cid_t *uniq_cids = (lsquic_cid_t *)alloca(sizeof(lsquic_cid_t) * ((rctx->rc_riter.ri_idx) ? (rctx->rc_riter.ri_idx) : 1));
+    int *uniq_cid_idxs = (int *)alloca(sizeof(int) * ((rctx->rc_riter.ri_idx) ? (rctx->rc_riter.ri_idx) : 1));   /* Dual-use: points into `pids', too */
 #if DEBUG_SHM_OFFSETS
     char offstr[0x400];
 #endif
@@ -938,7 +955,7 @@ void UdpListener::processPacketsInBatch(struct read_ctx *rctx)
         /* Instead of linear search, which may become too slow, do something
          * more elaborate:
          */
-        struct cid_and_index cais[rctx->rc_riter.ri_idx];
+        struct cid_and_index *cais = (struct cid_and_index *)alloca(sizeof(struct cid_and_index) * ((rctx->rc_riter.ri_idx) ? (rctx->rc_riter.ri_idx) : 1));
         for (n = 0; n < rctx->rc_riter.ri_idx; ++n)
         {
             cais[n].cai_cid = m_pPacketsIn->cids[n];
@@ -959,15 +976,15 @@ void UdpListener::processPacketsInBatch(struct read_ctx *rctx)
     LS_DBG_L(this, "%s: %u unique cid%.*s", __func__,
         n_uniq_cids, n_uniq_cids != 1, "s");
 
-    ShmCidPidInfo pids[ n_uniq_cids ];
-    pid_t uniq_pids[ n_uniq_cids ];
-    unsigned cid2packet_counts[ n_uniq_cids ];
-    signed char unknown_cids[ n_uniq_cids ];
-    CidInfo *cid_infos[ n_uniq_cids ];
+    ShmCidPidInfo *pids = (ShmCidPidInfo *)alloca(sizeof(ShmCidPidInfo) * ((n_uniq_cids) ? (n_uniq_cids) : 1));
+    pid_t *uniq_pids = (pid_t *)alloca(sizeof(pid_t) * ((n_uniq_cids) ? (n_uniq_cids) : 1));
+    unsigned *cid2packet_counts = (unsigned *)alloca(sizeof(unsigned) * ((n_uniq_cids) ? (n_uniq_cids) : 1));
+    signed char *unknown_cids = (signed char *)alloca(sizeof(signed char) * ((n_uniq_cids) ? (n_uniq_cids) : 1));
+    CidInfo **cid_infos = (CidInfo **)alloca(sizeof(CidInfo *) * ((n_uniq_cids) ? (n_uniq_cids) : 1));
     int have_unknown_cids, have_cached_cids;
 
-    memset(pids, 0, sizeof(pids));
-    memset(cid2packet_counts, 0, sizeof(cid2packet_counts));
+    memset(pids, 0, sizeof(*pids) * n_uniq_cids);
+    memset(cid2packet_counts, 0, sizeof(*cid2packet_counts) * n_uniq_cids);
     have_unknown_cids = 0;
     have_cached_cids = 0;
     for (n = 0; n < n_uniq_cids; ++n)
@@ -1019,8 +1036,8 @@ void UdpListener::processPacketsInBatch(struct read_ctx *rctx)
     LS_DBG_L(this, "%s: %u unique pid%.*s", __func__,
         n_uniq_pids, n_uniq_pids != 1, "s");
 
-    unsigned alien_packet_idxs[rctx->rc_riter.ri_idx];
-    ShmCidPidInfo *alien_pids[rctx->rc_riter.ri_idx];
+    unsigned *alien_packet_idxs = (unsigned *)alloca(sizeof(unsigned) * ((rctx->rc_riter.ri_idx) ? (rctx->rc_riter.ri_idx) : 1));
+    ShmCidPidInfo **alien_pids = (ShmCidPidInfo **)alloca(sizeof(ShmCidPidInfo *) * ((rctx->rc_riter.ri_idx) ? (rctx->rc_riter.ri_idx) : 1));
     unsigned n_alien_packets;
     int maybe_have_bad_cids;
 
@@ -1098,7 +1115,7 @@ void UdpListener::processPacketsInBatch(struct read_ctx *rctx)
      */
     if (maybe_have_bad_cids)
     {
-        lsquic_cid_t bad_cids[ n_uniq_cids ];
+        lsquic_cid_t *bad_cids = (lsquic_cid_t *)alloca(sizeof(lsquic_cid_t) * ((n_uniq_cids) ? (n_uniq_cids) : 1));
         unsigned n_bad_cids = 0;
         THash<CidInfo *>::iterator it;
         for (n = 0; n < n_uniq_cids; ++n)
@@ -1178,7 +1195,7 @@ void UdpListener::processPacketsInBatch(struct read_ctx *rctx)
 #endif
     }
 
-    pid_t pids_to_signal[n_uniq_pids];
+    pid_t *pids_to_signal = (pid_t *)alloca(sizeof(pid_t) * ((n_uniq_pids) ? (n_uniq_pids) : 1));
     unsigned n_pids_to_signal;
 
     /* Distribute alien packets to responsible processes */
@@ -1190,7 +1207,7 @@ void UdpListener::processPacketsInBatch(struct read_ctx *rctx)
             (pbs2offstr(packet_bufs + m_pPacketsIn->n_avail - n_alien_packets,
                            n_alien_packets, offstr, sizeof(offstr)), offstr));
 #endif
-        n_pids_to_signal = sizeof(pids_to_signal) / sizeof(pids_to_signal[0]);
+        n_pids_to_signal = n_uniq_pids;
         n = QuicShm::getInstance().distributeAlienPackets(&alien_pids[0],
             packet_bufs + m_pPacketsIn->n_avail - n_alien_packets,
             n_alien_packets, pids_to_signal, &n_pids_to_signal);
@@ -1638,15 +1655,7 @@ int UdpListener::setSockOptions(int fd)
     int ret = 0;
     int val = 1;
     if (AF_INET == m_addr.get()->sa_family)
-        ret = setsockopt(fd, IPPROTO_IP,
-#if __linux__ && defined(IP_RECVORIGDSTADDR)
-                         IP_RECVORIGDSTADDR,
-#elif __linux__
-                         IP_PKTINFO,
-#else
-                         IP_RECVDSTADDR,
-#endif
-                         &val, sizeof(val));
+        ret = setsockopt(fd, IPPROTO_IP, UDP_RECV_DST_OPT2, &val, sizeof(val));
     else
         ret = setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &val, sizeof(val));
     if (ret != 0)
@@ -1756,7 +1765,9 @@ int UdpListener::passFds(int target_fd, const char *addr_str)
     LS_INFO("[UDP %s] pass listener, copy fd %d to %d.", addr_str,
         getfd(), target_fd);
     dup2(getfd(), target_fd);
+#ifndef _WIN32
     close(getfd());
+#endif
     return 1;
 }
 

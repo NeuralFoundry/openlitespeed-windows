@@ -105,7 +105,7 @@ int ModTimerList::addTimer(unsigned int msTimeout, int repeat,
         delete pTimer;
         return LS_FAIL;
     }
-    if (m_timerHash.insert((void *)(long)pTimer->m_key.id, pTimer) == NULL)
+    if (m_timerHash.insert((void *)(intptr_t)pTimer->m_key.id, pTimer) == NULL)
     {
         delete pTimer;
         return LS_FAIL;
@@ -118,7 +118,7 @@ int ModTimerList::removeTimer(int iId)
 {
     ModTimer *pTimer;
     GMap::iterator pMapIter;
-    GHash::iterator pHashIter = m_timerHash.find((void *)(long)iId);
+    GHash::iterator pHashIter = m_timerHash.find((void *)(intptr_t)iId);
     if (pHashIter == NULL)
         return LS_FAIL;
     pTimer = (ModTimer *)pHashIter->getData();
@@ -160,7 +160,7 @@ int ModTimerList::checkExpired()
         {
             m_timerMap.deleteNode(iter);
             pTimer->m_timerCb(pTimer->m_pTimerCbParam);
-            if ((pHashIter = m_timerHash.find((void *)(long)pTimer->m_key.id)) == NULL)
+            if ((pHashIter = m_timerHash.find((void *)(intptr_t)pTimer->m_key.id)) == NULL)
                 return LS_FAIL;
             m_timerHash.erase(pHashIter);
             m_timerPool.recycle(pTimer);

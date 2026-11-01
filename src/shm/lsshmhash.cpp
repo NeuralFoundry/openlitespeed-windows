@@ -389,11 +389,11 @@ inline void LsShmHash::clrBitMapEnt(uint32_t indx)
 
 
 LsShmOffset_t LsShmHash::getHTableStatOffset() const
-{   return (LsShmOffset_t)(long) & ((LsShmHTable *)(long)m_iOffset)->x_stat; }
+{   return (LsShmOffset_t)(intptr_t)& ((LsShmHTable *)(intptr_t)m_iOffset)->x_stat; }
 
 
 LsShmOffset_t LsShmHash::getHTableReservedOffset() const
-{   return (LsShmOffset_t)(long) & ((LsShmHTable *)(long)m_iOffset)->x_reserved; }
+{   return (LsShmOffset_t)(intptr_t)& ((LsShmHTable *)(intptr_t)m_iOffset)->x_reserved; }
 
 
 
@@ -1399,7 +1399,7 @@ LsShmHash::iteroffset LsShmHash::iterGrowValue(iteroffset iterOff,
 LsShmHash::iteroffset LsShmHash::findNum(LsShmHash *pThis, ls_strpair_t *pParms)
 {
     LsShmHash::iteroffset offset = {0};
-    LsShmHKey key = (LsShmHKey)(long)ls_str_buf(&pParms->key);
+    LsShmHKey key = (LsShmHKey)(intptr_t)ls_str_buf(&pParms->key);
     uint32_t hashIndx = pThis->getIndex(key, pThis->capacity());
     if (pThis->getBitMapEnt(hashIndx) == 0)     // quick check
         return offset;
@@ -1428,7 +1428,7 @@ LsShmHash::iteroffset LsShmHash::getNum(LsShmHash *pThis,
     ls_str_set(&nparms.key, (char *)&keyptr, sizeof(LsShmHKey));
     nparms.val = pParms->val;
 
-    return pThis->doGet(iterOff, (LsShmHKey)(long)keyptr, &nparms, pFlag);
+    return pThis->doGet(iterOff, (LsShmHKey)(intptr_t)keyptr, &nparms, pFlag);
 }
 
 
@@ -1441,7 +1441,7 @@ LsShmHash::iteroffset LsShmHash::insertNum(LsShmHash *pThis,
     ls_str_set(&nparms.key, (char *)&keyptr, sizeof(LsShmHKey));
     nparms.val = pParms->val;
 
-    return pThis->doInsert(iterOff, (LsShmHKey)(long)keyptr, &nparms);
+    return pThis->doInsert(iterOff, (LsShmHKey)(intptr_t)keyptr, &nparms);
 }
 
 
@@ -1453,7 +1453,7 @@ LsShmHash::iteroffset LsShmHash::setNum(LsShmHash *pThis, ls_strpair_t *pParms)
     ls_str_set(&nparms.key, (char *)&keyptr, sizeof(LsShmHKey));
     nparms.val = pParms->val;
 
-    return pThis->doSet(iterOff, (LsShmHKey)(long)keyptr, &nparms);
+    return pThis->doSet(iterOff, (LsShmHKey)(intptr_t)keyptr, &nparms);
 }
 
 
@@ -1466,7 +1466,7 @@ LsShmHash::iteroffset LsShmHash::updateNum(LsShmHash *pThis,
     ls_str_set(&nparms.key, (char *)&keyptr, sizeof(LsShmHKey));
     nparms.val = pParms->val;
 
-    return pThis->doUpdate(iterOff, (LsShmHKey)(long)keyptr, &nparms);
+    return pThis->doUpdate(iterOff, (LsShmHKey)(intptr_t)keyptr, &nparms);
 }
 
 

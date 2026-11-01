@@ -464,7 +464,7 @@ void AcmeCertMap::reportAutoBuf(const char *desc, AutoBuf *autoBuf, int err)
         if (!nl)
             break;
         int msgsz = (nl + 1) - pos;
-        char msg[msgsz + 1];
+        char *msg = (char *)alloca(msgsz + 1);
         memcpy(msg, pos, msgsz);
         msg[msgsz] = 0;
         if (err)
@@ -506,7 +506,7 @@ int AcmeCertMap::acmeRequest(char *acmeFile, char *desc, char * const *argv,
         int count = envCount(p);
         /* Initializing a variable-length array is a g++ extension that clang
          * rejects; the loop below fills everything past the third slot. */
-        const char *envp[4 + count];
+        const char **envp = (const char **)alloca(sizeof(const char *) * (4 + count));
         envp[0] = configEnv;
         envp[1] = acmeEnv;
         envp[2] = serverEnv;
@@ -791,7 +791,7 @@ static bool same_alts(const char *alts1, const char *alts2)
 int AcmeCertMap::runAcme(char *acmeFile, AcmeCert *cert, const char **aliases,
                          int numAliases)
 {
-    const char *argv[12 + 2 * numAliases];
+    const char **argv = (const char **)alloca(sizeof(const char *) * (12 + 2 * numAliases));
     argv[0] = acmeFile;
     argv[1] = cert->getRenew() ? "--renew" : "--issue";
     argv[2] = "-d";
@@ -832,7 +832,7 @@ int AcmeCertMap::runAcme(char *acmeFile, AcmeCert *cert, const char **aliases,
 int AcmeCertMap::requestCert(char *acmeFile, char *configDir, AcmeCert *cert)
 {
     AcmeAliasMap *aliasMap = cert->getAcmeAliasMap();
-    const char *aliases[aliasMap->size() + 1];
+    const char **aliases = (const char **)alloca(sizeof(const char *) * (aliasMap->size() + 1));
     int numAliases = 0, numOptional = 0;
     // Required aliases go first so the optional ones can be dropped off the end.
     for (AcmeAliasMap::iterator it = aliasMap->begin(); it != aliasMap->end();
@@ -1002,9 +1002,10 @@ char *UseAcme::getDomainDir(char *configDir, char dir[], size_t dirlen)
 char *UseAcme::getDomainDirName(char *configDir, const char *domain, char dir[], 
                                 size_t dirlen)
 {
-    char dironly[dirlen / 2];
+    size_t dironly_len = dirlen / 2;
+    char *dironly = (char *)alloca(dironly_len ? dironly_len : 1);
     snprintf(dir, dirlen, "%s/certs/%s", configDir, 
-             getDomainDirNameOnly(domain, dironly, sizeof(dironly)));
+             getDomainDirNameOnly(domain, dironly, dironly_len));
     return dir;
 }
 

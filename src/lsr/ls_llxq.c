@@ -36,7 +36,11 @@
 #undef cpu_relax
 #endif
 #if defined(__i386__) || defined(__ia64__) || defined(__x86_64) || defined(__x86_64__)
+#ifdef _MSC_VER
+#define cpu_relax()         _mm_pause()
+#else
 #define cpu_relax()         asm volatile("pause\n": : :"memory")
+#endif
 #else
 #define cpu_relax()         {};
 #endif

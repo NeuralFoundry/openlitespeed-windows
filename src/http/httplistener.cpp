@@ -356,6 +356,13 @@ int HttpListener::bindUdpPort()
     assert(m_pUdpListener == NULL);
     UdpListener *pUdp = new UdpListener(NULL, this);
     pUdp->setAddr(&m_sockAddr);
+#ifdef _WIN32
+    if (ols_worker_no())
+    {
+        m_pUdpListener = pUdp;
+        return 0;
+    }
+#endif
     if (m_flag & LS_SOCK_REUSEPORT)
         ret = pUdp->bindReusePort(HttpServerConfig::getInstance().getChildren(), getAddrStr());
     else
@@ -495,7 +502,9 @@ int HttpListener::passFds2(int target_fd)
     LS_INFO("[%s] Pass listener, copy fd %d to %d.", getAddrStr(),
         getfd(), target_fd);
     dup2(getfd(), target_fd);
+#ifndef _WIN32
     close(getfd());
+#endif
     return 1;
 }
 

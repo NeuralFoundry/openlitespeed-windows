@@ -676,6 +676,9 @@ bool HttpExtConnector::isRecoverable()
     if (m_iState & (HEC_ABORT_REQUEST | HEC_ERROR | HEC_FWD_RESP_BODY
                     | HEC_REDIRECT))
         return false;
+    if (m_iRespHeaderSize > 0 || m_iRespBodyRcvd > 0
+        || (m_pSession && m_pSession->isRespHeaderSent()))
+        return false;
     //if ( m_iReqBodySent == 0 )
     //    return true;
     //HttpReq * pReq = getHttpSession()->getReq();

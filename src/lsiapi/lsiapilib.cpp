@@ -1040,7 +1040,7 @@ static int lsi_remove_timer(int timer_id)
 
 
 /*
-static long create_event(evtcb_pf cb,
+static intptr_t create_event(evtcb_pf cb,
                          const lsi_session_t *session, long lParam, void *pParam)
 {
     return (long)EvtcbQue::getInstance().schedule(cb, session,
@@ -1048,7 +1048,7 @@ static long create_event(evtcb_pf cb,
 }
 */
 
-static long create_event(evtcb_pf cb, const lsi_session_t *session,
+static intptr_t create_event(evtcb_pf cb, const lsi_session_t *session,
                          long lParam, void *pParam, int nowait)
 {
     EvtcbQue::getInstance().schedule(cb, (evtcbhead_t *)session,
@@ -1066,7 +1066,7 @@ static long create_session_resume_event(const lsi_session_t *session,
 }
 
 
-static long get_event_obj(evtcb_pf cb, const lsi_session_t *session,
+static intptr_t get_event_obj(evtcb_pf cb, const lsi_session_t *session,
                          long lParam, void *pParam)
 {
    // return (long)EvtcbQue::getInstance().getNodeObj(cb, pSession, lParam, pParam);
@@ -1074,17 +1074,17 @@ static long get_event_obj(evtcb_pf cb, const lsi_session_t *session,
     HttpSession *pSession = (HttpSession *)((LsiSession *)session);
     if (pSession)
         pSession->setBackRefPtr(EvtcbQue::getSessionRefPtr(pEvtObj));
-    return (long)pEvtObj;
+    return (intptr_t)pEvtObj;
 }
 
 
-static void schedule_event(long event_obj, int nowait)
+static void schedule_event(intptr_t event_obj, int nowait)
 {
     EvtcbQue::getInstance().schedule((evtcbnode_s *)event_obj, nowait);
 }
 
 
-static void cancel_event(const lsi_session_t *session, long event_obj)
+static void cancel_event(const lsi_session_t *session, intptr_t event_obj)
 {
     HttpSession *pSession = (HttpSession *)((LsiSession *)session);
     pSession->cancelEvent((evtcbnode_s *)event_obj);
@@ -2820,7 +2820,8 @@ static void foreach_resp_header(const HttpSession *session, const char *filter,
     MtLock lk(*ptr);
     HttpRespHeaders &respHeaders = const_cast<HttpSession *>(session)->getResp()->getRespHeaders();
     int count = respHeaders.getCount();
-    struct iovec keys[count], vals[count];
+    struct iovec *keys = (struct iovec *)alloca(sizeof(struct iovec) * (count ? count : 1));
+    struct iovec *vals = (struct iovec *)alloca(sizeof(struct iovec) * (count ? count : 1));
     int found = respHeaders.getAllHeaders(keys, vals, count);
     LSI_DBGH(session, "foreach_resp_header: count %d, found %d\n", count, found);
     for (int i = 0; i < found; i++)

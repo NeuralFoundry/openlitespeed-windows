@@ -78,8 +78,8 @@ void HttpResourceManager::releaseAll()
 
 static int reduceBuf(void *pObj, void *size)
 {
-    ((VMemBuf *)pObj)->shrinkBuf((long) size);
-    //((VMemBuf *)pObj)->resizeFile( (long) size );
+    ((VMemBuf *)pObj)->shrinkBuf((intptr_t)size);
+    //((VMemBuf *)pObj)->resizeFile( (intptr_t)size );
     return 0;
 }
 

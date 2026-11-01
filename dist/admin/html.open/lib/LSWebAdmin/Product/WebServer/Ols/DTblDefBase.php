@@ -794,7 +794,7 @@ class DTblDefBase extends ProductDTblDefBase
 	{
 		$attrs = [
 			self::NewTextAttr('serverName', DMsg::ALbl('l_servername'), 'name'),
-			self::NewIntAttr('httpdWorkers', DMsg::ALbl('l_numworkers'), true, 1, 16),
+			self::NewIntAttr('httpdWorkers', DMsg::ALbl('l_numworkers'), true, 1, 32),
 			self::NewCustFlagAttr('runningAs', DMsg::ALbl('l_runningas'), (UiDAttrBase::BM_NOFILE | UiDAttrBase::BM_NOEDIT)),
 			self::NewCustFlagAttr('user', null, (UiDAttrBase::BM_HIDE | UiDAttrBase::BM_NOEDIT), false),
 			self::NewCustFlagAttr('group', null, (UiDAttrBase::BM_HIDE | UiDAttrBase::BM_NOEDIT), false),

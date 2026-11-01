@@ -82,6 +82,9 @@ int ls_expandfile(int fd, LsShmOffset_t fromsize, LsShmXSize_t incrsize)
 
 static LsShmSize_t getShmPageSize()
 {
+#ifdef _WIN32
+    return 0x10000;
+#endif
     long pagesize = sysconf(_SC_PAGESIZE);
     if (pagesize < LSSHM_PAGESIZE)
         return LSSHM_PAGESIZE;
@@ -248,7 +251,7 @@ int LsShm::isOffsetValid(LsShmOffset_t offset)
 
 LsShmOffset_t LsShm::getMapStatOffset() const
 {
-    return (LsShmOffset_t)(long) & ((LsShmMap *)0)->x_stat;
+    return (LsShmOffset_t)(intptr_t)& ((LsShmMap *)0)->x_stat;
 }
 
 

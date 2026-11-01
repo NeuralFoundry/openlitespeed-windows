@@ -63,7 +63,7 @@ extern "C" {
 #define LSAPI_ENDIAN_BIG            1
 #define LSAPI_ENDIAN_BIT            1
 
-#if defined(__i386__)||defined( __x86_64 )||defined( __x86_64__ )
+#if defined(__i386__)||defined( __x86_64 )||defined( __x86_64__ )||defined(_M_IX86)||defined(_M_X64)||defined(_M_ARM64)
 #define LSAPI_ENDIAN                LSAPI_ENDIAN_LITTLE
 #else
 #define LSAPI_ENDIAN                LSAPI_ENDIAN_BIG

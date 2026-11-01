@@ -20,7 +20,7 @@
 #ifndef EPOLL_H
 #define EPOLL_H
 
-#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__)
+#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__) || defined(_WIN32)
 
 #include <edio/multiplexer.h>
 #include <edio/reactorindex.h>

@@ -20,7 +20,9 @@ int ReusePortFds::passFds(const char *type, const char *addr, int target_fd)
             LS_INFO("[%s %s], SO_REUSEPORT #%d, pass listener copy fd %d to %d.",
                     type, addr, count, fd, target_fd);
             dup2(fd, target_fd);
+#ifndef _WIN32
             ls_close(fd);
+#endif
         }
     }
     return count;

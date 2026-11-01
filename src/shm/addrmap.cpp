@@ -150,6 +150,170 @@ int AddrMap::addLargePage(AddrOffPair info, size_t size)
 }
 
 
+#ifdef _WIN32
+
+#include <map>
+
+#ifndef MEM_RESERVE_PLACEHOLDER
+#define MEM_RESERVE_PLACEHOLDER     0x00040000
+#endif
+#ifndef MEM_REPLACE_PLACEHOLDER
+#define MEM_REPLACE_PLACEHOLDER     0x00004000
+#endif
+#ifndef MEM_PRESERVE_PLACEHOLDER
+#define MEM_PRESERVE_PLACEHOLDER    0x00000002
+#endif
+#ifndef MEM_COALESCE_PLACEHOLDERS
+#define MEM_COALESCE_PLACEHOLDERS   0x00000001
+#endif
+
+typedef PVOID (WINAPI *ols_va2_t)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, void *, ULONG);
+typedef PVOID (WINAPI *ols_mv3_t)(HANDLE, HANDLE, PVOID, ULONG64, SIZE_T, ULONG, ULONG,
+                                  void *, ULONG);
+typedef BOOL (WINAPI *ols_uv2_t)(HANDLE, PVOID, ULONG);
+
+static ols_va2_t s_va2;
+static ols_mv3_t s_mv3;
+static ols_uv2_t s_uv2;
+static std::map<char *, size_t> s_viewLen;
+
+static int loadPlaceholderApi()
+{
+    if (s_va2)
+        return 0;
+    HMODULE m = GetModuleHandleW(L"kernelbase.dll");
+    if (!m)
+        return -1;
+    s_mv3 = (ols_mv3_t)GetProcAddress(m, "MapViewOfFile3");
+    s_uv2 = (ols_uv2_t)GetProcAddress(m, "UnmapViewOfFile2");
+    s_va2 = (ols_va2_t)GetProcAddress(m, "VirtualAlloc2");
+    if (!s_va2 || !s_mv3 || !s_uv2)
+    {
+        s_va2 = NULL;
+        errno = ENOSYS;
+        return -1;
+    }
+    return 0;
+}
+
+int AddrMap::mapAddrSpace(size_t total)
+{
+    int needed = total - getMaxOffset();
+    if (needed <= 0)
+        return LS_OK;
+    if (loadPlaceholderApi() != 0)
+        return LS_FAIL;
+    size_t bytes = (needed + LARGE_PAGE_MASK) & ~LARGE_PAGE_MASK;
+    char *base = (char *)s_va2(NULL, NULL, bytes + LARGE_PAGE_SIZE,
+                               MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
+                               NULL, 0);
+    if (!base)
+        return LS_FAIL;
+    char *aligned = (char *)(((uintptr_t)base + LARGE_PAGE_MASK) & ~LARGE_PAGE_MASK);
+    char *end = base + bytes + LARGE_PAGE_SIZE;
+    if (aligned > base)
+    {
+        VirtualFree(base, aligned - base, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+        VirtualFree(base, 0, MEM_RELEASE);
+    }
+    if (aligned + bytes < end)
+    {
+        VirtualFree(aligned, bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+        VirtualFree(aligned + bytes, 0, MEM_RELEASE);
+    }
+    for (char *p = aligned; p + LARGE_PAGE_SIZE < aligned + bytes; p += LARGE_PAGE_SIZE)
+        VirtualFree(p, LARGE_PAGE_SIZE, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+    AddrOffPair pair;
+    pair.m_ptr = aligned;
+    pair.m_offset = getMaxOffset();
+    if (addLargePage(pair, bytes) == LS_FAIL)
+    {
+        for (char *p = aligned; p < aligned + bytes; p += LARGE_PAGE_SIZE)
+            VirtualFree(p, 0, MEM_RELEASE);
+        return LS_FAIL;
+    }
+    return LS_OK;
+}
+
+
+int AddrMap::remap(int fd, size_t start_offset, size_t new_size,
+                   size_t page_size)
+{
+    if (mapAddrSpace(new_size) == LS_FAIL)
+        return LS_FAIL;
+    HANDLE hFile = ols_handle_from_fd(fd);
+    HANDLE hSec = CreateFileMappingW(hFile, NULL, PAGE_READWRITE, 0, 0, NULL);
+    if (!hSec)
+    {
+        errno = ols_errno_from_win(GetLastError());
+        return LS_FAIL;
+    }
+    size_t page_start = start_offset & ~LARGE_PAGE_MASK;
+    int ret = LS_OK;
+    while (page_start < new_size)
+    {
+        size_t block_end = page_start + LARGE_PAGE_SIZE;
+        if (block_end > new_size)
+            block_end = new_size;
+        size_t len = block_end - page_start;
+        char *ptr = offset2ptr(page_start);
+        std::map<char *, size_t>::iterator it = s_viewLen.find(ptr);
+        size_t cur = (it == s_viewLen.end()) ? 0 : it->second;
+        if (cur != len)
+        {
+            if (cur > 0)
+            {
+                s_uv2(GetCurrentProcess(), ptr, MEM_PRESERVE_PLACEHOLDER);
+                if (cur < LARGE_PAGE_SIZE)
+                    VirtualFree(ptr, LARGE_PAGE_SIZE,
+                                MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+                s_viewLen.erase(ptr);
+            }
+            if (len < LARGE_PAGE_SIZE)
+                VirtualFree(ptr, len, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+            void *view = s_mv3(hSec, GetCurrentProcess(), ptr, (ULONG64)page_start,
+                               len, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, NULL, 0);
+            if (view != ptr)
+            {
+                errno = ols_errno_from_win(GetLastError());
+                ret = LS_FAIL;
+                break;
+            }
+            s_viewLen[ptr] = len;
+        }
+        page_start = block_end;
+    }
+    CloseHandle(hSec);
+    return ret;
+}
+
+static int unmap_large_page(void *pPage)
+{
+    char *ptr = (char *)pPage;
+    std::map<char *, size_t>::iterator it = s_viewLen.find(ptr);
+    if (it != s_viewLen.end())
+    {
+        size_t len = it->second;
+        s_uv2(GetCurrentProcess(), ptr, MEM_PRESERVE_PLACEHOLDER);
+        if (len < LARGE_PAGE_SIZE)
+            VirtualFree(ptr, LARGE_PAGE_SIZE, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+        s_viewLen.erase(it);
+    }
+    VirtualFree(ptr, 0, MEM_RELEASE);
+    return 0;
+}
+
+
+void AddrMap::unmap()
+{
+    m_off2ptrTable.for_each(m_off2ptrTable.begin(), m_off2ptrTable.end(),
+                            unmap_large_page);
+    m_off2ptrTable.clear();
+    m_ptr2offTable.clear();
+}
+
+#else
+
 int AddrMap::mapAddrSpace(size_t total)
 {
     int needed = total - getMaxOffset();
@@ -161,13 +325,13 @@ int AddrMap::mapAddrSpace(size_t total)
                                MAP_ANON|MAP_SHARED, -1, 0);
     if (pair.m_ptr == MAP_FAILED)
         return LS_FAIL;
-    if (((unsigned long)pair.m_ptr & LARGE_PAGE_MASK) == 0)
+    if (((uintptr_t)pair.m_ptr & LARGE_PAGE_MASK) == 0)
         bytes += LARGE_PAGE_SIZE;
     else
     {
         char *pRelease = pair.m_ptr;
         size_t size; 
-        pair.m_ptr = (char *)(((unsigned long)pair.m_ptr & ~LARGE_PAGE_MASK) 
+        pair.m_ptr = (char *)(((uintptr_t)pair.m_ptr & ~LARGE_PAGE_MASK) 
                             + LARGE_PAGE_SIZE);
         size = pair.m_ptr - pRelease;
         munmap(pRelease, size);
@@ -221,6 +385,9 @@ void AddrMap::unmap()
     m_off2ptrTable.clear();
     m_ptr2offTable.clear();
 }
+
+
+#endif
 
 
 size_t AddrMap::getAvailAddrSpace( size_t offset, size_t required_size)

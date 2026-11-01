@@ -941,7 +941,7 @@ int HttpMime::processOneLine(const char *pFilePath, char *pLine,
 
 void HttpMime::setCompressible(MimeSetting *pSetting, void *pValue)
 {
-    pSetting->getExpires()->setCompressible((long)pValue);
+    pSetting->getExpires()->setCompressible((intptr_t)pValue);
     pSetting->getExpires()->setBit(CONFIG_COMPRESS);
 }
 
@@ -985,7 +985,7 @@ int HttpMime::setCompressibleByType(const char *pValue,
             setDefaultCompressibleType(pParent, pLogId);
         }
         else if (updateMIME(pType, HttpMime::setCompressible,
-                       (void *)compressible, pParent) == -1)
+                       (void *)(intptr_t)compressible, pParent) == -1)
         {
             LS_NOTICE("[%s] Can not find compressible MIME type: %s, add it!",
                       pLogId, pType);
@@ -993,7 +993,7 @@ int HttpMime::setCompressibleByType(const char *pValue,
             char achTmp[] = "";
             addUpdateMIME(achTmp, pType, pReason, 0);
             updateMIME(pType, HttpMime::setCompressible,
-                       (void *)compressible, pParent);
+                       (void *)(intptr_t)compressible, pParent);
         }
     }
     return 0;

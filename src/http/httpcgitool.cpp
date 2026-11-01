@@ -101,6 +101,23 @@ static int checkRespHeaderSize(HttpExtConnector *pExtConn, int nameLen,
 }
 
 
+
+#ifdef _WIN32
+static void addPathEnv(IEnv *pEnv, const char *name, int nameLen,
+                       const char *val, int len)
+{
+    char buf[10240];
+    int n = ols_native_path(val, len, buf, sizeof(buf));
+    if (n > 0)
+        pEnv->add(name, nameLen, buf, n);
+    else
+        pEnv->add(name, nameLen, val, len);
+}
+#define ADD_PATH_ENV(e, n, nl, v, vl) addPathEnv(e, n, nl, v, vl)
+#else
+#define ADD_PATH_ENV(e, n, nl, v, vl) (e)->add(n, nl, v, vl)
+#endif
+
 int HttpCgiTool::processContentType(HttpSession *pSession,
                                     const char *pValue, int valLen)
 {
@@ -581,7 +598,7 @@ int HttpCgiTool::addSpecialEnv(IEnv *pEnv, HttpReq *pReq)
 {
     const AutoStr2 *psTemp = pReq->getRealPath();
     if (psTemp)
-        pEnv->add("SCRIPT_FILENAME", 15, psTemp->c_str(), psTemp->len());
+        ADD_PATH_ENV(pEnv, "SCRIPT_FILENAME", 15, psTemp->c_str(), psTemp->len());
     pEnv->add("QUERY_STRING", 12, pReq->getQueryString(),
               pReq->getQueryStringLen());
     //const char * pTemp = pReq->getOrgURI();
@@ -689,7 +706,7 @@ int HttpCgiTool::buildCommonEnv(IEnv *pEnv, HttpSession *pSession)
     //extensions of CGI/1.1
     const AutoStr2 *pStr = pReq->getDocRoot();
     if (!isPython)
-        pEnv->add("DOCUMENT_ROOT", 13,
+        ADD_PATH_ENV(pEnv, "DOCUMENT_ROOT", 13,
                   pStr->c_str(), pStr->len() - 1);
 
 
@@ -735,7 +752,7 @@ int HttpCgiTool::buildCommonEnv(IEnv *pEnv, HttpSession *pSession)
                                     achTranslated, sizeof(achTranslated));
             if (m != -1)
             {
-                pEnv->add("PATH_TRANSLATED", 15, achTranslated, m);
+                ADD_PATH_ENV(pEnv, "PATH_TRANSLATED", 15, achTranslated, m);
                 ++count;
             }
 

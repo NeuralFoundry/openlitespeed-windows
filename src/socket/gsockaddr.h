@@ -34,7 +34,7 @@
 #define SKIP_ADNS_CACHE     32
 
 
-#if defined(linux) || defined(__linux) || defined(__linux__)
+#if defined(linux) || defined(__linux) || defined(__linux__) || defined(_WIN32)
 
 #define LS_UDS_MAX_LEN  108
 

@@ -77,7 +77,7 @@ const
     switch (pAddr->sa_family)
     {
     case AF_INET:
-        return m_v4.find((void *)(unsigned long)(((sockaddr_in *)
+        return m_v4.find((void *)(uintptr_t)(((sockaddr_in *)
                          pAddr)->sin_addr.s_addr));
     case AF_INET6:
         return m_v6.find((void *)(&((sockaddr_in6 *)pAddr)->sin6_addr));
@@ -93,7 +93,7 @@ void ClientCache::add(ClientInfo *pInfo)
     switch (pAddr->sa_family)
     {
     case AF_INET:
-        m_v4.insert((void *)(unsigned long)(((sockaddr_in *)
+        m_v4.insert((void *)(uintptr_t)(((sockaddr_in *)
                                              pAddr)->sin_addr.s_addr),
                     pInfo);
         break;
@@ -117,7 +117,7 @@ ClientInfo *ClientCache::del(const struct sockaddr *pAddr)
     {
     case AF_INET:
         iter = m_v4.find(
-                   (void *)(unsigned long)(((sockaddr_in *)pAddr)->sin_addr.s_addr));
+                   (void *)(uintptr_t)(((sockaddr_in *)pAddr)->sin_addr.s_addr));
         if (iter != m_v4.end())
         {
             ClientInfo *pInfo = iter.second();

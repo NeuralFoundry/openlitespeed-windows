@@ -76,7 +76,7 @@ int MultiplexerFactory::getType(const char *pType)
     }
     if (i == BEST)
     {
-#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__)
+#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__) || defined(_WIN32)
         i = EPOLL;
 #endif
 
@@ -97,7 +97,7 @@ Multiplexer *MultiplexerFactory::getNew(int type)
 {
     switch (type)
     {
-#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__)
+#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__) || defined(_WIN32)
 #if 0
     case RT_SIG:
         return new RTsigio();

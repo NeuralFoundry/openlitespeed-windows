@@ -38,7 +38,7 @@ public:
     IPAcc(const IPAcc &rhs)
         : data(rhs.data)
     {}
-    int getAccess() const       {   return (long)(data->second());  }
+    int getAccess() const       {   return (intptr_t)(data->second());  }
     const void *key() const     {   return data->first();           }
     bool isNull() const         {   return data == NULL; }
 };
@@ -56,19 +56,19 @@ public:
 
     int update(in_addr_t ip, long allow)
     {
-        return (GHash::update((void *)(unsigned long)ip, (void *)allow) == NULL);
+        return (GHash::update((void *)(uintptr_t)ip, (void *)(intptr_t)allow) == NULL);
     }
 
     void remove(in_addr_t ip)
     {
-        GHash::iterator iter = GHash::find((void *)(unsigned long)ip);
+        GHash::iterator iter = GHash::find((void *)(uintptr_t)ip);
         if (iter != end())
             GHash::erase(iter);
     }
 
     IPAcc find(in_addr_t addr) const
     {
-        return GHash::find((void *)(unsigned long)addr);
+        return GHash::find((void *)(uintptr_t)addr);
     }
 
 

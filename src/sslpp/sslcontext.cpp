@@ -816,7 +816,7 @@ int SslContext::setMultiKeyCertFile(const char *pKeyFile, int iKeyType,
                                     const char *pCertFile, int iCertType,
                                     int chained, int ecc_only)
 {
-    int max_path_len = 4096;
+    const int max_path_len = 4096;
     int i, iCertLen, iKeyLen, iLoaded = 0;
     char achCert[max_path_len], achKey[max_path_len];
     const char *apExt[4] = {"", ".ecc", ".rsa", ".dsa"};

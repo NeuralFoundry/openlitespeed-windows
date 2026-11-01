@@ -42,14 +42,150 @@
 #include <util/stringlist.h>
 #include <util/stringtool.h>
 #include <util/xmlnode.h>
+#include <util/datetime.h>
 
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 const int MAX_LINE_LENGTH = 8192;
+
+#define HT_RETIRE_SECONDS   10
+#define HT_CHAIN_MAX        128
+
+struct HtWatch
+{
+    AutoStr2                m_path;
+    AutoStr2                m_rules;
+    AutoStr2                m_base;
+    const RewriteMapList   *m_pMaps;
+    RewriteRuleList        *m_pOwn;
+    uint32_t                m_iCfgBits;
+    unsigned char           m_iCfgEngine;
+    char                    m_iHasBase;
+    char                    m_iExists;
+    time_t                  m_tChecked;
+    dev_t                   m_dev;
+    ino_t                   m_ino;
+    off_t                   m_size;
+    struct timespec         m_mtime;
+    struct timespec         m_ctime;
+};
+
+struct HtRetired
+{
+    HtRetired       *m_pNext;
+    time_t           m_tWhen;
+    RewriteRuleList *m_pList;
+};
+
+static HtRetired *s_pHtRetired = NULL;
+static time_t     s_tHtPurged = 0;
+
+static void retireRules(RewriteRuleList *pList)
+{
+    if (!pList->begin())
+    {
+        delete pList;
+        return;
+    }
+    HtRetired *p = new HtRetired;
+    p->m_pNext = s_pHtRetired;
+    p->m_tWhen = DateTime::s_curTime;
+    p->m_pList = pList;
+    s_pHtRetired = p;
+}
+
+static void purgeRetired()
+{
+    if (s_tHtPurged == DateTime::s_curTime)
+        return;
+    s_tHtPurged = DateTime::s_curTime;
+    HtRetired **pp = &s_pHtRetired;
+    while (*pp)
+    {
+        HtRetired *p = *pp;
+        if (DateTime::s_curTime - p->m_tWhen > HT_RETIRE_SECONDS)
+        {
+            *pp = p->m_pNext;
+            delete p->m_pList;
+            delete p;
+        }
+        else
+            pp = &p->m_pNext;
+    }
+}
+
+static int  s_iHtNotifyFd = -2;
+static struct sockaddr_un s_htNotifyAddr;
+
+static void initHtNotify()
+{
+    if (s_iHtNotifyFd != -2)
+        return;
+    const char *p = getenv("OLSCP_HT_NOTIFY");
+    s_iHtNotifyFd = -1;
+    if (p && *p == '/' && strlen(p) < sizeof(s_htNotifyAddr.sun_path))
+    {
+        memset(&s_htNotifyAddr, 0, sizeof(s_htNotifyAddr));
+        s_htNotifyAddr.sun_family = AF_UNIX;
+        memcpy(s_htNotifyAddr.sun_path, p, strlen(p));
+        s_iHtNotifyFd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    }
+}
+
+static void notifyHtaccess(const AutoStr2 &path)
+{
+    initHtNotify();
+    if (s_iHtNotifyFd >= 0)
+        sendto(s_iHtNotifyFd, path.c_str(), path.len(), MSG_DONTWAIT,
+               (struct sockaddr *)&s_htNotifyAddr, sizeof(s_htNotifyAddr));
+}
+
+static int isMainThread()
+{
+#ifdef _WIN32
+    return ols_main_thread();
+#else
+    return syscall(SYS_gettid) == getpid();
+#endif
+}
+
+static int statHtaccess(HtWatch *w, int update)
+{
+    struct stat st;
+    int exists = (stat(w->m_path.c_str(), &st) == 0 && S_ISREG(st.st_mode));
+    int changed;
+    if (!exists)
+        changed = w->m_iExists;
+    else
+        changed = !w->m_iExists || st.st_dev != w->m_dev
+                  || st.st_ino != w->m_ino || st.st_size != w->m_size
+                  || st.st_mtim.tv_sec != w->m_mtime.tv_sec
+                  || st.st_mtim.tv_nsec != w->m_mtime.tv_nsec
+                  || st.st_ctim.tv_sec != w->m_ctime.tv_sec
+                  || st.st_ctim.tv_nsec != w->m_ctime.tv_nsec;
+    if (update)
+    {
+        w->m_iExists = exists;
+        if (exists)
+        {
+            w->m_dev = st.st_dev;
+            w->m_ino = st.st_ino;
+            w->m_size = st.st_size;
+            w->m_mtime = st.st_mtim;
+            w->m_ctime = st.st_ctim;
+        }
+    }
+    return changed;
+}
 
 CtxInt HttpContext::s_defaultInternal =
 {
@@ -77,6 +213,8 @@ HttpContext::HttpContext()
     , m_pRewriteBase(NULL)
     , m_pRewriteRules(NULL)
     , m_pParent(NULL)
+    , m_pHtWatch(NULL)
+    , m_tNullChecked(0)
 {
 }
 
@@ -155,6 +293,14 @@ int HttpContext::setHeaderOps(const char *pLogId, const char *pHeaders,
 
 void HttpContext::releaseHTAConf()
 {
+    if (m_pHtWatch)
+    {
+        if (m_pRewriteRules == m_pHtWatch->m_pOwn)
+            m_pRewriteRules = NULL;
+        delete m_pHtWatch->m_pOwn;
+        delete m_pHtWatch;
+        m_pHtWatch = NULL;
+    }
     if ((m_pRewriteRules) && (m_iConfigBits & BIT_REWRITE_RULE))
         delete m_pRewriteRules;
     if ((m_iConfigBits & BIT_CTXINT))
@@ -766,7 +912,7 @@ void HttpContext::inherit(const HttpContext *pRootContext)
 
 
 
-    if (m_iConfigBits & BIT_REWRITE_INHERIT)
+    if ((m_iConfigBits & BIT_REWRITE_INHERIT) && !m_pHtWatch)
     {
         RewriteRuleList *pList =
             getValidRewriteRules(m_pParent);
@@ -1315,6 +1461,16 @@ int HttpContext::configRewriteRule(const RewriteMapList *pMapList,
         htaccessPath = achHandler;
     }
 
+    if (m_pHtWatch && (!pRule || strcasestr(pRule, "RewriteFile") == NULL))
+    {
+        m_pHtWatch->m_rules.setStr(pRule ? pRule : "");
+        reloadHtaccess();
+        return 0;
+    }
+    if (htaccessPath && *htaccessPath == '/' && !m_pHtWatch
+        && !m_pRewriteRules && !(m_iConfigBits & BIT_REWRITE_RULE)
+        && (!pRule || strcasestr(pRule, "RewriteFile") == NULL))
+        return watchHtaccess(pMapList, pRule, htaccessPath);
 
     if(htaccessPath && access(htaccessPath, F_OK) == 0)
     {
@@ -1343,6 +1499,137 @@ int HttpContext::configRewriteRule(const RewriteMapList *pMapList,
     }
 
     return 0;
+}
+
+
+int HttpContext::watchHtaccess(const RewriteMapList *pMapList,
+                               const char *pRule, const char *pPath)
+{
+    HtWatch *w = new HtWatch();
+    w->m_path.setStr(pPath);
+    if (pRule)
+        w->m_rules.setStr(pRule);
+    w->m_pMaps = pMapList;
+    w->m_pOwn = new RewriteRuleList();
+    w->m_iCfgBits = m_iConfigBits & (BIT_REWRITE_ENGINE | BIT_REWRITE_INHERIT);
+    w->m_iCfgEngine = m_iRewriteEtag & REWRITE_MASK;
+    w->m_iHasBase = (m_pRewriteBase != NULL);
+    if (m_pRewriteBase)
+        w->m_base.setStr(m_pRewriteBase->c_str(), m_pRewriteBase->len());
+    w->m_tChecked = DateTime::s_curTime;
+    m_pHtWatch = w;
+    initHtNotify();
+    statHtaccess(w, 1);
+    loadHtaccessRules();
+    if (w->m_iExists)
+        notifyHtaccess(w->m_path);
+    return 0;
+}
+
+
+void HttpContext::loadHtaccessRules()
+{
+    HtWatch *w = m_pHtWatch;
+    RewriteRuleList *pList = new RewriteRuleList();
+    RewriteRule::setLogger(NULL, TmpLogId::getLogId());
+    if (w->m_rules.len() > 0)
+    {
+        AutoStr2 rule(w->m_rules.c_str(), w->m_rules.len());
+        char *p = rule.buf();
+        RewriteEngine::parseRules(p, pList, w->m_pMaps, this);
+    }
+    if (w->m_iExists)
+    {
+        AutoStr2 path(w->m_path.c_str(), w->m_path.len());
+        RewriteEngine::loadRewriteFile(path.buf(), pList, w->m_pMaps, this);
+    }
+    w->m_pOwn->swap(*pList);
+    retireRules(pList);
+    if (w->m_pOwn->begin())
+    {
+        m_pRewriteRules = w->m_pOwn;
+        m_iConfigBits |= BIT_REWRITE_RULE;
+    }
+}
+
+
+void HttpContext::reloadHtaccess()
+{
+    HtWatch *w = m_pHtWatch;
+    m_iConfigBits = (m_iConfigBits & ~(BIT_REWRITE_ENGINE | BIT_REWRITE_INHERIT
+                                       | BIT_REWRITE_RULE)) | w->m_iCfgBits;
+    m_iRewriteEtag = (m_iRewriteEtag & ~REWRITE_MASK) | w->m_iCfgEngine;
+    if (w->m_iHasBase)
+        setRewriteBase(w->m_base.c_str());
+    else if (m_pRewriteBase)
+    {
+        delete m_pRewriteBase;
+        m_pRewriteBase = NULL;
+    }
+    m_pRewriteRules = NULL;
+    loadHtaccessRules();
+}
+
+
+void HttpContext::checkHtaccess()
+{
+    HtWatch *w = m_pHtWatch;
+    if (w->m_tChecked == DateTime::s_curTime)
+        return;
+    w->m_tChecked = DateTime::s_curTime;
+    if (statHtaccess(w, 1))
+    {
+        reloadHtaccess();
+        notifyHtaccess(w->m_path);
+        LS_INFO("[HTACCESS] Reloaded rewrite rules from %s", w->m_path.c_str());
+    }
+    if (!(m_iConfigBits & BIT_REWRITE_ENGINE))
+    {
+        const HttpContext *p = m_pParent;
+        while (p && (p->m_iConfigBits2 & BIT2_NULL_CONTEXT))
+            p = p->m_pParent;
+        if (p)
+            m_iRewriteEtag = (m_iRewriteEtag & ~REWRITE_MASK)
+                             | ((p->m_iRewriteEtag | REWRITE_INHERIT) & REWRITE_MASK);
+    }
+}
+
+
+void HttpContext::refreshHtaccess(const HttpContext *pContext)
+{
+    if (!isMainThread())
+        return;
+    HttpContext *chain[HT_CHAIN_MAX];
+    int n = 0;
+    while (pContext && n < HT_CHAIN_MAX)
+    {
+        chain[n++] = (HttpContext *)pContext;
+        pContext = pContext->m_pParent;
+    }
+    while (--n >= 0)
+    {
+        if (chain[n]->m_pHtWatch)
+            chain[n]->checkHtaccess();
+    }
+    purgeRetired();
+}
+
+
+int HttpContext::reviveNullContext()
+{
+    if (m_tNullChecked == DateTime::s_curTime || !isMainThread())
+        return 0;
+    m_tNullChecked = DateTime::s_curTime;
+    if (!m_pParent || access(getLocation(), F_OK) != 0)
+        return 0;
+    setConfigBit2(BIT2_NULL_CONTEXT, 0);
+    inherit(m_pParent);
+    AutoStr2 path(getLocation());
+    path.append(".htaccess", 9);
+    configRewriteRule(NULL, NULL, path.c_str());
+    LS_DBG_L("[HTACCESS] Directory %s appeared, context %p activated.",
+             getLocation(), this);
+    return 1;
 }
 
 

@@ -18,7 +18,7 @@
 #ifndef PCUTIL_H
 #define PCUTIL_H
 
-#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__)
+#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__) || defined(_WIN32)
 #include <sched.h>
 # define SET_AFFINITY(pid, size, mask) sched_setaffinity(0, size, mask)
 # define GET_AFFINITY(pid, size, mask) sched_getaffinity(0, size, mask)

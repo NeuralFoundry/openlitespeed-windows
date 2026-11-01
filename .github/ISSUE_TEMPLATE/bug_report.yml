@@ -1,0 +1,70 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems must not be reported here. Use [private reporting](https://github.com/NeuralFoundry/openlitespeed-windows/security/advisories/new) instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened
+      description: Describe the problem and any error message you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Install with setup.exe in Laragon mode
+        2. Open http://blog.test/
+        3. The page returns 404
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+  - type: input
+    id: version
+    attributes:
+      label: OpenLiteSpeed for Windows version
+      placeholder: 1.9.4-win.1
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2, Windows Server 2022
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Installed as
+      options:
+        - Standalone
+        - Inside Laragon
+        - Inside XAMPP
+        - Built from source
+    validations:
+      required: true
+  - type: dropdown
+    id: php
+    attributes:
+      label: PHP mode
+      options:
+        - LSAPI (lsphp)
+        - FastCGI (php-cgi)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: Relevant lines from logs\error.log and logs\stderr.log. Remove hostnames and IP addresses you do not want to share.
+      render: text

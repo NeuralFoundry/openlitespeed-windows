@@ -74,7 +74,7 @@ const Pcregex *Pcregex::get(const char *pRegStr, int options, int matchLimit,
 {
     if (s_pStores == NULL)
         s_pStores = new PcregexStores(10, NULL, NULL);
-    PcregexStores::iterator iterStore = s_pStores->find((void*)(long)options);
+    PcregexStores::iterator iterStore = s_pStores->find((void*)(intptr_t)options);
     PcregexStore *pStore;
     PcregexStore::iterator iter;
     if (iterStore != s_pStores->end())
@@ -90,7 +90,7 @@ const Pcregex *Pcregex::get(const char *pRegStr, int options, int matchLimit,
     else
     {
         pStore = new PcregexStore(100);
-        s_pStores->insert((void*)(long)options, pStore);
+        s_pStores->insert((void*)(intptr_t)options, pStore);
     }
 
     Pcregex * pRegex = new Pcregex();

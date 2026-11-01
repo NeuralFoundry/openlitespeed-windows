@@ -33,7 +33,7 @@ PartitionInfo::~PartitionInfo()
 int PartitionInfo::getPartitionInfo(const char *path, uint64_t *outTotal,
                                     uint64_t *outFree)
 {
-#if defined(__linux) || defined(sun)
+#if defined(__linux) || defined(sun) || defined(_WIN32)
     struct statvfs st;
     if (statvfs(path, &st) != 0)
     {

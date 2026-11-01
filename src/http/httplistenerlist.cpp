@@ -15,6 +15,7 @@
 *    You should have received a copy of the GNU General Public License       *
 *    along with this program. If not, see http://www.gnu.org/licenses/.      *
 *****************************************************************************/
+#include <quic/udplistener.h>
 #include "httplistenerlist.h"
 #include <http/httplistener.h>
 #include <http/vhostmap.h>
@@ -207,6 +208,20 @@ static int compare_fd(const void *p1, const void *p2)
 
 void HttpListenerList::passListeners()
 {
+#ifdef _WIN32
+    {
+        int slot = 1000;
+        for (iterator iter = begin(); iter != end(); ++iter)
+        {
+            if ((*iter)->getfd() != -1)
+                ols_handoff_put((*iter)->getfd(), slot++);
+            UdpListener *pUdp = (*iter)->getQuicListener();
+            if (pUdp && pUdp->getfd() != -1)
+                ols_handoff_put(pUdp->getfd(), slot++);
+        }
+        return;
+    }
+#endif
     int startfd = 1000;
     int count = 0;
     int sort = 0;
@@ -218,7 +233,9 @@ void HttpListenerList::passListeners()
             sort = 1;
         count += fd_count;
     }
+#ifndef _WIN32
     close(startfd + count);
+#endif
     if (sort)
         this->sort(compare_fd);
     for (iterator iter = end() - 1; iter >= begin(); --iter)
@@ -238,6 +255,45 @@ void HttpListenerList::passListeners()
 
 void HttpListenerList::recvListeners()
 {
+#ifdef _WIN32
+    {
+        char achAddr[128];
+        struct sockaddr *pSockAddr = (struct sockaddr *)achAddr;
+        HttpListener *pLast = NULL;
+        int fd;
+        LS_NOTICE("Received %d listener sockets from the previous instance.", ols_handoff_count(1));
+        while ((fd = ols_handoff_next()) != -1)
+        {
+            socklen_t alen = 128;
+            if (getsockname(fd, pSockAddr, &alen) == -1)
+            {
+                close(fd);
+                continue;
+            }
+            if (pLast && pLast->isSameAddr(pSockAddr))
+            {
+                int type;
+                socklen_t length = sizeof(int);
+                if (!getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &length))
+                {
+                    if (type == SOCK_STREAM)
+                        pLast->addReusePortSocket(fd);
+                    else if (type == SOCK_DGRAM)
+                        pLast->addUdpSocket(fd);
+                }
+            }
+            else
+            {
+                pLast = new HttpListener();
+                pLast->assign(fd, pSockAddr);
+                push_back(pLast);
+                sort(s_compare);
+                LS_NOTICE("Recv listener %s, fd %d.", pLast->getAddrStr(), fd);
+            }
+        }
+        return;
+    }
+#endif
     int         startfd = 1000;
     char        achSockAddr[128];
     socklen_t   len;

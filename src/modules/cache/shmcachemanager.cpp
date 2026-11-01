@@ -433,7 +433,7 @@ void *ShmCacheManager::getPrivateCacheInfo(const char *pPrivateId,
         offPrivate = getSession(pPrivateId, len);
     else
         offPrivate = m_pSessions->find(pPrivateId, len, &valLen);
-    return (void *)(long)offPrivate;
+    return (void *)(intptr_t)offPrivate;
 }
 
 
@@ -444,7 +444,7 @@ int ShmCacheManager::setPrivateTagFlag(void *pPrivatePurgeData,
     if (pPrivatePurgeData == NULL)
         return LS_FAIL;
     privatePurge.setPool(m_pSessions->getPool());
-    privatePurge.setShmOff((LsShmOffset_t)(long)pPrivatePurgeData);
+    privatePurge.setShmOff((LsShmOffset_t)(intptr_t)pPrivatePurgeData);
 
     privatePurge.addUpdate(pPurginfo);
     return 0;
@@ -458,7 +458,7 @@ purgeinfo_t *ShmCacheManager::getPrivateTagInfo(void *pPrivatePurgeData,
     if (pPrivatePurgeData == NULL)
         return NULL;
     privatePurge.setPool(m_pSessions->getPool());
-    privatePurge.setShmOff((LsShmOffset_t)(long)pPrivatePurgeData);
+    privatePurge.setShmOff((LsShmOffset_t)(intptr_t)pPrivatePurgeData);
     purgeinfo_t *pInfo = privatePurge.findTagInfo(tagId);
     return pInfo;
 }
@@ -471,7 +471,7 @@ int ShmCacheManager::isFetchAll(void *pPrivatePurgeData)
     if (pPrivatePurgeData == NULL)
         return LS_FAIL;
     privatePurge.setPool(m_pSessions->getPool());
-    privatePurge.setShmOff((LsShmOffset_t)(long)pPrivatePurgeData);
+    privatePurge.setShmOff((LsShmOffset_t)(intptr_t)pPrivatePurgeData);
     return privatePurge.isFetchAll();
 }
 
@@ -482,8 +482,7 @@ int ShmCacheManager::setVerifyKey(void *pPrivatePurgeData,
                                   const char *pVerifyKey, int len)
 {
     shm_privpurgedata_t *pPrivate =
-        (shm_privpurgedata_t *)m_pSessions->offset2ptr((LsShmOffset_t)(
-                    long)pPrivatePurgeData);
+        (shm_privpurgedata_t *)m_pSessions->offset2ptr((LsShmOffset_t)(uintptr_t)pPrivatePurgeData);
     if (len <= 16)
     {
         memmove(pPrivate->x_verifykey, pVerifyKey, len);
@@ -498,8 +497,7 @@ const char *ShmCacheManager::getVerifyKey(void *pPrivatePurgeData,
         int *len)
 {
     shm_privpurgedata_t *pPrivate =
-        (shm_privpurgedata_t *)m_pSessions->offset2ptr((LsShmOffset_t)(
-                    long)pPrivatePurgeData);
+        (shm_privpurgedata_t *)m_pSessions->offset2ptr((LsShmOffset_t)(uintptr_t)pPrivatePurgeData);
     if (pPrivate->x_keyLen > 0
         && DateTime::s_curTime - pPrivate->x_tmLastUpdate < 600)
     {

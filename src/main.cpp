@@ -56,6 +56,59 @@ extern "C" int __lsan_is_turned_off() { return ls_lsan_off; }
 
 
 static LshttpdMain *s_pLshttpd = NULL;
+#ifdef _WIN32
+static int serverMain(int argc, char *argv[]);
+
+int main(int argc, char *argv[])
+{
+    ols_win_main_init(&argc, &argv);
+    if (argc >= 3 && strcmp(argv[1], "-s") == 0)
+        return ols_win_control(argv[2]);
+    if (argc >= 2 && strcmp(argv[1], "--service") == 0)
+        return ols_win_service_run();
+    if (argc >= 3 && strcmp(argv[1], "--dev-sites") == 0)
+    {
+        const char *tld = "test";
+        int withRoot = 0;
+        for (int i = 3; i < argc; ++i)
+        {
+            if (strcmp(argv[i], "--root") == 0)
+                withRoot = 1;
+            else
+                tld = argv[i];
+        }
+        return ols_dev_sites(argv[2], tld, withRoot);
+    }
+    if (argc >= 3 && strcmp(argv[1], "--set-php") == 0)
+        return ols_set_php(argv[2]);
+    if (argc >= 2 && strcmp(argv[1], "--dev-hosts") == 0)
+        return ols_dev_hosts(0);
+    if (argc >= 2 && strcmp(argv[1], "--dev-hosts-clear") == 0)
+        return ols_dev_hosts(1);
+    if (argc >= 2 && strcmp(argv[1], "--install-service") == 0)
+        return ols_win_service_install(1);
+    if (argc >= 2 && strcmp(argv[1], "--uninstall-service") == 0)
+        return ols_win_service_install(0);
+    if (argc >= 4 && strcmp(argv[1], "--gen-cert") == 0)
+        return ols_gen_cert(argv[2], argv[3], argc >= 5 ? argv[4] : "localhost");
+    if (argc >= 4 && strcmp(argv[1], "--admin-password") == 0)
+        return ols_set_admin_password(argv[2], argc >= 5 ? argv[4] : "admin", argv[3]);
+    return serverMain(argc, argv);
+}
+
+static int serverMain(int argc, char *argv[])
+{
+    s_pLshttpd = new (std::nothrow) LshttpdMain();
+    if (!s_pLshttpd)
+    {
+        perror("new LshttpdMain()");
+        exit(1);
+    }
+    int ret = s_pLshttpd->main(argc, argv);
+    delete s_pLshttpd;
+    return ret;
+}
+#else
 int main(int argc, char *argv[])
 {
     s_pLshttpd = new (std::nothrow) LshttpdMain();
@@ -68,6 +121,7 @@ int main(int argc, char *argv[])
     delete s_pLshttpd;
     exit(ret);
 }
+#endif
 
 
 

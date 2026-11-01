@@ -169,9 +169,7 @@ HttpSession::HttpSession()
     , m_iVHostAccess(0)
     , m_lockMtHolder(0)
     , m_pAiosfcb(NULL)
-#if defined(LS_AIO_USE_LINUX_AIO) || IOURING || defined(LS_AIO_USE_AIO)
     , m_pAioReq(NULL)
-#endif
     , m_sn(1)
     , m_pReqParser(NULL)
     , m_sessSeq(ls_atomic_add_fetch(&s_m_sessSeq, 1)) // ok to overflow / wrap around
@@ -197,10 +195,8 @@ HttpSession::~HttpSession()
         HttpResourceManager::getInstance().recycle(m_pAiosfcb);
     m_pAiosfcb = NULL;
 #endif
-#if defined(LS_AIO_USE_LINUX_AIO) || IOURING || defined(LS_AIO_USE_AIO)
     if (m_pAioReq)
         delete m_pAioReq;
-#endif
     m_sExtCmdResBuf.clear();
     unlockMtRace();
     releaseSsiRuntime();
@@ -1336,7 +1332,7 @@ int HttpSession::switchToWebSocket(const char *pWsUrl)
         LS_ERROR("[WEBSOCKET] Can not determine websocket host name");
         return SC_500;
     }
-    char addr_str[pHostEnd - pAddr + 1];
+    char *addr_str = (char *)alloca(pHostEnd - pAddr + 1);
     memmove(addr_str, pAddr, pHostEnd - pAddr);
     addr_str[pHostEnd - pAddr] = '\0';
     pAddr = addr_str;
@@ -2416,6 +2412,7 @@ int HttpSession::processContextRewrite()
         return 0;
     }
 
+    HttpContext::refreshHtaccess(pContext);
     while ((!pContext->hasRewriteConfig())
             && (pContext->getParent())
             && (pContext->getParent() != pVHostRoot))
@@ -5188,7 +5185,7 @@ int HttpSession::openStaticFile(const char *pPath, int pathLen,
 
 void HttpSession::setSendFileOffsetSize(int fd, off_t start, off_t size)
 {
-    m_sendFileInfo.setParam((void *)(long)fd);
+    m_sendFileInfo.setParam((void *)(intptr_t)fd);
     setSendFileBeginEnd(start,
                         size >= 0 ? (start + size)
                         : m_sendFileInfo.getECache()->getFileSize());
@@ -6465,8 +6462,15 @@ int HttpSession::suspendProcess()
 {
     if (m_suspendPasscode)
         return 0;
+#ifdef _WIN32
+    unsigned int r;
+    do
+        rand_s(&r);
+    while ((m_suspendPasscode = (int)(r & 0x7fffffff)) == 0);
+#else
     while ((m_suspendPasscode = rand()) == 0)
         ;
+#endif
     getStream()->wantRead(0);
     getStream()->wantWrite(0);
     return m_suspendPasscode;

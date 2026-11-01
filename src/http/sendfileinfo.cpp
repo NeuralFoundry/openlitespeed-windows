@@ -41,8 +41,10 @@ void SendFileInfo::releaseECache()
 {
     if (m_pECache && m_pECache->decRef() == 0)
     {
+#ifndef _WIN32
         if (m_pECache->getfd() != -1)
             m_pECache->closefd();
+#endif
     }
 }
 
@@ -50,7 +52,7 @@ void SendFileInfo::releaseECache()
 int SendFileInfo::getfd()
 {
     if (!m_pECache)
-        return (long)m_pParam;
+        return (intptr_t)m_pParam;
     else
         return m_pECache->getfd();
 }
@@ -89,8 +91,10 @@ void SendFileInfo::release()
     }
     if (m_pECache && m_pECache->decRef() <= 0)
     {
+#ifndef _WIN32
         if (m_pECache->getfd() != -1)
             m_pECache->closefd();
+#endif
     }
     memset(this, 0, sizeof(SendFileInfo));
 

@@ -30,7 +30,11 @@ extern "C" {
 
 #define ls_inline      static inline
 
+#ifdef _WIN32
+typedef size_t                 ls_hash_key_t;
+#else
 typedef unsigned long          ls_hash_key_t;
+#endif
 typedef struct ls_ptrlist_s    ls_ptrlist_t;
 typedef ls_ptrlist_t           ls_strlist_t;
 /**

@@ -95,6 +95,27 @@ RewriteEngine::~RewriteEngine()
 {
 }
 
+
+#define HT_MAX_FILE_SIZE    (4 * 1024 * 1024)
+#define HT_MAX_MIME_TYPES   1024
+
+static const char *internMimeType(const char *pType)
+{
+    static const char *s_types[HT_MAX_MIME_TYPES];
+    static int s_count = 0;
+    for (int i = 0; i < s_count; ++i)
+    {
+        if (strcmp(s_types[i], pType) == 0)
+            return s_types[i];
+    }
+    if (s_count >= HT_MAX_MIME_TYPES)
+        return NULL;
+    s_types[s_count] = strdup(pType);
+    if (!s_types[s_count])
+        return NULL;
+    return s_types[s_count++];
+}
+
 int RewriteEngine::loadRewriteFile(char *path, RewriteRuleList *pRuleList,
                                    const RewriteMapList *pMaps,
                                    HttpContext *pContext)
@@ -137,7 +158,7 @@ int RewriteEngine::loadRewriteFile(char *path, RewriteRuleList *pRuleList,
     }
 
     off_t len = sb.st_size;
-    if (len < 0 || len > SSIZE_MAX)
+    if (len < 0 || len > SSIZE_MAX || len > HT_MAX_FILE_SIZE)
     {
         LS_INFO("Rewrite file [%s] is too large.", path);
         close(fd);
@@ -161,6 +182,124 @@ int RewriteEngine::loadRewriteFile(char *path, RewriteRuleList *pRuleList,
 }
 
 
+static const char *s_htModules[] =
+{
+    "rewrite", "litespeed", "headers", "expires", "deflate", "mime", "dir",
+    "alias", "setenvif", "env", "version", "ssl", "authz_core", "authz_host",
+    "authz_user", "authz_groupfile", "authn_core", "authn_file", "auth_basic",
+    "access_compat", "autoindex", "filter", "include", "negotiation", "http2",
+    "remoteip", "proxy", "proxy_fcgi", "proxy_http", "unique_id", "cgi",
+    "cgid", "suexec", "lsapi", NULL
+};
+
+
+static int htModuleListed(const char *p, int len)
+{
+    static const char *s_env = NULL;
+    static int s_init = 0;
+    if (!s_init)
+    {
+        s_init = 1;
+        s_env = getenv("OLSCP_HT_MODULES");
+    }
+    if (s_env && *s_env)
+    {
+        const char *q = s_env;
+        while ((q = strcasestr(q, p)) != NULL)
+        {
+            if ((q == s_env || q[-1] == ',') && (q[len] == ',' || q[len] == 0)
+                && strncasecmp(q, p, len) == 0)
+                return 1;
+            ++q;
+        }
+        return 0;
+    }
+    for (const char **m = s_htModules; *m; ++m)
+    {
+        if ((int)strlen(*m) == len && strncasecmp(*m, p, len) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+
+static int htModulePresent(const char *p, const char *pEnd)
+{
+    int neg = 0;
+    while (p < pEnd && (isspace(*p) || *p == '"' || *p == '\''))
+        ++p;
+    if (p < pEnd && *p == '!')
+    {
+        neg = 1;
+        ++p;
+    }
+    while (p < pEnd && (*p == '"' || *p == '\''))
+        ++p;
+    const char *e = p;
+    while (e < pEnd && !isspace(*e) && *e != '>' && *e != '"' && *e != '\'')
+        ++e;
+    if (e - p > 4 && strncasecmp(p, "mod_", 4) == 0)
+        p += 4;
+    if (e - p > 2 && strncasecmp(e - 2, ".c", 2) == 0)
+        e -= 2;
+    if (e - p > 7 && strncasecmp(e - 7, "_module", 7) == 0)
+        e -= 7;
+    char name[64];
+    int len = e - p;
+    if (len <= 0 || len >= (int)sizeof(name))
+        return neg;
+    memcpy(name, p, len);
+    name[len] = 0;
+    int found = htModuleListed(name, len);
+    return neg ? !found : found;
+}
+
+
+static int htBlockActive(const char *p, const char *pEnd)
+{
+    ++p;
+    const char *e = p;
+    while (e < pEnd && isalpha(*e))
+        ++e;
+    int len = e - p;
+    if (len == 8 && strncasecmp(p, "IfModule", 8) == 0)
+        return htModulePresent(e, pEnd);
+    if (len == 8 && strncasecmp(p, "IfDefine", 8) == 0)
+    {
+        while (e < pEnd && isspace(*e))
+            ++e;
+        return (e < pEnd && *e == '!');
+    }
+    if ((len == 5 && strncasecmp(p, "Files", 5) == 0)
+        || (len == 10 && strncasecmp(p, "FilesMatch", 10) == 0)
+        || (len == 2 && strncasecmp(p, "If", 2) == 0)
+        || (len == 6 && strncasecmp(p, "ElseIf", 6) == 0)
+        || (len == 4 && strncasecmp(p, "Else", 4) == 0)
+        || (len == 5 && strncasecmp(p, "Limit", 5) == 0)
+        || (len == 11 && strncasecmp(p, "LimitExcept", 11) == 0))
+        return 0;
+    return 1;
+}
+
+
+static int htInheritOption(const char *p)
+{
+    while (*p)
+    {
+        while (isspace(*p))
+            ++p;
+        const char *e = p;
+        while (*e && !isspace(*e))
+            ++e;
+        if ((e - p == 7 && strncasecmp(p, "inherit", 7) == 0)
+            || (e - p == 13 && strncasecmp(p, "inheritbefore", 13) == 0))
+            return 1;
+        p = e;
+    }
+    return 0;
+}
+
+
 int RewriteEngine::parseRules(char *&pRules, RewriteRuleList *pRuleList,
                               const RewriteMapList *pMapList,
                               HttpContext *pContext)
@@ -177,35 +316,24 @@ int RewriteEngine::parseRules(char *&pRules, RewriteRuleList *pRuleList,
         if (!*pRules)
             break;
         char *pLineEnd = strchr(pRules, '\n');
-        if (strncasecmp(pRules, "<IfModule", 9) == 0)
+        if (*pRules == '<' && (isalpha(pRules[1]) || pRules[1] == '/'))
         {
-            if (!pLineEnd)
-                break;
-            if (skip > 0)
-                ++skip;
-            else
+            const char *pEnd = pLineEnd ? pLineEnd : pRules + strlen(pRules);
+            if (pRules[1] == '/')
             {
-                const char *p = pRules + 9;
-                while(isspace(*p))
-                    ++p;
-                if (memmem(p, pLineEnd - p, "mod_headers", 11) != NULL)
+                if (skip > 0)
                 {
-                    ++skip;
-                    LS_DBG("Skip begin: '%.*s'",
-                           (int)(pLineEnd - pRules), pRules);
+                    --skip;
+                    if (skip == 0)
+                        LS_DBG("Skip ends");
                 }
             }
-            pRules = pLineEnd + 1;
-            continue;
-
-        }
-        else if (strncasecmp(pRules, "</IfModule>", 11) == 0)
-        {
-            if (skip > 0)
+            else if (skip > 0)
+                ++skip;
+            else if (!htBlockActive(pRules, pEnd))
             {
-                --skip;
-                if (skip == 0)
-                    LS_DBG("Skip ends");
+                skip = 1;
+                LS_DBG("Skip begin: '%.*s'", (int)(pEnd - pRules), pRules);
             }
             if (!pLineEnd)
                 break;
@@ -306,6 +434,12 @@ int RewriteEngine::parseRules(char *&pRules, RewriteRuleList *pRuleList,
                 }
                 else
                     LS_ERROR("Invalid value of RewriteEngine: %.*s", len, pRules);
+            }
+            else if (strncasecmp(pRules, "RewriteOptions", 14) == 0
+                     && isspace(pRules[14]))
+            {
+                if (pContext && htInheritOption(pRules + 14))
+                    pContext->setRewriteInherit(1);
             }
             else if (*pRules != '#')
                 LS_INFO("Invalid rewrite directive: %s", pRules);
@@ -1399,7 +1533,7 @@ int RewriteEngine::processRewrite(const RewriteRule *pRule,
         if (m_logLevel > 4)
             LS_INFO(pSession,
                     "[REWRITE] set forced type: '%s'", pRule->getMimeType());
-        pSession->getReq()->setForcedType(pRule->getMimeType());
+        pSession->getReq()->setForcedType(internMimeType(pRule->getMimeType()));
     }
     return 0;
 }

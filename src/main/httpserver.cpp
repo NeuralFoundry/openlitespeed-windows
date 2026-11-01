@@ -217,6 +217,23 @@ void HttpServer::cleanPid()
 
 LS_SINGLETON(HttpServer);
 
+#ifdef _WIN32
+#define WIN_MAX_WORKERS 32
+
+struct WinWorker
+{
+    HANDLE  m_hProc;
+    pid_t   m_pid;
+    int     m_iRestarts;
+    long    m_tmWindow;
+    int     m_iPending;
+};
+
+static WinWorker s_winWorkers[WIN_MAX_WORKERS + 1];
+static HANDLE s_hWorkerJob = NULL;
+static int s_iWorkersStopping = 0;
+#endif
+
 
 class HttpServerImpl
 {
@@ -306,6 +323,13 @@ private:
     int shutdown();
     void adjustListeners(int iNumChildren);
     int gracefulShutdown();
+#ifdef _WIN32
+    int spawnWorker(int procNo);
+    void startWorkers();
+    void checkWorkers();
+    void stopWorkers();
+    void waitWorkers(int secs);
+#endif
     int generateStatusReport();
     int generateStatusJsonReport();
     int generateResetAppsReport();
@@ -660,7 +684,8 @@ int HttpServerImpl::generateStatusJsonReport()
     char timeBuf[80];
     timeval now;
     gettimeofday(&now, NULL);
-    strftime(timeBuf, sizeof(timeBuf), "%FT%T.", gmtime(&now.tv_sec));
+    time_t nowSec = now.tv_sec;
+    strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%dT%H:%M:%S.", gmtime(&nowSec));
     int lenJson = ls_snprintf(achBuf, sizeof(achBuf),
                               "{\n"
                               "  \"debugging\": %s,\n"
@@ -1045,6 +1070,14 @@ HttpListener *HttpServerImpl::addListener(const char *pName,
         return pListener;
     }
     pListener = m_oldListeners.get(pName, pAddr);
+#ifdef _WIN32
+    if (!pListener && ols_worker_no())
+    {
+        LS_INFO("Listener [%s] [%s] is not served by worker #%d.", pName, pAddr,
+                ols_worker_no());
+        return NULL;
+    }
+#endif
     if (!pListener)
     {
         pListener = newTcpListener(pName, pAddr, reuseport);
@@ -1250,6 +1283,9 @@ void HttpServerImpl::onTimerSecond()
     ServerInfo::getServerInfo()->setAdnsOp(1);
     Adns::getInstance().trimCache();
     ServerInfo::getServerInfo()->setAdnsOp(0);
+#ifdef _WIN32
+    checkWorkers();
+#endif
 }
 
 
@@ -1724,11 +1760,149 @@ int removeMatchFile(const char *pDir, const char *prefix)
 }
 
 
+#ifdef _WIN32
+int HttpServerImpl::spawnWorker(int procNo)
+{
+    int fds[256];
+    int n = 0;
+    int size = m_listeners.size();
+    void *hProc = NULL;
+    for (int i = 0; i < size && n < 256; ++i)
+    {
+        HttpListener *p = m_listeners[i];
+        if (p->getfd() == -1 || p->isAdmin()
+            || !(p->getBinding() & (1ULL << (procNo - 1))))
+            continue;
+        fds[n++] = p->getfd();
+    }
+    s_winWorkers[procNo].m_iPending = 0;
+    if (n == 0)
+    {
+        LS_WARN("No listener is bound to worker #%d, it is not started.", procNo);
+        return LS_FAIL;
+    }
+    pid_t pid = ols_worker_spawn(procNo, fds, n, s_hWorkerJob, &hProc);
+    if (pid == -1)
+    {
+        LS_ERROR("Failed to start worker #%d: %s", procNo, strerror(errno));
+        s_winWorkers[procNo].m_iPending = 1;
+        return LS_FAIL;
+    }
+    s_winWorkers[procNo].m_hProc = (HANDLE)hProc;
+    s_winWorkers[procNo].m_pid = pid;
+    LS_NOTICE("Started worker #%d [%d] with %d listener socket(s).", procNo, pid, n);
+    return 0;
+}
+
+
+void HttpServerImpl::startWorkers()
+{
+    int n = HttpServerConfig::getInstance().getChildren();
+    if (n <= 1 || HttpServerConfig::getInstance().getProcNo() != 1)
+        return;
+    if (!s_hWorkerJob)
+    {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li;
+        s_hWorkerJob = CreateJobObjectW(NULL, NULL);
+        if (s_hWorkerJob)
+        {
+            memset(&li, 0, sizeof(li));
+            li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(s_hWorkerJob, JobObjectExtendedLimitInformation,
+                                    &li, sizeof(li));
+        }
+    }
+    s_iWorkersStopping = 0;
+    LS_NOTICE("Starting %d HTTP worker processes.", n - 1);
+    for (int i = 2; i <= n; ++i)
+        spawnWorker(i);
+}
+
+
+void HttpServerImpl::checkWorkers()
+{
+    int n = HttpServerConfig::getInstance().getChildren();
+    if (n <= 1 || HttpServerConfig::getInstance().getProcNo() != 1
+        || s_iWorkersStopping || m_lStartTime <= 0)
+        return;
+    for (int i = 2; i <= n; ++i)
+    {
+        WinWorker &w = s_winWorkers[i];
+        if (w.m_hProc)
+        {
+            if (WaitForSingleObject(w.m_hProc, 0) != WAIT_OBJECT_0)
+                continue;
+            DWORD code = 0;
+            GetExitCodeProcess(w.m_hProc, &code);
+            CloseHandle(w.m_hProc);
+            w.m_hProc = NULL;
+            LS_ERROR("Worker #%d [%d] exited with code 0x%lX.", i, w.m_pid,
+                     (unsigned long)code);
+            w.m_iPending = 1;
+        }
+        if (!w.m_iPending)
+            continue;
+        if (DateTime::s_curTime - w.m_tmWindow >= 60)
+        {
+            w.m_tmWindow = DateTime::s_curTime;
+            w.m_iRestarts = 0;
+        }
+        if (w.m_iRestarts >= 10)
+            continue;
+        ++w.m_iRestarts;
+        spawnWorker(i);
+    }
+}
+
+
+void HttpServerImpl::stopWorkers()
+{
+    if (HttpServerConfig::getInstance().getProcNo() != 1)
+        return;
+    s_iWorkersStopping = 1;
+    for (int i = 2; i <= WIN_MAX_WORKERS; ++i)
+        if (s_winWorkers[i].m_hProc)
+            kill(s_winWorkers[i].m_pid, SIGTERM);
+}
+
+
+void HttpServerImpl::waitWorkers(int secs)
+{
+    HANDLE hs[WIN_MAX_WORKERS];
+    DWORD n = 0;
+    for (int i = 2; i <= WIN_MAX_WORKERS; ++i)
+        if (s_winWorkers[i].m_hProc)
+            hs[n++] = s_winWorkers[i].m_hProc;
+    if (n > 0 && WaitForMultipleObjects(n, hs, TRUE, (DWORD)secs * 1000) == WAIT_TIMEOUT)
+    {
+        LS_NOTICE("Workers did not stop in %d seconds, terminate them.", secs);
+        for (DWORD i = 0; i < n; ++i)
+            TerminateProcess(hs[i], 1);
+    }
+    for (int i = 2; i <= WIN_MAX_WORKERS; ++i)
+    {
+        if (s_winWorkers[i].m_hProc)
+            CloseHandle(s_winWorkers[i].m_hProc);
+        s_winWorkers[i].m_hProc = NULL;
+        s_winWorkers[i].m_iPending = 0;
+    }
+    if (s_hWorkerJob)
+    {
+        CloseHandle(s_hWorkerJob);
+        s_hWorkerJob = NULL;
+    }
+}
+#endif
+
+
 int HttpServerImpl::gracefulShutdown()
 {
     int listenerStopped = 0;
 
     m_lStartTime = -1;
+#ifdef _WIN32
+    stopWorkers();
+#endif
     if (restartMark(1))
     {
         LS_NOTICE("New litespeed process is ready, stop listeners");
@@ -1749,6 +1923,10 @@ int HttpServerImpl::gracefulShutdown()
     int ret = m_dispatcher.linger(listenerStopped,
                                HttpServerConfig::getInstance().getRestartTimeout());
     LS_NOTICE("Event-loop lingering done.");
+#ifdef _WIN32
+    if (HttpServerConfig::getInstance().getProcNo() == 1)
+        waitWorkers(HttpServerConfig::getInstance().getRestartTimeout() + 5);
+#endif
     return ret;
 }
 
@@ -1810,7 +1988,7 @@ int HttpServerImpl::reinitMultiplexer()
                         iProcNo, p->getAddrStr());
             }
         }
-        else if (!(m_listeners[i]->getBinding() & (1L << (iProcNo - 1))))
+        else if (!(m_listeners[i]->getBinding() & (1ULL << (iProcNo - 1))))
         {
             p->stop();
             if (p->getQuicListener())
@@ -2168,7 +2346,7 @@ HttpListener *HttpServerImpl::configListener(const XmlNode *pNode,
                 // valid when ACME is enabled: it serves vhost (e.g. template
                 // member) certificates obtained via ACME through SNI later on.
                 // Only treat a missing certificate as fatal when ACME is off.
-                if (HttpServerConfig::getInstance().getAcme() ==
+                if (isAdmin || HttpServerConfig::getInstance().getAcme() ==
                     HttpServerConfig::ACME_DISABLED)
                     break;
             }
@@ -2190,9 +2368,11 @@ HttpListener *HttpServerImpl::configListener(const XmlNode *pNode,
 
         int reuseport = 0;
 
+#ifndef _WIN32
         if (!isAdmin)
             reuseport = ConfigCtx::getCurConfigCtx()->getLongValue(
                     pNode, "reusePort", 0, 1, 1);
+#endif
 
         HttpListener *pListener = NULL;
         pListener = addListener(pName, pAddr, reuseport);
@@ -2247,7 +2427,8 @@ HttpListener *HttpServerImpl::configListener(const XmlNode *pNode,
             if (isAdmin)
                 binding = 1;
 
-            if ((binding & ((1 << iNumChildren) - 1)) == 0)
+            if ((binding & ((iNumChildren >= 64) ? ~0ULL
+                            : ((1ULL << iNumChildren) - 1))) == 0)
             {
                 LS_WARN(&currentCtx, "This listener is not bound to any server process, "
                         "it is inaccessible.");
@@ -2317,8 +2498,13 @@ int HttpServerImpl::startListeners(const XmlNode *pRoot)
     return 0;
 }
 #define DEFAULT_ADMIN_FCGI_NAME     "AdminPHP"
+#ifdef _WIN32
+#define DEFAULT_ADMIN_PHP_FCGI      "$VH_ROOT/php/php-cgi.exe"
+#define DEFAULT_ADMIN_PHP_FCGI_URI  "UDS:/" DEFAULT_TMP_DIR "/admin_php.sock"
+#else
 #define DEFAULT_ADMIN_PHP_FCGI      "$VH_ROOT/fcgi-bin/admin_php"
 #define DEFAULT_ADMIN_PHP_FCGI_URI  "UDS:/" DEFAULT_TMP_DIR "/admin_php.sock"
+#endif
 #define ADMIN_PHP_SESSION           "$SERVER_ROOT/admin/tmp"
 #define WEBADMIN_ENABLE_FILE        "$SERVER_ROOT/admin/conf/enable_webadmin"
 #define WEBADMIN_DISABLED_HTML      "html.disabled/"
@@ -2494,11 +2680,39 @@ LocalWorker *HttpServerImpl::createAdminPhpApp(const char *pChroot,
         int iChrootLen,
         const char *pURI, char *pchPHPBin, size_t szPhpBin)
 {
+#ifdef _WIN32
+    LocalWorker *pFcgiApp = (LocalWorker *) ExtAppRegistry::addApp(
+                                EA_FCGI, DEFAULT_ADMIN_FCGI_NAME);
+#else
     LocalWorker *pFcgiApp = (LocalWorker *) ExtAppRegistry::addApp(
                                 EA_LSAPI, DEFAULT_ADMIN_FCGI_NAME);
+#endif
     assert(pFcgiApp);
+#ifdef _WIN32
+    {
+        char achSock[1024];
+        if (strncasecmp(pURI, "uds://", 6) == 0
+            && (ols_native_path(pURI + 5, strlen(pURI + 5), achSock, sizeof(achSock)) <= 0
+                || strlen(achSock) >= 100))
+            pURI = "127.0.0.1:17999";
+    }
+#endif
     pFcgiApp->setURL(pURI);
+#ifdef _WIN32
+    {
+        char achIni[MAX_PATH_LEN];
+        char achNative[MAX_PATH_LEN];
+        const char *pIni = achIni;
+        snprintf(achIni, sizeof(achIni), "%sadmin/conf/php.ini",
+                 MainServerConfig::getInstance().getServerRoot());
+        if (ols_native_path(achIni, strlen(achIni), achNative, sizeof(achNative)) > 0)
+            pIni = achNative;
+        lstrncat(pchPHPBin, " -c ", szPhpBin);
+        lstrncat(pchPHPBin, pIni, szPhpBin);
+    }
+#else
     lstrncat(pchPHPBin, " -c ../conf/php.ini", szPhpBin);
+#endif
     pFcgiApp->getConfig().setAppPath(&pchPHPBin[iChrootLen]);
     pFcgiApp->getConfig().setBackLog(100);
     pFcgiApp->getConfig().setSelfManaged(0);
@@ -2516,7 +2730,17 @@ LocalWorker *HttpServerImpl::createAdminPhpApp(const char *pChroot,
 //              "Open", PACKAGE_VERSION);
 //     pFcgiApp->getConfig().addEnv(pchPHPBin);
 
+#ifdef _WIN32
+    {
+        char achNative[MAX_PATH_LEN];
+        const char *pStat = sStatDir;
+        if (ols_mapped_path(pStat, achNative, sizeof(achNative)) > 0)
+            pStat = achNative;
+        snprintf(pchPHPBin, MAX_PATH_LEN, "LSWS_STATDIR=%s", pStat);
+    }
+#else
     snprintf(pchPHPBin, MAX_PATH_LEN, "LSWS_STATDIR=%s", sStatDir);
+#endif
     pFcgiApp->getConfig().addEnv(pchPHPBin);
 
     RLimits limits;
@@ -2529,6 +2753,16 @@ LocalWorker *HttpServerImpl::createAdminPhpApp(const char *pChroot,
     snprintf(pEnv, 2048, "LS_SERVER_ROOT=%s",
              MainServerConfig::getInstance().getServerRoot());
     pFcgiApp->getConfig().addEnv(pEnv);
+#ifdef _WIN32
+    {
+        char achTmp[MAX_PATH_LEN];
+        if (ols_mapped_path("/tmp", achTmp, sizeof(achTmp)) > 0)
+        {
+            snprintf(pEnv, 2048, "LS_TMP_DIR=%s", achTmp);
+            pFcgiApp->getConfig().addEnv(pEnv);
+        }
+    }
+#endif
 
     if (pChroot)
     {
@@ -2548,8 +2782,20 @@ LocalWorker *HttpServerImpl::createAdminPhpApp(const char *pChroot,
 
     if (HttpServerConfig::getInstance().getAdminSock() != NULL)
     {
-        snprintf(pEnv, 2048, "LSWS_ADMIN_SOCK=%s",
-                 HttpServerConfig::getInstance().getAdminSock());
+        const char *pSock = HttpServerConfig::getInstance().getAdminSock();
+#ifdef _WIN32
+        char achSock[1024];
+        if (strncmp(pSock, "uds://", 6) == 0
+            && ols_native_path(pSock + 5, strlen(pSock + 5), achSock, sizeof(achSock)) > 0)
+        {
+            for (char *q = achSock; *q; ++q)
+                if (*q == '/')
+                    *q = '\\';
+            snprintf(pEnv, 2048, "LSWS_ADMIN_SOCK=uds://%s", achSock);
+        }
+        else
+#endif
+        snprintf(pEnv, 2048, "LSWS_ADMIN_SOCK=%s", pSock);
         pFcgiApp->getConfig().addEnv(pEnv);
     }
 
@@ -3588,7 +3834,9 @@ void HttpServerImpl::fixConfDirsPermission()
                     "find %s/conf/ -type f -exec chmod 0640 {} +",
                     "lsadm", MainServerConfig::getInstance().getGroup(), pRoot,
                     pRoot, pRoot);
+#ifndef _WIN32
         system(achBuf);
+#endif
     }
 
 }
@@ -4164,9 +4412,15 @@ int HttpServerImpl::configServerBasics(int reconfig, const XmlNode *pRoot)
 #ifndef IS_LSCPD
         int iNumProc = PCUtil::getNumProcessors();
         iNumProc = (iNumProc > 8 ? 8 : iNumProc);
+#ifdef _WIN32
+        HttpServerConfig::getInstance().setChildren(
+            ConfigCtx::getCurConfigCtx()->getLongValue(pRoot,
+                    "httpdWorkers", 1, 32, iNumProc));
+#else
         HttpServerConfig::getInstance().setChildren(
             ConfigCtx::getCurConfigCtx()->getLongValue(pRoot,
                     "httpdWorkers", 1, 16, iNumProc));
+#endif
         LS_INFO(ConfigCtx::getCurConfigCtx(), "httpdWorkers: %d, "
                 "Num of Processors: %d",
                 HttpServerConfig::getInstance().getChildren(),
@@ -4247,6 +4501,10 @@ int HttpServerImpl::configServerBasics(int reconfig, const XmlNode *pRoot)
             MainServerConfigObj.setCrashGuard(1);
 
         pValue = pRoot->getChildValue("statDir");
+#ifdef _WIN32
+        if (pValue == NULL)
+            pValue = DEFAULT_TMP_DIR;
+#else
         if (pValue == NULL)
         {
             struct stat st;
@@ -4255,6 +4513,7 @@ int HttpServerImpl::configServerBasics(int reconfig, const XmlNode *pRoot)
                 pValue = "/dev/shm/ols/status";
             }
         }
+#endif
         verifyStatDir(pValue);
         m_sRTReportFile = sStatDir;
         m_sRTReportFile.append("/.rtreport", 10);
@@ -4268,7 +4527,7 @@ int HttpServerImpl::configServerBasics(int reconfig, const XmlNode *pRoot)
         }
         else
             LS_DBG("Json reports NOT activated");
-        if (strcmp(pValue, DEFAULT_TMP_DIR) != 0)
+        if (pValue && strcmp(pValue, DEFAULT_TMP_DIR) != 0)
         {
             createRtRptLink(HttpServerConfig::getInstance().getChildren(),
                             ".rtreport", ".status");
@@ -6234,6 +6493,14 @@ void HttpServer::setProcNo(int proc)
     HttpServerConfig::getInstance().setProcNo(proc);
     m_impl->setRTReportName(proc);
 }
+
+
+#ifdef _WIN32
+void HttpServer::startWorkers()
+{
+    m_impl->startWorkers();
+}
+#endif
 
 
 void HttpServer::setBlackBoard(char *pBuf)

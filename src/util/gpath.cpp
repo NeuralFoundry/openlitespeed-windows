@@ -121,6 +121,9 @@ bool GPath::isWritable(const char *path)
 }
 int GPath::clean(char *path)
 {
+#ifdef _WIN32
+    ols_strip_server_drive(path);
+#endif
     clean(path, strlen(path));
     return 0;
 }
@@ -255,7 +258,11 @@ int GPath::getAbsolutePath(char *dest, size_t size,
     if (path == NULL)
         return LS_FAIL;
     int iLen;
+#ifdef _WIN32
+    if ((relativeRoot) && (*relativeRoot) && (*path != '/') && !ols_is_drive_path(path))
+#else
     if ((relativeRoot) && (*relativeRoot) && (*path != '/'))
+#endif
     {
         if (concat(dest, size, relativeRoot, path))
             return LS_FAIL;
@@ -286,7 +293,11 @@ int GPath::getAbsoluteFile(char *dest, size_t size,
         return LS_FAIL;
     while (isspace(*file))
         ++file;
+#ifdef _WIN32
+    if ((relativeRoot) && (*relativeRoot) && (*file != '/') && !ols_is_drive_path(file))
+#else
     if ((relativeRoot) && (*relativeRoot) && (*file != '/'))
+#endif
     {
         if (concat(dest, size, relativeRoot, file))
             return LS_FAIL;

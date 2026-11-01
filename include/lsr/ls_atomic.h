@@ -43,11 +43,18 @@ typedef unsigned int    ls_atom_uint_t;
 typedef unsigned long   ls_atom_ulong_t;
 
 typedef union
+#ifdef _MSC_VER
+__declspec(align(16))
+#endif
 {
     struct
     {
         void *m_ptr;
+#ifdef _MSC_VER
+        long long m_seq;
+#else
         long   m_seq;
+#endif
     };
 #if defined( __i386__ )||defined( __arm__ )
     uint64_t   m_whole;
@@ -491,7 +498,24 @@ ls_atomic_inline uint64_t ls_atomic_casv64(
 
 #endif // USE_GCC_ATOMIC
 
-#if defined( __x86_64 )||defined( __x86_64__ )
+#if defined(_MSC_VER)
+ls_atomic_inline char ls_atomic_dcas(volatile ls_atom_xptr_t *ptr,
+                                     ls_atom_xptr_t *cmpptr, ls_atom_xptr_t *newptr)
+{
+    ls_atom_xptr_t cmp = *cmpptr;
+    return (char)_InterlockedCompareExchange128((volatile __int64 *)ptr,
+            ((__int64 *)newptr)[1], ((__int64 *)newptr)[0], (__int64 *)&cmp);
+}
+
+ls_atomic_inline void ls_atomic_dcasv(volatile ls_atom_xptr_t *ptr,
+                                      ls_atom_xptr_t *cmpptr, ls_atom_xptr_t *newptr, ls_atom_xptr_t *oldptr)
+{
+    *oldptr = *cmpptr;
+    _InterlockedCompareExchange128((volatile __int64 *)ptr,
+            ((__int64 *)newptr)[1], ((__int64 *)newptr)[0], (__int64 *)oldptr);
+}
+
+#elif defined( __x86_64 )||defined( __x86_64__ )
 
 ls_atomic_inline char ls_atomic_dcas(volatile ls_atom_xptr_t *ptr,
                                      ls_atom_xptr_t *cmpptr, ls_atom_xptr_t *newptr)

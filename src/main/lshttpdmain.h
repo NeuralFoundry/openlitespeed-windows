@@ -158,6 +158,11 @@ class LshttpdMain
 public:
     LshttpdMain();
     ~LshttpdMain();
+#ifdef _WIN32
+    void winGracefulRestart()   {   gracefulRestart();  }
+    int winAcceptAdmin()        {   return acceptAdminSockConn();   }
+    int winAdminFd() const      {   return m_fdAdmin;   }
+#endif
     // Builds $SERVER_ROOT/logs/stackbt.<pid>.<YYYYmmdd-HHMMSS.mmm>.log.
     // Returns the path length, or -1 if it does not fit in pBuf.
     int getChildStackBtFile(pid_t pid, char *pBuf, int bufLen);

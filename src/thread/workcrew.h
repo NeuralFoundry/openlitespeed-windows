@@ -75,10 +75,10 @@ public:
         : GPointerList()
     { assert(sizeof(long) <= sizeof(void *)); }
     virtual ~SlotList()     {}
-    int push_back(long v)   {   return GPointerList::push_back((void *) v); }
-    long pop_back()         {   return (long) GPointerList::pop_back(); }
-    long operator[](size_t off)        {   return (long) GPointerList::operator[](off);   }
-    long operator[](size_t off) const  {   return (long) GPointerList::operator[](off);   }
+    int push_back(intptr_t v)   {   return GPointerList::push_back((void *) v); }
+    intptr_t pop_back()         {   return (intptr_t) GPointerList::pop_back(); }
+    intptr_t operator[](size_t off)        {   return (intptr_t) GPointerList::operator[](off);   }
+    intptr_t operator[](size_t off) const  {   return (intptr_t) GPointerList::operator[](off);   }
     ssize_t size() const    {   return GPointerList::size();    }
     bool empty() const      {   return GPointerList::empty();   }
     bool full() const       {   return GPointerList::full();    }

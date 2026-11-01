@@ -215,7 +215,7 @@ int LsPosixAioReq::onEvent()
     return onAioEvent();
 }
 int LsPosixAioReq::onAioEvent()
-#elif defined(LS_AIO_USE_SIGNAL)
+#else
 int LsPosixAioReq::onEvent()
 #endif
 {

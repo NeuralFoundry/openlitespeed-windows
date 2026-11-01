@@ -664,7 +664,7 @@ SubIpMap::~SubIpMap()
 
 VHostMap *SubIpMap::getMap(uint32_t ipv4) const
 {
-    IpMap::iterator iter = m_map.find((void *)(unsigned long)ipv4);
+    IpMap::iterator iter = m_map.find((void *)(uintptr_t)ipv4);
     if (iter == m_map.end())
         return NULL;
     return iter.second();
@@ -715,7 +715,7 @@ VHostMap *SubIpMap::addIP(const char *pIP)
     {
         pMap->setAddrStr(pIP);
         ipv4 = addrConvert(pAddr);
-        m_map.insert((void *)(unsigned long)ipv4, pMap);
+        m_map.insert((void *)(uintptr_t)ipv4, pMap);
     }
     return pMap;
 }

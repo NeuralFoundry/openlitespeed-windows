@@ -23,7 +23,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#ifdef __linux
+#if defined(__linux) || defined(_WIN32)
 #include <sched.h>
 #define _GNC_SOURCE
 #include <pthread.h>
@@ -73,7 +73,7 @@ int PCUtil::getNumProcessors()
 
     if (s_nCpu > 0)
         return s_nCpu;
-#if defined(linux) || defined(__linux) || defined(__linux__)
+#if defined(linux) || defined(__linux) || defined(__linux__) || defined(_WIN32)
     s_nCpu = sysconf(_SC_NPROCESSORS_ONLN);
 #else
     int mib[2];
@@ -116,7 +116,7 @@ int PCUtil::setCpuAffinity(cpu_set_t *mask)
 #ifdef __FreeBSD__
     return cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID, -1,
                               sizeof(cpu_set_t), mask);
-#elif defined(linux) || defined(__linux) || defined(__linux__)
+#elif defined(linux) || defined(__linux) || defined(__linux__) || defined(_WIN32)
     return pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), mask);
     //return sched_setaffinity(0, sizeof(cpu_set_t), mask);
 #endif

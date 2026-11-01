@@ -1,0 +1,41 @@
+$ErrorActionPreference = 'Stop'
+$Top = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
+$Deps = Join-Path $Top '.deps'
+New-Item -ItemType Directory -Force $Deps | Out-Null
+
+$pins = @(
+    @{ Dir = 'boringssl'; Url = 'https://github.com/google/boringssl.git';          Commit = '8b43ff0f72137b31b23d482f0b2344186d797b03'; Patch = 'boringssl.patch' },
+    @{ Dir = 'brotli';    Url = 'https://github.com/google/brotli.git';             Commit = 'db24a98aed38a16de78cc05ca15cdd8dc2a0d92d' },
+    @{ Dir = 'libbcrypt'; Url = 'https://github.com/litespeedtech/libbcrypt.git';   Commit = '55ff64349dec3012cfbbb1c4f92d4dbd46920213' },
+    @{ Dir = 'libexpat';  Url = 'https://github.com/libexpat/libexpat.git';         Commit = 'a76b1174c1ea52abb639a4c69d52b630a8a106a2' },
+    @{ Dir = 'pcre2';     Url = 'https://github.com/PCRE2Project/pcre2.git';        Commit = '2dce7761b1831fd3f82a9c2bd5476259d945da4d' },
+    @{ Dir = 'udns';      Url = 'https://github.com/ortclib/udns.git';              Commit = 'e0148dfba90ce0d17a8e2cae15f218b5ab99ad62' },
+    @{ Dir = 'zlib';      Url = 'https://github.com/madler/zlib.git';               Commit = 'da607da739fa6047df13e66a2af6b8bec7c2a498' }
+)
+
+foreach ($p in $pins) {
+    $dir = Join-Path $Deps $p.Dir
+    if (-not (Test-Path (Join-Path $dir '.git'))) {
+        git init -q $dir
+        git -C $dir remote add origin $p.Url
+    }
+    git -C $dir config core.longpaths true
+    git -C $dir config core.autocrlf false
+    $head = git -C $dir rev-parse -q --verify HEAD 2>$null
+    if ($head -ne $p.Commit) {
+        Write-Host "fetching $($p.Dir) $($p.Commit.Substring(0, 12))"
+        git -C $dir fetch -q --depth 1 origin $p.Commit
+        if ($LASTEXITCODE -ne 0) { throw "fetch failed: $($p.Dir)" }
+        git -C $dir -c advice.detachedHead=false checkout -q -f FETCH_HEAD
+        if ($LASTEXITCODE -ne 0) { throw "checkout failed: $($p.Dir)" }
+        if ($p.Patch) {
+            git -C $dir apply (Join-Path $PSScriptRoot "patches\$($p.Patch)")
+            if ($LASTEXITCODE -ne 0) { throw "patch failed: $($p.Patch)" }
+        }
+    }
+    if (Test-Path (Join-Path $dir '.gitmodules')) {
+        git -C $dir submodule update -q --init --recursive
+        if ($LASTEXITCODE -ne 0) { throw "submodules failed: $($p.Dir)" }
+    }
+}
+Write-Host "dependency sources ready in $Deps"

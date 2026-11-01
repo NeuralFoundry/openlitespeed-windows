@@ -1580,7 +1580,7 @@ short lookUpCache(lsi_param_t *rec, MyMData *myData, int no_vary,
     dumpCacheHash(rec->session, "Private hash", cePrivateHash);
 
     CacheEntry *pEntry;
-    long lastCacheFlush = (long)g_api->get_module_data(rec->session, &MNAME,
+    long lastCacheFlush = (intptr_t)g_api->get_module_data(rec->session, &MNAME,
                           LSI_DATA_IP);
 
     pEntry = pDirHashCacheStore->getCacheEntry(*cePrivateHash,
@@ -2907,7 +2907,7 @@ static int checkAssignHandler(lsi_param_t *rec)
         if (method == HTTP_POST && cacheCtrl.isPrivateAutoFlush())
         {
             g_api->set_module_data(rec->session, &MNAME, LSI_DATA_IP,
-                                   (void *)(long)DateTime_s_curTime);
+                                   (void *)(intptr_t)DateTime_s_curTime);
         }
         g_api->log(rec->session, LSI_LOG_DEBUG,
                    "[%s] checkAssignHandler returned, method %s[%d].\n",

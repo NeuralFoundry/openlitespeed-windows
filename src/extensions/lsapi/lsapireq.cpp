@@ -107,9 +107,20 @@ int LsapiReq::appendEnv(LsapiEnv *pEnv, HttpSession *pSession)
     const AutoStr2 *psTemp = pReq->getRealPath();
     if (psTemp)
     {
-        pEnv->add("SCRIPT_FILENAME", 15, psTemp->c_str(), psTemp->len());
+        const char *pPath = psTemp->c_str();
+        int pathLen = psTemp->len();
+#ifdef _WIN32
+        char achNative[10240];
+        int nativeLen = ols_native_path(pPath, pathLen, achNative, sizeof(achNative));
+        if (nativeLen > 0)
+        {
+            pPath = achNative;
+            pathLen = nativeLen;
+        }
+#endif
+        pEnv->add("SCRIPT_FILENAME", 15, pPath, pathLen);
         ((lsapi_req_header *)m_bufReq.begin())->m_scriptFileOff = pEnv->bufSize() -
-                psTemp->len() - 1;
+                pathLen - 1;
         ++count;
     }
     else

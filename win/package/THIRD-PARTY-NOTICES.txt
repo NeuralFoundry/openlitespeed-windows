@@ -1,0 +1,29 @@
+OpenLiteSpeed for Windows
+https://github.com/NeuralFoundry/openlitespeed-windows
+
+This program is free software under the GNU General Public License version 3
+(LICENSE.txt). It is based on OpenLiteSpeed by LiteSpeed Technologies, Inc.
+The complete source code is available at the address above.
+
+It includes the following third-party components:
+
+OpenLiteSpeed          GPL-3.0             https://github.com/litespeedtech/openlitespeed
+lsquic                 MIT                 https://github.com/litespeedtech/lsquic
+ls-qpack, ls-hpack     MIT                 https://github.com/litespeedtech/ls-qpack
+BoringSSL              Apache-2.0, ISC     https://boringssl.googlesource.com/boringssl
+Brotli                 MIT                 https://github.com/google/brotli
+zlib                   zlib License        https://zlib.net
+PCRE2                  BSD-3-Clause        https://github.com/PCRE2Project/pcre2
+Expat                  MIT                 https://github.com/libexpat/libexpat
+udns                   LGPL-2.1-or-later   https://www.corpit.ru/mjt/udns.html
+libbcrypt              CC0-1.0             https://github.com/litespeedtech/libbcrypt
+wepoll                 BSD-2-Clause        https://github.com/piscisaureus/wepoll
+
+bin\lsphp\*\lsphp.exe is built from the LiteSpeed SAPI of PHP:
+
+This product includes PHP software, freely available from
+<http://www.php.net/software/>. See bin\lsphp\PHP-LICENSE.txt.
+
+OpenLiteSpeed for Windows is an independent project, not affiliated with or
+endorsed by LiteSpeed Technologies, Inc. or the PHP Group. LiteSpeed and
+OpenLiteSpeed are trademarks of LiteSpeed Technologies, Inc.

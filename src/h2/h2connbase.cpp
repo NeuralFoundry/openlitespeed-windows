@@ -1021,8 +1021,8 @@ int H2ConnBase::processDataFrameSkipRemain(H2FrameHeader *pHeader)
 {
     while (m_iCurrentFrameRemain > 0)
     {
-        char buf[m_iCurrentFrameRemain];
-        int ret = getInStream()->read(buf, m_iCurrentFrameRemain);
+        char buf[16384];
+        int ret = getInStream()->read(buf, m_iCurrentFrameRemain < (int)sizeof(buf) ? m_iCurrentFrameRemain : (int)sizeof(buf));
         if (ret > 0)
         {
             m_iCurrentFrameRemain -= ret;

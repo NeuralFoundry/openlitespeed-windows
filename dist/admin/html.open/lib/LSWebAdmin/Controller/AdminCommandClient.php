@@ -148,6 +148,9 @@ class AdminCommandClient
 
         $chrootOffset = isset($_SERVER['LS_CHROOT']) ? strlen($_SERVER['LS_CHROOT']) : 0;
         $addr = substr($adminSock, 5 + $chrootOffset);
+        if (DIRECTORY_SEPARATOR === "\\" && preg_match('#^/([A-Za-z]:.*)$#', $addr, $m)) {
+            $addr = $m[1];
+        }
         if (!$this->connectWithTimeout($sock, $cmd, $adminSock, 'admsock', $addr)) {
             return false;
         }

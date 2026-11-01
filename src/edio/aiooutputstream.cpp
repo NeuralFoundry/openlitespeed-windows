@@ -215,9 +215,10 @@ int AioOutputStream::onEvent()
 
 int AioOutputStream::flush()
 {
+    int ret = LS_OK;
 #if defined(LS_AIO_USE_AIO)
     ls_mutex_lock(&m_mutex);
-    int ret = flushEx();
+    ret = flushEx();
     ls_mutex_unlock(&m_mutex);
 #endif // defined(LS_AIO_USE_AIO)
     return ret;

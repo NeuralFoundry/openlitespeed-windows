@@ -82,7 +82,7 @@ static inline ssize_t gsendfile(int fdOut, int fdIn, off_t *off,
 }
 #endif
 
-#if defined(linux) || defined(__linux) || defined(__linux__) || \
+#if defined(_WIN32) || defined(linux) || defined(__linux) || defined(__linux__) || \
     defined(__gnu_linux__)
 #include <sys/sendfile.h>
 #define gsendfile ::sendfile

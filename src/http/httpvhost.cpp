@@ -588,6 +588,10 @@ void HttpVHost::updateUGid(const char *pLogId, const char *pPath, int is_uid_set
         setOwnerUid(st.st_uid);
         if (is_uid_set)
             return;
+#ifdef _WIN32
+        st.st_uid = procConfig.getUid();
+        st.st_gid = procConfig.getGid();
+#endif
         if (st.st_uid < procConfig.getUidMin())
         {
             LS_WARN("[%s] Uid of %s is %d, smaller than minimum requirement"
@@ -713,6 +717,8 @@ HttpContext *HttpVHost::bestMatch(const char *pURI, size_t iUriLen)
 
     AutoStr2 missURI; //A while URI start with /
     AutoStr2 missLoc;  //A loc should be added to pContext location for the full path
+    if (pContext && pContext->isNullContext() && enableAutoLoadHt())
+        pContext->reviveNullContext();
     while (pContext && !dirMatch(pContext, pURI, iUriLen, &missURI, &missLoc))
     {
         char achRealPath[MAX_PATH_LEN];

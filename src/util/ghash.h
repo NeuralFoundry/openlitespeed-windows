@@ -23,7 +23,11 @@
 
 #include <stddef.h>
 
+#ifdef _WIN32
+typedef size_t hash_key_t;
+#else
 typedef unsigned long hash_key_t;
+#endif
 
 class GHash : private ls_hash_t
 {

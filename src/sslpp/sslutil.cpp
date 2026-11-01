@@ -614,6 +614,10 @@ void SslUtil::detectVerifyCA()
 
     if (s_pVerifyCaFile)
         return;
+#ifdef _WIN32
+    s_pVerifyCaFile = ols_system_ca_file();
+    return;
+#endif
     for (i = 0; i < s_iSystems; ++i)
     {
         if (access(s_aSystemFiles[i], F_OK) == 0)

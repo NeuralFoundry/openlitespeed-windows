@@ -198,6 +198,10 @@ int EventDispatcher::run()
 }
 */
 
+#ifdef _WIN32
+void (*g_pOlsRestartHook)() = NULL;
+#endif
+
 static int s_ppid = 1;
 static inline void processTimerNew()
 {
@@ -286,6 +290,13 @@ int EventDispatcher::run()
                 HttpServer::cleanPid();
             if (sigEvent & HS_STOP)
                 break;
+#ifdef _WIN32
+            if ((sigEvent & HS_USR1) && g_pOlsRestartHook)
+            {
+                LS_NOTICE("Graceful restart requested by SIGUSR1!");
+                g_pOlsRestartHook();
+            }
+#endif
         }
     }
     return 0;

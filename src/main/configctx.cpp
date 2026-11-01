@@ -188,6 +188,10 @@ int ConfigCtx::getRootPath(const char *&pRoot, const char *&pFile)
     }
     else if (*pFile == '/')
         defRootType = -1;
+#ifdef _WIN32
+    else if (ols_is_drive_path(pFile))
+        defRootType = -1;
+#endif
 
     switch(defRootType)
     {

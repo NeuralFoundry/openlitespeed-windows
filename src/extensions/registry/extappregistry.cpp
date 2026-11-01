@@ -423,6 +423,65 @@ void ExtAppRegistry::runOnStartUp()
 }
 
 
+#ifdef _WIN32
+void ExtAppSubRegistry::splitForWorkers(int procNo, int workers)
+{
+    ExtAppMap::iterator iter;
+    for (iter = m_pRegistry->begin();
+         iter != m_pRegistry->end();
+         iter = m_pRegistry->next(iter))
+    {
+        LocalWorker *pApp = dynamic_cast<LocalWorker *>(iter.second());
+        if (!pApp || !pApp->getConfig().getStartByServer())
+            continue;
+        LocalWorkerConfig &config = pApp->getConfig();
+        int instances = config.getInstances();
+        if (instances > 1)
+        {
+            int share = (instances + workers - 1) / workers;
+            if (share < 2)
+                share = 2;
+            if (share > instances)
+                share = instances;
+            config.setInstances(share);
+            if (config.getMaxConns() > share)
+                pApp->setMaxConns(share);
+        }
+        if (procNo <= 1)
+            continue;
+        const char *pURL = config.getURL();
+        char achURL[1024];
+        if (!pURL)
+            continue;
+        if (strncasecmp(pURL, "uds:", 4) == 0)
+            snprintf(achURL, sizeof(achURL), "%s.w%d", pURL, procNo);
+        else
+        {
+            const char *pPort = strrchr(pURL, ':');
+            int port = pPort ? atoi(pPort + 1) : 0;
+            if (port <= 0 || port + procNo - 1 > 65535)
+                continue;
+            snprintf(achURL, sizeof(achURL), "%.*s:%d", (int)(pPort - pURL), pURL,
+                     port + procNo - 1);
+        }
+        pApp->setURL(achURL);
+        LS_DBG_L("[%s] worker #%d uses [%s] with %d instance(s).", pApp->getName(),
+                 procNo, achURL, config.getInstances());
+    }
+}
+
+
+void ExtAppRegistry::splitForWorkers(int procNo, int workers)
+{
+    for (int i = 0; i < EA_NUM_APP; ++i)
+    {
+        if (i != EA_LOGGER && i != EA_CGID)
+            s_registry[i]()->splitForWorkers(procNo, workers);
+    }
+}
+#endif
+
+
 int ExtAppRegistry::generateRTReport(int fd)
 {
     for (int i = 0; i < EA_NUM_APP; ++i)

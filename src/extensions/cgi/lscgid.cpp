@@ -83,7 +83,8 @@ void ls_stderr(const char * fmt, ...)
     struct timeval  tv;
     struct tm       tm;
     gettimeofday(&tv, NULL);
-    localtime_r(&tv.tv_sec, &tm);
+    time_t sec = tv.tv_sec;
+    localtime_r(&sec, &tm);
     p += snprintf(p, 1024, "%04d-%02d-%02d %02d:%02d:%02d.%06d ",
         tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
         tm.tm_hour, tm.tm_min, tm.tm_sec, (int)tv.tv_usec);

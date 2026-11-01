@@ -739,7 +739,7 @@ int ls_vsnprintf(char *str, size_t size, const char *format, va_list args)
 
 
 /* Nonzero if X is not aligned on a "long" boundary.  */
-#define UNALIGNED(X) ((long)(X + 1) & (sizeof (long) - 1))
+#define UNALIGNED(X) ((intptr_t)(X + 1) & (sizeof (intptr_t)- 1))
 /* How many bytes are loaded each iteration of the word copy loop.  */
 #define LBLOCKSIZE (sizeof (long))
 /* Threshhold for punting to the bytewise iterator.  */

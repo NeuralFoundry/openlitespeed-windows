@@ -19,7 +19,9 @@
 
 #include    <errno.h>
 #include    <net/if.h>
+#ifndef _WIN32
 #include    <net/if_arp.h>
+#endif
 #include    <netinet/in.h>
 #include    <sys/ioctl.h>
 #include    <arpa/inet.h>
@@ -39,6 +41,10 @@
     || defined(macintosh) || defined(__APPLE__) || defined(__APPLE_CC__)
 
 #include "bsd_nicdetect.cpp"
+
+#elif defined(_WIN32)
+
+#include "win_nicdetect.cpp"
 
 #elif defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__)
 

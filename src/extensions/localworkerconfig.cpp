@@ -229,8 +229,16 @@ int LocalWorkerConfig::config(const XmlNode *pNode)
                    000, 0777, procConfig.getUMask(), 8);
     setUmask(umakeVal);
 
+#ifdef _WIN32
+    {
+        long runOnStartUp = ConfigCtx::getCurConfigCtx()->getLongValue(pNode,
+                            "runOnStartUp", 0, 3, 0);
+        setRunOnStartUp(runOnStartUp > 1 ? 1 : runOnStartUp);
+    }
+#else
     setRunOnStartUp(ConfigCtx::getCurConfigCtx()->getLongValue(pNode,
                     "runOnStartUp", 0, 3, 3));
+#endif
 
     RLimits limits;
     if (ExtAppRegistry::getRLimits() != NULL)

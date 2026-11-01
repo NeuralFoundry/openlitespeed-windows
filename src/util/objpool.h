@@ -130,18 +130,38 @@ public:
 template <class T >
 class ObjPool : public GObjPool
 {
+#ifdef _MSC_VER
+    static void *newObjT()
+    {   return new T();  }
 
+    static void releaseObjT(void *pObj)
+    {   delete(T *)pObj; }
+
+    void *(*m_fnNew)();
+    void (*m_fnRelease)(void *);
+
+    void *newObj()
+    {   return m_fnNew();  }
+
+    void releaseObj(void *pObj)
+    {   m_fnRelease(pObj); }
+#else
     void *newObj()
     {   return new T();  }
 
     void releaseObj(void *pObj)
     {   delete(T *)pObj; }
+#endif
 
 public:
 
     typedef T **iterator;
     explicit ObjPool(int initSize = 10, int chunkSize = 10)
         : GObjPool(chunkSize)
+#ifdef _MSC_VER
+        , m_fnNew(newObjT)
+        , m_fnRelease(releaseObjT)
+#endif
     {
         if (initSize)
             allocate(initSize);

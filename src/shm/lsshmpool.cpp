@@ -94,7 +94,7 @@ inline LsShmPoolMap *LsShmPool::getDataMap() const
 
 
 LsShmOffset_t LsShmPool::getPoolMapStatOffset() const
-{ return (LsShmOffset_t)(long) & ((LsShmPoolMem *)(long)m_iOffset)->x_data.x_stat; }
+{ return (LsShmOffset_t)(intptr_t)& ((LsShmPoolMem *)(intptr_t)m_iOffset)->x_data.x_stat; }
 
 
 inline  void LsShmPool::incrCheck(LsShmXSize_t *ptr, LsShmSize_t size)
@@ -993,7 +993,7 @@ LsShmOffset_t LsShmPool::allocFromDataChunk(LsShmSize_t size,
     LsShmSize_t avail;
     LsShmPoolMap *pDataMap = getDataMap();
 
-TRY_AGAIN:
+LS_TRY_AGAIN:
     avail = pDataMap->x_chunk.x_iEnd - pDataMap->x_chunk.x_iStart;
     if (avail > 0 && (pDataMap->x_chunk.x_iEnd - 1) >> LARGE_PAGE_BITS
                      > pDataMap->x_chunk.x_iStart >> LARGE_PAGE_BITS)
@@ -1028,7 +1028,7 @@ TRY_AGAIN:
         {
             releaseData(releaseOffset, releaseSize);
             pDataMap->x_stat.m_iFreeChunk -= releaseSize;
-            goto TRY_AGAIN;
+            goto LS_TRY_AGAIN;
         }
     }
     else

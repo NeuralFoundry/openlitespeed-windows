@@ -23,7 +23,13 @@
 #include <lsr/ls_str.h>
 #include <shm/lsshmhash.h>
 #include <main/lshttpdmain.h>
+#ifdef _MSC_VER
+extern "C" {
+#endif
 #include <liblsquic/lsquic_stock_shi.h>
+#ifdef _MSC_VER
+}
+#endif
 #include <lsquic.h>
 #include <log4cxx/logger.h>
 #include <util/datetime.h>
@@ -556,7 +562,8 @@ void QuicShm::maybeUpdateLruCidItems(const ShmCidPidInfo *pInfos,
                                                             unsigned count)
 {
     lsquic_cid_t cid;
-    unsigned n, n_to_up, to_update[count];
+    unsigned n, n_to_up;
+    unsigned *to_update = (unsigned *)alloca(sizeof(unsigned) * (count ? count : 1));
 
     n_to_up = 0;
     for (n = 0; n < count; ++n)
@@ -749,7 +756,7 @@ QuicShm::getNewPacketBuffer()
 unsigned QuicShm::getNewPacketBuffers(SetOfPacketBuffers &set, unsigned count)
 {
     unsigned n;
-    packet_buf_t *packet_bufs[count];
+    packet_buf_t **packet_bufs = (packet_buf_t **)alloca(sizeof(packet_buf_t *) * (count ? count : 1));
 
     m_pPacketPool->lock();
 
@@ -803,7 +810,7 @@ void QuicShm::releasePacketBufferOff(LsShmOffset_t offset)
 void
 QuicShm::releasePacketBuffers(class SetOfPacketBuffers &set, unsigned count)
 {
-    packet_buf_t *packet_bufs[count];
+    packet_buf_t **packet_bufs = (packet_buf_t **)alloca(sizeof(packet_buf_t *) * (count ? count : 1));
     unsigned n;
 
     for (n = 0; n < count; ++n)
@@ -1134,7 +1141,7 @@ QuicShm::distributeAlienPackets(ShmCidPidInfo *const *pids,
     unsigned n, max_n_to_sig, i, n_to_rel, n_to_sig;
     time_t now;
     enum atpq atpq;
-    unsigned to_release[count];
+    unsigned *to_release = (unsigned *)alloca(sizeof(unsigned) * (count ? count : 1));
 
     n_to_rel = 0;
     n_to_sig = 0;

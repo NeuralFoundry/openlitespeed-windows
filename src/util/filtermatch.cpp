@@ -119,7 +119,7 @@ bool FilterMatch::match(const char * val, size_t val_len)
     {
         val_len = strlen(val);
     }
-    char buf[val_len + 1]; // we don't know if val is NUL terminated, fnmatch has no count limit
+    char *buf = (char *)alloca(val_len + 1); // we don't know if val is NUL terminated, fnmatch has no count limit
 
     switch(m_type)
     {

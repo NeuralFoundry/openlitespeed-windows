@@ -18,6 +18,9 @@
 #ifndef HTTPRESOURCEMANAGER_H
 #define HTTPRESOURCEMANAGER_H
 
+#ifdef _MSC_VER
+#include <edio/aiosendfile.h>
+#endif
 #include <lsdef.h>
 #include <http/httpdefs.h>
 #include <util/objpool.h>

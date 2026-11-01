@@ -24,6 +24,7 @@
 #include <util/autostr.h>
 
 #include <stddef.h>
+#include <time.h>
 
 
 typedef struct lsi_module_config_s lsi_module_config_t;
@@ -50,6 +51,7 @@ class HttpSession;
 class ModuleConfig;
 class HttpSessionHooks;
 class HttpHeaderOps;
+struct HtWatch;
 
 #define UID_SERVER          0
 #define UID_FILE            1
@@ -234,8 +236,15 @@ class HttpContext
     AutoStr2             *m_pRewriteBase;
     RewriteRuleList      *m_pRewriteRules;
     const HttpContext    *m_pParent;
+    HtWatch              *m_pHtWatch;
+    time_t                m_tNullChecked;
 
     void releaseHTAuth();
+    int  watchHtaccess(const RewriteMapList *pMapList, const char *pRule,
+                       const char *pPath);
+    void loadHtaccessRules();
+    void reloadHtaccess();
+    void checkHtaccess();
     void releaseAccessControl();
     void releaseDefaultCharset();
     void releaseMIME();
@@ -278,6 +287,8 @@ public:
     uint32_t isCacheable() const       {   return m_iConfigBits2 & BIT2_URI_CACHEABLE; }
 
     uint32_t isNullContext()           { return m_iConfigBits2 & BIT2_NULL_CONTEXT; }
+    int reviveNullContext();
+    static void refreshHtaccess(const HttpContext *pContext);
 
     const char *getLocation() const {   return m_sLocation.c_str();    }
     int getLocationLen() const       {   return m_sLocation.len();      }

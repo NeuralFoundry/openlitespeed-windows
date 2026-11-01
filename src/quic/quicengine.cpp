@@ -271,10 +271,10 @@ void QuicEngine::addNewSCIDs(void *ctx, void **peer_ctx,
 {
     UdpListener *pUdpListener;
     unsigned n;
-    ShmCidPidInfo pids[count];
+    ShmCidPidInfo *pids = (ShmCidPidInfo *)alloca(sizeof(ShmCidPidInfo) * (count ? count : 1));
 
     LS_DBG_H("QuicEngine::addNewSCIDs\n");
-    memset(pids, 0, sizeof(pids)); /* Set .pid to 0 to signify unknown pids */
+    memset(pids, 0, sizeof(*pids) * count); /* Set .pid to 0 to signify unknown pids */
     QuicShm::getInstance().lookupCidPids(cids, pids, count);
 
     for (n = 0; n < count; ++n)

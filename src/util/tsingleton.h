@@ -57,12 +57,21 @@ public:
         return *s_pInstance;
     }
 private:
+#ifdef _MSC_VER
+    static inline T *s_pInstance = NULL;
+#else
     static T *s_pInstance;
+#endif
 
 };
 
+#ifdef _MSC_VER
+#define LS_SINGLETON_DECL(T) extern int ls_singleton_decl_unused_##T
+#define LS_SINGLETON(T) extern int ls_singleton_unused_##T
+#else
 #define LS_SINGLETON_DECL(T) template<> T *TSingleton<T>::s_pInstance
 
 #define LS_SINGLETON(T) template<> T *TSingleton<T>::s_pInstance = NULL
+#endif
 
 #endif

@@ -118,7 +118,7 @@ class DashboardAjax
 
     private static function getLoadAverage()
     {
-        $avgload = sys_getloadavg();
+        $avgload = function_exists('sys_getloadavg') ? sys_getloadavg() : false;
         if ($avgload === false || !is_array($avgload)) {
             return [];
         }

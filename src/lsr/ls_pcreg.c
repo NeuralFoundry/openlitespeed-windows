@@ -90,7 +90,7 @@ ls_pcre_t *ls_pcre_load(const char *pRegex, unsigned long iFlags)
      * NOTICE: pNode is used for multiple nodes.
      */
     if ((s_pcre_store != NULL)
-        && ((pNode = ls_hash_find(s_pcre_store, (void *)iFlags)) != NULL)
+        && ((pNode = ls_hash_find(s_pcre_store, (void *)(intptr_t)iFlags)) != NULL)
         && ((pInnerHash = (ls_hash_t *)ls_hash_getdata(pNode)) != NULL)
         && ((pNode = ls_hash_find(pInnerHash, pRegex)) != NULL))
     {
@@ -115,14 +115,14 @@ int ls_pcre_store(ls_pcre_t *pThis, unsigned long iFlags)
     if (s_pcre_store == NULL)
         s_pcre_store = ls_hash_new(50, NULL, NULL, NULL);
     else if ((pNode = ls_hash_find(s_pcre_store,
-                                   (void *)iFlags)) != NULL)
+                                   (void *)(intptr_t)iFlags)) != NULL)
         pInnerHash = (ls_hash_t *)ls_hash_getdata(pNode);
 
     if (pInnerHash == NULL)
     {
         pInnerHash = ls_hash_new(10, ls_hash_hfstring,
                                  ls_hash_cmpstring, NULL);
-        ls_hash_insert(s_pcre_store, (void *)iFlags, pInnerHash);
+        ls_hash_insert(s_pcre_store, (void *)(intptr_t)iFlags, pInnerHash);
     }
     int ret = (ls_hash_insert(pInnerHash, pThis->pattern, pThis) != NULL);
 #ifdef USE_THRSAFE_POOL

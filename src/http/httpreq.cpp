@@ -15,6 +15,11 @@
 *    You should have received a copy of the GNU General Public License       *
 *    along with this program. If not, see http://www.gnu.org/licenses/.      *
 *****************************************************************************/
+#ifdef LS_ENABLE_DEBUG
+#define LS_DBG_OR_ERROR LS_ERROR
+#else
+#define LS_DBG_OR_ERROR LS_DBG_L
+#endif
 #include "httpreq.h"
 
 #include <http/accesscache.h>
@@ -2879,11 +2884,7 @@ int HttpReq::processPath(const char *pURI, int uriLen, char *pBuf,
         if (ret == -1 && m_lastStatRes == EACCES)
         {
 
-#ifdef LS_ENABLE_DEBUG
-            LS_ERROR(getLogSession(),
-#else
-            LS_DBG_L(getLogSession(),
-#endif
+            LS_DBG_OR_ERROR(getLogSession(),
                         "File not accessible [%s].", pBuf);
 
             return SC_403;
@@ -2905,11 +2906,7 @@ int HttpReq::processPath(const char *pURI, int uriLen, char *pBuf,
                         if ((!m_pContext->isAppContext()) &&  (!isFavicon()))
                         {
 
-#ifdef LS_ENABLE_DEBUG
-                            LS_ERROR(getLogSession(),
-#else
-                            LS_DBG_L(getLogSession(),
-#endif
+                            LS_DBG_OR_ERROR(getLogSession(),
                                     "File not found [%s].", pBuf);
                         }
                         return SC_404;

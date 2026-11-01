@@ -168,6 +168,40 @@ typedef ls_spinlock_t      ls_lock_t;
 #endif
 
 #define LS_LOCK_AVAIL 0
+#ifdef _WIN32
+ls_inline int ls_futex_wait_priv(int *futex, int val, struct timespec *timeout)
+{
+    DWORD ms = INFINITE;
+    if (timeout)
+        ms = (DWORD)(timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000);
+    if (!WaitOnAddress((volatile VOID *)futex, &val, sizeof(int), ms))
+    {
+        errno = (GetLastError() == ERROR_TIMEOUT) ? ETIMEDOUT : EINTR;
+        return -1;
+    }
+    return 0;
+}
+ls_inline int ls_futex_wake_priv(int *futex)
+{
+    WakeByAddressSingle((PVOID)futex);
+    return 0;
+}
+ls_inline int ls_futex_wakeall_priv(int *futex)
+{
+    WakeByAddressAll((PVOID)futex);
+    return 0;
+}
+#define ls_futex_wait       ls_futex_wait_priv
+#define ls_futex_wake       ls_futex_wake_priv
+#define ls_futex_wakeall    ls_futex_wakeall_priv
+ls_inline int ls_futex_wake_n(int *futex, int n)
+{
+    int i;
+    for (i = 0; i < n; ++i)
+        WakeByAddressSingle((PVOID)futex);
+    return n;
+}
+#endif
 #define LS_LOCK_INUSE 456
 
 #if defined(__FreeBSD__ ) || defined(__NetBSD__) || defined(__OpenBSD__)

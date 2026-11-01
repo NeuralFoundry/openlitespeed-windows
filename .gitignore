@@ -1,4 +1,11 @@
 build/
+build-*/
 __pycache__
 *.orig
 *.rej
+.deps/
+run/
+svc-test/
+.vs/
+/src/liblsquic/
+/src/lshpack/

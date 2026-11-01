@@ -57,7 +57,7 @@
 #include <socket/gsockaddr.h>
 #include <edio/evtcbque.h>
 
-#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__)
+#if defined(linux) || defined(__linux) || defined(__linux__) || defined(__gnu_linux__) || defined(_WIN32)
 //For non-linux, we do not need this include file
 #else
 #include <sys/sysctl.h>
@@ -106,6 +106,50 @@ static int  s_iRunning = 0;
 static long s_tmDelayShutdown = 0;
 static long s_tmGraceful = 0;
 char *argv0 = NULL;
+#ifdef _WIN32
+extern void (*g_pOlsRestartHook)();
+static LshttpdMain *s_pRestartMain = NULL;
+static void olsRestartHook();
+
+#include <edio/eventreactor.h>
+#include <edio/multiplexer.h>
+#include <edio/multiplexerfactory.h>
+
+class AdminSockReactor : public EventReactor
+{
+public:
+    AdminSockReactor(LshttpdMain *pMain, int fd)
+        : m_pMain(pMain)
+    {   setfd(fd);  }
+    virtual int handleEvents(short event)
+    {
+        if (event & POLLIN)
+            m_pMain->winAcceptAdmin();
+        return 0;
+    }
+private:
+    LshttpdMain *m_pMain;
+};
+
+static void notifyOldInstance()
+{
+    char achBuf[32];
+    int fd = ::open(GRACEFUL_PID_FILE, O_RDONLY);
+    if (fd == -1)
+        return;
+    int n = ::read(fd, achBuf, sizeof(achBuf) - 1);
+    ::close(fd);
+    if (n <= 0)
+        return;
+    achBuf[n] = 0;
+    int pid = atoi(achBuf);
+    if (pid > 0 && pid != getpid() && kill(pid, 0) == 0 && ols_pid_is_ours(pid))
+    {
+        LS_NOTICE("New instance is ready, stopping old instance [%d].", pid);
+        kill(pid, SIGTERM);
+    }
+}
+#endif
 static int s_iCpuCount = 1;
 
 LshttpdMain::LshttpdMain()
@@ -388,7 +432,8 @@ int LshttpdMain::getChildStackBtFile(pid_t pid, char *pBuf, int bufLen)
     struct tm tm;
     char achName[128];
     gettimeofday(&tv, NULL);
-    localtime_r(&tv.tv_sec, &tm);
+    time_t sec = tv.tv_sec;
+    localtime_r(&sec, &tm);
     // Millisecond resolution keeps snapshots of the same pid distinct.
     snprintf(achName, sizeof(achName),
              "logs/stackbt.%d.%04d%02d%02d-%02d%02d%02d.%03d.log", (int)pid,
@@ -654,15 +699,33 @@ int LshttpdMain::startAdminSocket()
     if (m_fdAdmin != -1)
         return 0;
     srand(time(NULL));
+#ifdef _WIN32
+    char achNative[1024];
+    snprintf(achBuf, sizeof(achBuf), "%sadmin/tmp/admin.sock.7000",
+             MainServerConfig::getInstance().getServerRoot());
+    int useUds = ols_native_path(achBuf, strlen(achBuf), achNative, sizeof(achNative)) > 0
+                 && strlen(achNative) < 100;
+#endif
     for (i = 0; i < 100; ++i)
     {
+#ifdef _WIN32
+        unsigned int r;
+        rand_s(&r);
+        if (useUds)
+            snprintf(achBuf, 1024, "uds:/%sadmin/tmp/admin.sock.%u",
+                     MainServerConfig::getInstance().getServerRoot(), 7000 + r % 1000);
+        else
+            snprintf(achBuf, 132, "127.0.0.1:%u", 17000 + r % 1000);
+#else
         snprintf(achBuf, 132, "uds:/%s%sadmin/tmp/admin.sock.%d",
                  (pProcChroot != NULL) ? pProcChroot->c_str() : "",
                  MainServerConfig::getInstance().getServerRoot(),
                  7000 + rand() % 1000);
+#endif
         //snprintf(achBuf, 255, "127.0.0.1:%d", 7000 + rand() % 1000 );
         if (CoreSocket::listen(achBuf, 10, &m_fdAdmin, 0 , 0) == 0)
             break;
+#ifndef _WIN32
         if (i > 0 && !(i % 10))
         {
             snprintf(achBuf, 1024, "rm -rf '%s%sadmin/tmp/'admin.sock.*",
@@ -670,6 +733,7 @@ int LshttpdMain::startAdminSocket()
                      MainServerConfig::getInstance().getServerRoot());
             system(achBuf);
         }
+#endif
     }
     if (i == 100)
         return LS_FAIL;
@@ -708,6 +772,14 @@ int LshttpdMain::acceptAdminSockConn()
     int fd = accept(m_fdAdmin, (struct sockaddr *)&peer, &addrlen);
     if (fd == -1)
         return LS_FAIL;
+#ifdef _WIN32
+    {
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        DWORD tmo = 1000;
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tmo, sizeof(tmo));
+    }
+#endif
     int ret = 0;
     ::fcntl(fd, F_SETFD, FD_CLOEXEC);
     //TODO: add access control here
@@ -730,8 +802,26 @@ int LshttpdMain::processAdminSockConn(int fd)
     char *pEnd = &achBuf[4096];
     char *p = achBuf;
     int len;
+#ifdef _WIN32
+    ULONGLONG deadline = GetTickCount64() + 2000;
+    for (;;)
+    {
+        ULONGLONG now = GetTickCount64();
+        DWORD tmo = (now < deadline) ? (DWORD)(deadline - now) : 0;
+        if (tmo == 0)
+        {
+            len = -1;
+            break;
+        }
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tmo, sizeof(tmo));
+        if ((len = ls_fio_read(fd, p, pEnd - p)) <= 0)
+            break;
+        p += len;
+    }
+#else
     while ((len = ls_fio_read(fd, p, pEnd - p)) > 0)
         p += len;
+#endif
 
     if ((len == -1) || (pEnd == p))
     {
@@ -739,6 +829,7 @@ int LshttpdMain::processAdminSockConn(int fd)
                  (int)(p - achBuf));
         return LS_FAIL;
     }
+    *p = 0;
     char *pEndAuth = strchr(achBuf, '\n');
     if (!pEndAuth)
         return LS_FAIL;
@@ -1142,11 +1233,16 @@ int LshttpdMain::init(int argc, char *argv[])
     }
 
 
+#ifdef _WIN32
+    int iWorker = ols_worker_no();
+#else
+    int iWorker = 0;
+#endif
     if (!m_iConfTestMode)
     {
         mkdir(DEFAULT_TMP_DIR,  0755);
 
-        if (testRunningServer() != 0)
+        if (!iWorker && testRunningServer() != 0)
             return 2;
     }
     else
@@ -1166,8 +1262,10 @@ int LshttpdMain::init(int argc, char *argv[])
     if (m_pServer->initLscpd())
         return 1;
 #endif
+    if (iWorker)
+        MainServerConfig::getInstance().setDisableWebAdmin(1);
 
-    if (!MainServerConfig::getInstance().getDisableLogRotateAtStartup())
+    if (!iWorker && !MainServerConfig::getInstance().getDisableLogRotateAtStartup())
         LOG4CXX_NS::LogRotate::roll(HttpLog::getErrorLogger()->getAppender(),
                                     procConfig.getUid(),
                                     procConfig.getGid(), 1);
@@ -1208,7 +1306,7 @@ int LshttpdMain::init(int argc, char *argv[])
     m_pid = getpid();
     MainServerConfig::getInstance().setWatchDogPid(m_pid);
 
-    if (!m_iConfTestMode)
+    if (!m_iConfTestMode && !iWorker)
     {
         enableCoreDump();
 
@@ -1216,9 +1314,11 @@ int LshttpdMain::init(int argc, char *argv[])
             return 2;
         if (m_pidFile.writePid(m_pid))
             return 2;
+#ifndef _WIN32
         PidFile varRunPid;
         varRunPid.writePidFile("/var/run/openlitespeed.pid", m_pid);
         varRunPid.closePidFile();
+#endif
 
         if (!MainServerConfig::getInstance().getDisableWebAdmin())
             startAdminSocket();
@@ -1244,7 +1344,13 @@ int LshttpdMain::init(int argc, char *argv[])
         return 0;
     }
 
-    removeOldRtreport();
+#ifdef _WIN32
+    if (HttpServerConfig::getInstance().getChildren() > 1)
+        ExtAppRegistry::splitForWorkers(iWorker ? iWorker : 1,
+                                        HttpServerConfig::getInstance().getChildren());
+#endif
+    if (!iWorker)
+        removeOldRtreport();
     {
         char achBuf[8192];
 
@@ -1282,11 +1388,30 @@ int LshttpdMain::init(int argc, char *argv[])
     }
     else
     {
+#ifdef _WIN32
+        m_pServer->setProcNo(iWorker ? iWorker : 1);
+        if (!iWorker)
+        {
+            s_pRestartMain = this;
+            g_pOlsRestartHook = olsRestartHook;
+        }
+#else
         HttpServerConfig::getInstance().setProcNo(1);
+#endif
         allocatePidTracker();
         m_pServer->initAdns();
         m_pServer->enableAioLogging();
         m_pServer->startServing();
+#ifdef _WIN32
+        if (m_fdAdmin != -1)
+        {
+            ::fcntl(m_fdAdmin, F_SETFL, ::fcntl(m_fdAdmin, F_GETFL, 0) | O_NONBLOCK);
+            MultiplexerFactory::getMultiplexer()->add(
+                new AdminSockReactor(this, m_fdAdmin), POLLIN | POLLHUP | POLLERR);
+        }
+        if (!iWorker)
+            m_pServer->startWorkers();
+#endif
         EvtcbQue::getInstance().initNotifier();
         initAio();
         cleanEnvVars();
@@ -1341,6 +1466,13 @@ int LshttpdMain::main(int argc, char *argv[])
 
         if (!m_iConfTestMode)
         {
+#ifdef _WIN32
+            if (!ols_worker_no())
+            {
+                m_pServer->restartMark(2);
+                notifyOldInstance();
+            }
+#endif
             m_pServer->start();
 
             //If HttpServerConfig::s_iProcNo is 0, is main process
@@ -1799,6 +1931,15 @@ void LshttpdMain::applyChanges()
 }
 
 
+#ifdef _WIN32
+static void olsRestartHook()
+{
+    if (s_pRestartMain)
+        s_pRestartMain->winGracefulRestart();
+}
+#endif
+
+
 void LshttpdMain::gracefulRestart()
 {
     LS_DBG_L("Graceful Restart... ");
@@ -1816,6 +1957,18 @@ void LshttpdMain::gracefulRestart()
     unlink(getPidFile());
     m_pidFile.writePidFile(GRACEFUL_PID_FILE, m_pid);
 
+#ifdef _WIN32
+    {
+        m_pServer->passListeners();
+        LS_NOTICE("Passing %d listener sockets to the new instance.", ols_handoff_count(0));
+        int npid = ols_handoff_restart();
+        if (npid == -1)
+            LS_ERROR("Failed to restart the server: %s", strerror(errno));
+        else
+            LS_NOTICE("Started new instance [%d] for graceful restart.", npid);
+        return;
+    }
+#endif
     int pid = fork();
     if (!pid)
     {
@@ -2050,6 +2203,9 @@ extern char ** environ;
 #endif
 void LshttpdMain::cleanEnvVars()
 {
+#ifdef _WIN32
+    return;
+#endif
     char **env;
 #if defined(macintosh) || defined(__APPLE__) || defined(__APPLE_CC__)
     env = *_NSGetEnviron();
@@ -2237,6 +2393,37 @@ static long getProcessNameStartTime(int pid, char *proc_name)
         return -1;
     long real = boot_time + diff / s_jiffies_per_sec;
     return real;
+}
+#endif
+
+#if defined(_WIN32)
+static long getProcessNameStartTime(int pid, char *proc_name)
+{
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+    FILETIME c, e, k, u;
+    wchar_t wname[MAX_PATH];
+    DWORD n = MAX_PATH;
+    long ret = -1;
+    if (!h)
+        return -1;
+    proc_name[0] = 0;
+    if (QueryFullProcessImageNameW(h, 0, wname, &n))
+    {
+        wchar_t *base = wcsrchr(wname, L'\\');
+        wchar_t *dot;
+        base = base ? base + 1 : wname;
+        dot = wcsrchr(base, L'.');
+        if (dot)
+            *dot = 0;
+        WideCharToMultiByte(CP_UTF8, 0, base, -1, proc_name, 255, NULL, NULL);
+    }
+    if (GetProcessTimes(h, &c, &e, &k, &u))
+    {
+        uint64_t v = ((uint64_t)c.dwHighDateTime << 32) | c.dwLowDateTime;
+        ret = (long)((v - 116444736000000000ULL) / 10000000ULL);
+    }
+    CloseHandle(h);
+    return ret;
 }
 #endif
 

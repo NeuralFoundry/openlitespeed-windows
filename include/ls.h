@@ -2564,7 +2564,7 @@ struct lsi_api_s
     /**
      * @brief create_event is an internal function
      */
-    long (*create_event)(evtcb_pf cb, const lsi_session_t *pSession,
+    intptr_t (*create_event)(evtcb_pf cb, const lsi_session_t *pSession,
                          long lParam, void *pParam, int nowait);
     /**
      * @brief create_session_resume_event is an internal function
@@ -2575,18 +2575,18 @@ struct lsi_api_s
     /**
      * @brief get_event_obj is an internal function
      */
-    long (*get_event_obj)(evtcb_pf cb, const lsi_session_t *pSession,
+    intptr_t (*get_event_obj)(evtcb_pf cb, const lsi_session_t *pSession,
                          long lParam, void *pParam);
 
     /**
      * @brief cancel_event is an internal function
      */
-    void (*cancel_event)(const lsi_session_t *pSession, long event_obj);
+    void (*cancel_event)(const lsi_session_t *pSession, intptr_t event_obj);
 
     /**
      * @brief schedule_event is an internal function
      */
-    void (*schedule_event)(long event_obj, int nowait);
+    void (*schedule_event)(intptr_t event_obj, int nowait);
 
     /**
      * @brief schedule_remove_session_cbs_event is an internal function

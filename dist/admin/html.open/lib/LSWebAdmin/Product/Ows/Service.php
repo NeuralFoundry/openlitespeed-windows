@@ -13,11 +13,11 @@ class Service extends ControllerBase
 
     protected function getPidFile()
     {
-        return '/tmp/lshttpd/lshttpd.pid';
+        return (isset($_SERVER['LS_TMP_DIR']) ? $_SERVER['LS_TMP_DIR'] : '/tmp') . '/lshttpd/lshttpd.pid';
     }
 
     protected function getStatusFile()
     {
-        return '/tmp/lshttpd/.status';
+        return (isset($_SERVER['LS_TMP_DIR']) ? $_SERVER['LS_TMP_DIR'] : '/tmp') . '/lshttpd/.status';
     }
 }

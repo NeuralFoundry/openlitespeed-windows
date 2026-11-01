@@ -109,6 +109,9 @@ public:
     int  isServerOk();
     void offsetChroot();
     void setProcNo(int proc);
+#ifdef _WIN32
+    void startWorkers();
+#endif
     void setBlackBoard(char *pBuf);
     void passListeners();
     void recoverListeners();
