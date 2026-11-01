@@ -8,6 +8,7 @@
 #define _UNICODE
 #endif
 #include <windows.h>
+#include <winhttp.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <commdlg.h>
@@ -15,10 +16,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <wctype.h>
+#include <ctype.h>
+#include <time.h>
 #include "phpdetect.h"
 
 #define WM_TRAY (WM_APP + 1)
+#define WM_UPDATE (WM_APP + 2)
 #define TIMER_STATUS 1
+#define TIMER_UPDATE 2
+#define WIDEN2(x) L##x
+#define WIDEN(x) WIDEN2(x)
+#ifndef OLS_RELEASE
+#define OLS_RELEASE "0"
+#endif
+#ifndef WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
+#define WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY 4
+#endif
+#define RELEASES_URL L"https://github.com/NeuralFoundry/openlitespeed-windows/releases/tag/"
+#define UPDATE_EVERY (24 * 3600)
 #define ID_START 100
 #define ID_STOP 101
 #define ID_RELOAD 102
@@ -33,6 +49,8 @@
 #define ID_EXIT 111
 #define ID_SETWWW 112
 #define ID_IMPORT 113
+#define ID_UPDATE 114
+#define ID_CHECK 115
 #define ID_PHP_BASE 1000
 #define ID_SITE_BASE 2000
 #define MAX_SITES 256
@@ -45,6 +63,9 @@ static int g_running = -1;
 static wchar_t g_root[MAX_PATH], g_exe[MAX_PATH], g_ini[MAX_PATH];
 static wchar_t g_sites[MAX_SITES][128];
 static int g_nsites;
+static wchar_t g_latest[64];
+static volatile LONG g_checking;
+static int g_update_balloon;
 
 static HICON make_icon(COLORREF fill)
 {
@@ -394,6 +415,7 @@ static int run_elevated(const wchar_t *args)
 
 static void notify(const wchar_t *title, const wchar_t *msg)
 {
+    g_update_balloon = 0;
     g_nid.uFlags = NIF_INFO;
     wcsncpy(g_nid.szInfoTitle, title, 63);
     wcsncpy(g_nid.szInfo, msg, 255);
@@ -450,6 +472,166 @@ static void update_status(void)
 static void open_url(const wchar_t *url)
 {
     ShellExecuteW(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL);
+}
+
+static int version_cmp(const wchar_t *a, const wchar_t *b)
+{
+    for (;;)
+    {
+        unsigned long x, y;
+        while (*a && !iswdigit(*a))
+            ++a;
+        while (*b && !iswdigit(*b))
+            ++b;
+        if (!*a || !*b)
+            return *a ? 1 : *b ? -1 : 0;
+        x = wcstoul(a, (wchar_t **)&a, 10);
+        y = wcstoul(b, (wchar_t **)&b, 10);
+        if (x != y)
+            return x < y ? -1 : 1;
+    }
+}
+
+static int parse_tag(const char *json, wchar_t *out, size_t len)
+{
+    const char *p = strstr(json, "\"tag_name\"");
+    size_t n = 0;
+    if (!p)
+        return 0;
+    p += 10;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n' || *p == ':')
+        ++p;
+    if (*p++ != '"')
+        return 0;
+    for (; *p && *p != '"'; ++p)
+    {
+        if (!(isalnum((unsigned char)*p) || *p == '.' || *p == '-' || *p == '_') || n + 1 >= len)
+            return 0;
+        out[n++] = (wchar_t)*p;
+    }
+    out[n] = 0;
+    return n > 0 && *p == '"';
+}
+
+static int fetch_latest(wchar_t *tag, size_t len)
+{
+    const DWORD max = 262144;
+    int ok = 0;
+    DWORD got = 0, n;
+    char *buf = (char *)malloc(max);
+    HINTERNET ses = WinHttpOpen(L"OpenLiteSpeed-tray/" WIDEN(OLS_RELEASE), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                                WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    HINTERNET con = NULL, req = NULL;
+    if (!ses)
+        ses = WinHttpOpen(L"OpenLiteSpeed-tray/" WIDEN(OLS_RELEASE), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (ses)
+    {
+        WinHttpSetTimeouts(ses, 10000, 10000, 10000, 10000);
+        con = WinHttpConnect(ses, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+    }
+    if (con)
+        req = WinHttpOpenRequest(con, L"GET", L"/repos/NeuralFoundry/openlitespeed-windows/releases/latest", NULL,
+                                 WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+    if (buf && req
+        && WinHttpSendRequest(req, L"Accept: application/vnd.github+json\r\n", (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0,
+                              0, 0)
+        && WinHttpReceiveResponse(req, NULL))
+    {
+        DWORD status = 0, sz = sizeof(status);
+        WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                            &status, &sz, WINHTTP_NO_HEADER_INDEX);
+        while (got + 1 < max && WinHttpReadData(req, buf + got, max - 1 - got, &n) && n)
+            got += n;
+        buf[got] = 0;
+        ok = status == 200 && parse_tag(buf, tag, len);
+    }
+    if (req)
+        WinHttpCloseHandle(req);
+    if (con)
+        WinHttpCloseHandle(con);
+    if (ses)
+        WinHttpCloseHandle(ses);
+    free(buf);
+    return ok;
+}
+
+static DWORD WINAPI update_thread(LPVOID arg)
+{
+    wchar_t *tag = (wchar_t *)calloc(64, sizeof(wchar_t));
+    if (tag && !fetch_latest(tag, 64))
+    {
+        free(tag);
+        tag = NULL;
+    }
+    if (!PostMessageW(g_wnd, WM_UPDATE, (WPARAM)(arg != NULL), (LPARAM)tag))
+        free(tag);
+    InterlockedExchange(&g_checking, 0);
+    return 0;
+}
+
+static void check_updates(int manual)
+{
+    HANDLE th;
+    if (InterlockedExchange(&g_checking, 1))
+        return;
+    th = CreateThread(NULL, 0, update_thread, manual ? (LPVOID)1 : NULL, 0, NULL);
+    if (th)
+        CloseHandle(th);
+    else
+        InterlockedExchange(&g_checking, 0);
+}
+
+static void schedule_update(void)
+{
+    wchar_t buf[32];
+    long long now = (long long)time(NULL), last, wait;
+    KillTimer(g_wnd, TIMER_UPDATE);
+    if (!GetPrivateProfileIntW(L"update", L"check", 1, g_ini))
+        return;
+    GetPrivateProfileStringW(L"update", L"last", L"0", buf, 32, g_ini);
+    last = _wtoi64(buf);
+    wait = last + UPDATE_EVERY - now;
+    if (wait < 30 || last > now)
+        wait = 30;
+    SetTimer(g_wnd, TIMER_UPDATE, (UINT)(wait * 1000), NULL);
+}
+
+static void on_update(int manual, wchar_t *tag)
+{
+    wchar_t buf[192], seen[64];
+    swprintf(buf, 32, L"%lld", (long long)time(NULL));
+    WritePrivateProfileStringW(L"update", L"last", buf, g_ini);
+    schedule_update();
+    if (!tag)
+    {
+        if (manual)
+            notify(L"OpenLiteSpeed", L"Could not check for updates.");
+        return;
+    }
+    if (version_cmp(tag, WIDEN(OLS_RELEASE)) > 0)
+    {
+        wcsncpy(g_latest, tag, 63);
+        GetPrivateProfileStringW(L"update", L"notified", L"", seen, 64, g_ini);
+        if (manual || wcscmp(seen, tag) != 0)
+        {
+            swprintf(buf, 192, L"OpenLiteSpeed %s is available. Click to open the download page.",
+                     tag[0] == L'v' ? tag + 1 : tag);
+            notify(L"OpenLiteSpeed update", buf);
+            g_update_balloon = 1;
+            WritePrivateProfileStringW(L"update", L"notified", tag, g_ini);
+        }
+    }
+    else
+    {
+        g_latest[0] = 0;
+        if (manual)
+        {
+            swprintf(buf, 192, L"OpenLiteSpeed %s is the latest version.", WIDEN(OLS_RELEASE));
+            notify(L"OpenLiteSpeed", buf);
+        }
+    }
+    free(tag);
 }
 
 static void www_dir(wchar_t *out, size_t len)
@@ -550,6 +732,11 @@ static void show_menu(void)
     load_sites();
     current_php(cur, MAX_PATH);
     AppendMenuW(m, MF_STRING | MF_GRAYED, 0, g_running ? L"OpenLiteSpeed is running" : L"OpenLiteSpeed is stopped");
+    if (g_latest[0])
+    {
+        swprintf(label, MAX_PATH + 32, L"Update available: %s", g_latest[0] == L'v' ? g_latest + 1 : g_latest);
+        AppendMenuW(m, MF_STRING, ID_UPDATE, label);
+    }
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING | (g_running ? MF_GRAYED : 0), ID_START, L"Start");
     AppendMenuW(m, MF_STRING | (g_running ? 0 : MF_GRAYED), ID_STOP, L"Stop");
@@ -583,6 +770,7 @@ static void show_menu(void)
     AppendMenuW(m, MF_STRING, ID_FOLDER, L"Open install folder");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING | (autorun_enabled() ? MF_CHECKED : 0), ID_AUTORUN, L"Start with Windows");
+    AppendMenuW(m, MF_STRING | (g_checking ? MF_GRAYED : 0), ID_CHECK, L"Check for updates");
     AppendMenuW(m, MF_STRING, ID_EXIT, L"Exit");
     GetCursorPos(&pt);
     SetForegroundWindow(g_wnd);
@@ -659,6 +847,13 @@ static void on_command(int id)
         ShellExecuteW(NULL, L"open", g_root, NULL, NULL, SW_SHOWNORMAL);
     else if (id == ID_AUTORUN)
         toggle_autorun();
+    else if (id == ID_UPDATE && g_latest[0])
+    {
+        swprintf(buf, MAX_PATH, L"%s%s", RELEASES_URL, g_latest);
+        open_url(buf);
+    }
+    else if (id == ID_CHECK)
+        check_updates(1);
     else if (id == ID_EXIT)
         DestroyWindow(g_wnd);
 }
@@ -676,12 +871,23 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             show_menu();
         else if (LOWORD(lp) == WM_LBUTTONDBLCLK)
             on_command(ID_SITE);
+        else if (LOWORD(lp) == NIN_BALLOONUSERCLICK && g_update_balloon)
+            on_command(ID_UPDATE);
         return 0;
     case WM_COMMAND:
         on_command(LOWORD(wp));
         return 0;
+    case WM_UPDATE:
+        on_update((int)wp, (wchar_t *)lp);
+        return 0;
     case WM_TIMER:
-        update_status();
+        if (wp == TIMER_UPDATE)
+        {
+            KillTimer(h, TIMER_UPDATE);
+            check_updates(0);
+        }
+        else
+            update_status();
         return 0;
     case WM_DESTROY:
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
@@ -736,6 +942,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show)
     if (((cmdline && wcsstr(cmdline, L"--start")) || GetPrivateProfileIntW(L"tray", L"autostart", 1, g_ini)) && !g_running)
         on_command(ID_START);
     SetTimer(g_wnd, TIMER_STATUS, 2000, NULL);
+    schedule_update();
     while (GetMessageW(&msg, NULL, 0, 0) > 0)
     {
         TranslateMessage(&msg);

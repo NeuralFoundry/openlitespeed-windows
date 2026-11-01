@@ -133,9 +133,12 @@ target_link_libraries(openlitespeed
     "${DEPS}/lib/brotlienc.lib" "${DEPS}/lib/brotlidec.lib" "${DEPS}/lib/brotlicommon.lib"
     "${DEPS}/lib/udns.lib"
     ws2_32 mswsock bcrypt crypt32 iphlpapi userenv advapi32 ntdll)
+file(STRINGS "${OLS_TOP}/win/RELEASE" OLS_RELEASE LIMIT_COUNT 1)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${OLS_TOP}/win/RELEASE")
 add_executable(olstray WIN32 "${OLS_TOP}/win/tray/olstray.c" "${OLS_TOP}/win/tray/olstray.rc")
 target_include_directories(olstray PRIVATE "${OLS_TOP}/win/common")
-target_link_libraries(olstray user32 gdi32 shell32 advapi32 ole32 version comdlg32)
+target_compile_definitions(olstray PRIVATE "OLS_RELEASE=\"${OLS_RELEASE}\"")
+target_link_libraries(olstray user32 gdi32 shell32 advapi32 ole32 version comdlg32 winhttp)
 add_executable(lsrecaptcha "${OLS_TOP}/win/recaptcha/lsrecaptcha.c")
 target_link_libraries(lsrecaptcha winhttp)
 add_executable(setup WIN32 "${OLS_TOP}/win/setup/setup.c" "${OLS_TOP}/win/setup/setup.rc")

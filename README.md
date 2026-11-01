@@ -136,7 +136,7 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed --dev-hosts` / `--dev-hosts-clear` | Add or remove the site names in the hosts file |
 | `openlitespeed --admin-password admin\conf\htpasswd <password>` | Set the WebAdmin password |
 
-The tray app starts, stops and reloads the server, opens the sites, WebAdmin and logs, switches the PHP version and imports Apache sites (**Sites > Import Apache sites**).
+The tray app starts, stops and reloads the server, opens the sites, WebAdmin and logs, switches the PHP version and imports Apache sites (**Sites > Import Apache sites**). Once a day it checks GitHub for a new release and shows a notice when one is out; `check=0` under `[update]` in `conf\olstray.ini` turns this off.
 
 ## Building from source
 
