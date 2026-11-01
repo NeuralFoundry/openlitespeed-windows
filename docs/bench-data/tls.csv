@@ -2,3 +2,5 @@ stack,script,conc,secs,rps,p50_ms,p99_ms,complete,failed,non2xx,doclen
 ols-lsapi,app.php,128,10,8686.8,11.48,46.88,86872,0,0,17697
 nginx,app.php,128,10,471.9,267.3,305.45,4720,0,0,17697
 apache,app.php,128,10,4473.2,27.9,38.17,44746,0,0,17697
+ols-fcgi,app.php,128,10,8961,13.92,37.18,89614,0,0,17697
+apache-fcgi,app.php,128,10,4355.8,28.89,35.7,43563,0,0,17697

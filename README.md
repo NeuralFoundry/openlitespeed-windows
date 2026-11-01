@@ -18,12 +18,29 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 
 ## Performance
 
-Requests per second on the same Windows machine with PHP 8.4, 128 keep-alive connections (64 for WordPress) and the same 12 CPU cores for every server. Every run finished without errors. The stress test at 512 connections, HTTPS results, latency, memory, the full setup and the raw data are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Requests per second on the same Windows machine with PHP 8.4 and the same 12 CPU cores for every server. Every run finished without errors.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/bench-overview-dark.svg">
   <img src="docs/bench-overview-light.svg" width="880" alt="Requests per second on Windows for OpenLiteSpeed, nginx and Apache: static file, PHP application and WordPress">
 </picture>
+
+| Server | Static file | PHP application | WordPress | PHP over HTTPS | PHP at 512 connections |
+|---|--:|--:|--:|--:|--:|
+| OpenLiteSpeed + LSAPI | 175,203 | 9,548 | 117 | 8,687 | 7,706 |
+| OpenLiteSpeed + FastCGI |  | 9,538 | 119 | 8,961 | 9,780 |
+| nginx + PHP-CGI | 60,306 | 2,949 | 122 | 472 | 428 |
+| Apache + mod_php | 17,889 | 7,532 | 105 | 4,473 | 3,051 |
+| Apache + PHP-CGI |  | 5,743 | 118 | 4,356 | 5,196 |
+
+Static files do not involve PHP, so they were measured once per server. Static file, PHP application and WordPress: 20 second runs with 128 keep-alive connections, 64 for WordPress. HTTPS: 10 seconds, 128 connections. The last column is the average of a 60 second stress test with 512 connections:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bench-stress-app-dark.svg">
+  <img src="docs/bench-stress-app-light.svg" width="880" alt="Requests per second every 10 seconds during a 60 second stress test with 512 connections for each server">
+</picture>
+
+Uncached WordPress runs at about the same speed on every server because PHP and MySQL do most of the work. Latency, memory, the full setup and the raw data are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Requirements
 

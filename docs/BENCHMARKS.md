@@ -55,8 +55,10 @@ Every run is reported with its error count. No run was left out.
 | Server | Average requests/s | Slowest window | p99 | Errors | Memory first / last window |
 |---|--:|--:|--:|--:|--:|
 | OpenLiteSpeed + LSAPI | 7,706 | 5,907 | 444 ms | 0 of 462,383 | 92 / 259 MB |
+| OpenLiteSpeed + FastCGI | 9,780 | 9,528 | 85.4 ms | 0 of 586,842 | 313 / 311 MB |
 | nginx + PHP-CGI | 428 | 414 | 1,572 ms | 0 of 26,216 | 280 / 279 MB |
 | Apache + mod_php | 3,051 | 2,225 | 586 ms | 0 of 188,206 | 1524 / 1605 MB |
+| Apache + PHP-CGI | 5,196 | 4,998 | 586 ms | 0 of 311,807 | 392 / 417 MB |
 
 ## HTTPS
 
@@ -65,8 +67,10 @@ The PHP application over TLS, 10 second run, 128 keep-alive connections, PHP 8.4
 | Server | Requests/s | p50 | p99 | Errors |
 |---|--:|--:|--:|--:|
 | OpenLiteSpeed + LSAPI | 8,687 | 11.5 ms | 46.9 ms | 0 of 86,872 |
+| OpenLiteSpeed + FastCGI | 8,961 | 13.9 ms | 37.2 ms | 0 of 89,614 |
 | nginx + PHP-CGI | 472 | 267 ms | 305 ms | 0 of 4,720 |
 | Apache + mod_php | 4,473 | 27.9 ms | 38.2 ms | 0 of 44,746 |
+| Apache + PHP-CGI | 4,356 | 28.9 ms | 35.7 ms | 0 of 43,563 |
 
 ## How the test was run
 
