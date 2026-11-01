@@ -18,11 +18,11 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 
 ## Performance
 
-Requests per second on the same Windows machine with PHP 8.4 and 32 concurrent connections. Every server used the same 12 CPU cores and the same PHP build. Results for PHP 8.2 to 8.5, memory use and the full test setup are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Requests per second on the same Windows machine with PHP 8.4, 128 keep-alive connections (64 for WordPress) and the same 12 CPU cores for every server. Every run finished without errors. The stress test at 512 connections, HTTPS results, latency, memory, the full setup and the raw data are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/bench-overview-dark.svg">
-  <img src="docs/bench-overview-light.svg" width="880" alt="Requests per second on Windows for OpenLiteSpeed, nginx, Apache and the PHP built-in server">
+  <img src="docs/bench-overview-light.svg" width="880" alt="Requests per second on Windows for OpenLiteSpeed, nginx and Apache: static file, PHP application and WordPress">
 </picture>
 
 ## Requirements
