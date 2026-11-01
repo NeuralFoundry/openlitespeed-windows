@@ -23,11 +23,20 @@ $patches = @(
        From = "        if ( bindFd != 0 ) {`n            dup2( bindFd, 0 );`n            close( bindFd );`n        }"
        To   = "        if ( bindFd != 0 ) {`n#ifdef _WIN32`n            lsw_set_stdin_socket( bindFd );`n#else`n            dup2( bindFd, 0 );`n            close( bindFd );`n#endif`n        }" },
     @{ File = 'lsapilib.c'
-       From = "    if (s_skip_write)`n        return -1;`n`n    LSAPI_Finish_r( pReq );`n`n    if ( g_prefork_server )"
-       To   = "    if (s_skip_write)`n        return -1;`n`n#ifdef _WIN32`n    if ( (unsigned int)s_req_processed > s_max_reqs && pReq->m_fd != -1 && pReq->m_reqState )`n        send_conn_close_notification( pReq->m_fd );`n#endif`n    LSAPI_Finish_r( pReq );`n`n    if ( g_prefork_server )" },
+       From = "int LSAPI_Finish_r( LSAPI_Request * pReq )`n{`n    /* finish req body */`n    if ( !pReq )`n        return -1;`n    if (pReq->m_reqState)`n    {`n        if ( pReq->m_fd != -1 )`n        {`n"
+       To   = "#ifdef _WIN32`nstatic int lsw_last_request(void);`n#endif`n`nint LSAPI_Finish_r( LSAPI_Request * pReq )`n{`n    /* finish req body */`n    if ( !pReq )`n        return -1;`n    if (pReq->m_reqState)`n    {`n        if ( pReq->m_fd != -1 )`n        {`n#ifdef _WIN32`n            if ( lsw_last_request() )`n                send_conn_close_notification( pReq->m_fd );`n#endif`n" },
+    @{ File = 'lsapilib.c'
+       From = "static unsigned int s_max_reqs = UINT_MAX;`n"
+       To   = "static unsigned int s_max_reqs = UINT_MAX;`n#ifdef _WIN32`nstatic int lsw_last_request(void) { return (unsigned int)s_req_processed > s_max_reqs; }`n#endif`n" },
     @{ File = 'lsapilib.c'
        From = "    if ( (unsigned int)s_req_processed > s_max_reqs )`n        return -1;`n`n    if ( s_worker_status )`n    {`n        s_worker_status->m_tmWaitBegin"
        To   = "    if ( (unsigned int)s_req_processed > s_max_reqs )`n    {`n#ifdef _WIN32`n        if ( pReq->m_fd != -1 )`n            lsapi_close_connection( pReq );`n#endif`n        return -1;`n    }`n`n    if ( s_worker_status )`n    {`n        s_worker_status->m_tmWaitBegin" },
+    @{ File = 'lsapi_main.c'
+       From = "    } else {`n        setArgv0(argc, argv );`n    }"
+       To   = "    } else {`n#ifdef _WIN32`n        static char s_title[64];`n        argv0 = s_title;`n#else`n        setArgv0(argc, argv );`n#endif`n    }" },
+    @{ File = 'lsapi_main.c'
+       From = "    argv0 = sapi_module->executable_location;`n"
+       To   = "#ifndef _WIN32`n    argv0 = sapi_module->executable_location;`n#endif`n" },
     @{ File = 'lsapi_main.c'
        From = "    tsrm_shutdown();`n#endif`n    return ret;`n}`n`n/*   LiteSpeed PHP module starts here */"
        To   = "    tsrm_shutdown();`n#endif`n#ifdef _WIN32`n    lsw_exit_now(ret);`n#endif`n    return ret;`n}`n`n/*   LiteSpeed PHP module starts here */" }
