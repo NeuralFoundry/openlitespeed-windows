@@ -60,7 +60,7 @@ Without a cache the same home page runs at about 120 requests per second on ever
 
 ## Stress test
 
-60 seconds of continuous load with PHP 8.4, measured in 6 windows of 10 seconds. The chart shows whether throughput holds up, the table whether memory grows.
+One continuous 60 second run with PHP 8.4. Requests per second for each 10 second window are computed from the start time of every request, so the load never pauses. The chart shows whether throughput holds up, the table whether memory grows.
 
 ### PHP application, 512 connections
 
@@ -71,11 +71,11 @@ Without a cache the same home page runs at about 120 requests per second on ever
 
 | Server | Average requests/s | Slowest window | p99 | Errors | Memory first / last window |
 |---|--:|--:|--:|--:|--:|
-| OpenLiteSpeed + LSAPI | 7,706 | 5,907 | 444 ms | 0 of 462,383 | 92 / 259 MB |
-| OpenLiteSpeed + FastCGI | 9,780 | 9,528 | 85.4 ms | 0 of 586,842 | 313 / 311 MB |
-| nginx + PHP-CGI | 428 | 414 | 1,572 ms | 0 of 26,216 | 280 / 279 MB |
-| Apache + mod_php | 3,051 | 2,225 | 586 ms | 0 of 188,206 | 1524 / 1605 MB |
-| Apache + PHP-CGI | 5,196 | 4,998 | 586 ms | 0 of 311,807 | 392 / 417 MB |
+| OpenLiteSpeed + LSAPI | 9,434 | 9,146 | 107 ms | 0 of 566,022 | 304 / 306 MB |
+| OpenLiteSpeed + FastCGI | 9,587 | 8,634 | 96.7 ms | 0 of 575,216 | 306 / 306 MB |
+| nginx + PHP-CGI | 462 | 422 | 1,653 ms | 0 of 27,699 | 253 / 250 MB |
+| Apache + mod_php | 3,078 | 2,322 | 586 ms | 0 of 184,708 | 1508 / 1508 MB |
+| Apache + PHP-CGI | 5,396 | 5,262 | 600 ms | 0 of 323,765 | 388 / 409 MB |
 
 ## HTTPS
 
@@ -102,13 +102,14 @@ The PHP application over TLS, 10 second run, 128 keep-alive connections, PHP 8.4
 - PHP built-in server: `php -S`, which handles one request at a time and is meant for development only.
 - WordPress 7.1.4 with the default theme, 31 posts with comments, MySQL 8.0.30 on the same machine. The uncached runs used no cache plugin, the page cache runs LiteSpeed Cache 7.9.2.
 - HTTPS: TLS with a P-256 ECDSA certificate, session cache enabled on every server.
-- Run lengths: 20 seconds per sustained run, 60 seconds for the stress test and 10 seconds over HTTPS, each after a 2 second warm-up. The whole series takes under 10 minutes.
+- Run lengths: 20 seconds per sustained run, one continuous 60 second run for the stress test and 10 seconds over HTTPS, each after a 2 second warm-up. The whole series takes under 10 minutes.
 - Access logging was on for every server.
 
 ## Notes
 
 - Uncached WordPress is limited by PHP and MySQL work, so every server lands at about the same speed. A page cache changes that picture, see above.
 - nginx for Windows serves every connection from one worker process, and its documentation lists that as a known limitation. In these runs its throughput fell sharply at 512 connections and over HTTPS.
+- When a client disconnects in the middle of a request, OpenLiteSpeed stops the `lsphp.exe` process that is working on it and starts a new one. Starting a process costs much more on Windows than on Linux. FastCGI keeps `php-cgi.exe` running in that case. An earlier version of this stress test restarted the load generator every 10 seconds, which cut off hundreds of requests at once and made LSAPI look uneven.
 - Apache keeps one thread per connection. With 1024 threads it used about 1.6 GB of memory in the stress test.
 - Earlier 5 second runs with PHP 8.2 to 8.5 gave the same order of servers.
 

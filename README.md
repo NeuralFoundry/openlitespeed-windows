@@ -28,13 +28,13 @@ Requests per second on the same Windows machine with PHP 8.4 and the same 12 CPU
 
 | Server | Static file | PHP application | WordPress, uncached | PHP over HTTPS | PHP at 512 connections |
 |---|--:|--:|--:|--:|--:|
-| OpenLiteSpeed + LSAPI | 175,203 | 9,548 | 117 | 8,687 | 7,706 |
-| OpenLiteSpeed + FastCGI |  | 9,538 | 119 | 8,961 | 9,780 |
-| nginx + PHP-CGI | 60,306 | 2,949 | 122 | 472 | 428 |
-| Apache + mod_php | 17,889 | 7,532 | 105 | 4,473 | 3,051 |
-| Apache + PHP-CGI |  | 5,743 | 118 | 4,356 | 5,196 |
+| OpenLiteSpeed + LSAPI | 175,203 | 9,548 | 117 | 8,687 | 9,434 |
+| OpenLiteSpeed + FastCGI |  | 9,538 | 119 | 8,961 | 9,587 |
+| nginx + PHP-CGI | 60,306 | 2,949 | 122 | 472 | 462 |
+| Apache + mod_php | 17,889 | 7,532 | 105 | 4,473 | 3,078 |
+| Apache + PHP-CGI |  | 5,743 | 118 | 4,356 | 5,396 |
 
-Static files do not involve PHP, so they were measured once per server. Static file, PHP application and WordPress: 20 second runs with 128 keep-alive connections, 64 for WordPress. HTTPS: 10 seconds, 128 connections. The last column is the average of a 60 second stress test with 512 connections:
+Static files do not involve PHP, so they were measured once per server. Static file, PHP application and WordPress: 20 second runs with 128 keep-alive connections, 64 for WordPress. HTTPS: 10 seconds, 128 connections. The last column is the average of a continuous 60 second stress test with 512 connections:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/bench-stress-app-dark.svg">
