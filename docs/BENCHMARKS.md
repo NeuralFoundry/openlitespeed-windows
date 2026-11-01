@@ -5,8 +5,8 @@ OpenLiteSpeed for Windows, the native Windows build of OpenLiteSpeed from this r
 Every run is reported with its error count. No run was left out.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench-overview-dark.svg">
-  <img src="bench-overview-light.svg" width="880" alt="OpenLiteSpeed for Windows vs nginx and Apache: requests per second for a static file, a PHP application and WordPress">
+  <source media="(prefers-color-scheme: dark)" srcset="bench-windows-overview-dark.svg">
+  <img src="bench-windows-overview-light.svg" width="880" alt="OpenLiteSpeed for Windows vs nginx and Apache: requests per second for a static file, a PHP application and WordPress">
 </picture>
 
 ## Sustained load on Windows
@@ -65,8 +65,8 @@ One continuous 60 second run with PHP 8.4. Requests per second for each 10 secon
 ### PHP application, 512 connections
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench-stress-app-dark.svg">
-  <img src="bench-stress-app-light.svg" width="880" alt="Requests per second over 60 seconds for PHP application at 512 connections">
+  <source media="(prefers-color-scheme: dark)" srcset="bench-windows-stress-app-dark.svg">
+  <img src="bench-windows-stress-app-light.svg" width="880" alt="Requests per second over 60 seconds for PHP application at 512 connections">
 </picture>
 
 | Server | Average requests/s | Slowest window | p99 | Errors | Memory first / last window |

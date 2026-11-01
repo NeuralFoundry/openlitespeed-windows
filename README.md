@@ -22,8 +22,8 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 The native Windows build from this repository against nginx and Apache on the same Windows 11 machine, with PHP 8.4 and the same 12 CPU cores for every server. Requests per second, higher is better. Every run finished without errors.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/bench-overview-dark.svg">
-  <img src="docs/bench-overview-light.svg" width="880" alt="OpenLiteSpeed for Windows vs nginx and Apache: requests per second for a static file, a PHP application and WordPress">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bench-windows-overview-dark.svg">
+  <img src="docs/bench-windows-overview-light.svg" width="880" alt="OpenLiteSpeed for Windows vs nginx and Apache: requests per second for a static file, a PHP application and WordPress">
 </picture>
 
 | Server | Static file | PHP application | WordPress, uncached | PHP over HTTPS | PHP at 512 connections |
@@ -37,8 +37,8 @@ The native Windows build from this repository against nginx and Apache on the sa
 Static files do not involve PHP, so they were measured once per server. Static file, PHP application and WordPress: 20 second runs with 128 keep-alive connections, 64 for WordPress. HTTPS: 10 seconds, 128 connections. The last column is the average of a continuous 60 second stress test with 512 connections:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/bench-stress-app-dark.svg">
-  <img src="docs/bench-stress-app-light.svg" width="880" alt="OpenLiteSpeed for Windows stress test: requests per second every 10 seconds during 60 seconds with 512 connections">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bench-windows-stress-app-dark.svg">
+  <img src="docs/bench-windows-stress-app-light.svg" width="880" alt="OpenLiteSpeed for Windows stress test: requests per second every 10 seconds during 60 seconds with 512 connections">
 </picture>
 
 Uncached WordPress runs at about the same speed on every server because PHP and MySQL do most of the work. With a page cache the picture changes. The home page of the same site, 64 connections:
