@@ -614,6 +614,8 @@ public:
     int  addWWWAuthHeader(HttpRespHeaders &buf) const;
     const AuthRequired *getAuthRequired() const
     {   return m_pAuthRequired; }
+    void setHtAuth(const HTAuth *pAuth, const AuthRequired *pRequired)
+    {   m_pHTAuth = pAuth; m_pAuthRequired = pRequired;     }
 
     //void matchContext();
     void updateKeepAlive();

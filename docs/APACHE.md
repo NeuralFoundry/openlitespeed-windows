@@ -23,7 +23,7 @@ Apache configuration: C:/Apache24/conf/httpd.conf (6 files)
 
 shop.example.com  ->  D:/sites/shop/public  [http 80, https 443]
   also: www.shop.example.com
-  converted: SSL certificate, 3 rewrite and redirect rules, 2 access rules, password protection, .htaccess rewrite rules
+  converted: SSL certificate, 3 rewrite and redirect rules, 2 access rules, password protection, .htaccess files
   note: httpd-vhosts.conf:41  ProxyPassReverse /api/ http://127.0.0.1:3000/  not converted, the backend must send correct redirects
 
 Skipped:
@@ -49,8 +49,7 @@ Stop Apache before reloading OpenLiteSpeed, both cannot listen on the same ports
 | `Require`, `RequireAll`, `RequireAny`, `Order`, `Allow`, `Deny`, `Satisfy`, `AuthMerging` | IP access control in contexts. `Require` and `Order`/`Allow`/`Deny` are evaluated separately and both apply, as in Apache. |
 | `AuthType Basic`, `AuthName`, `AuthUserFile`, `AuthGroupFile` | Realm with the same password and group files |
 | `<Directory>`, `<Files>`, `<Location>` and their `Match` forms | Contexts in Apache's order of precedence. Wildcard and `DirectoryMatch` sections are matched against the folders of the site. File patterns ignore letter case, as Apache does on Windows. |
-| `.htaccess` files with access rules, passwords, `Options` or `DirectoryIndex` | Contexts for those folders. Rewrite rules in `.htaccess` keep working as they are. |
-| `AllowOverride` | `.htaccess` rewrite rules on or off |
+| `AllowOverride` | `.htaccess` files on or off for the site |
 | `Header set`, `append`, `add`, `merge`, `unset` | Extra headers |
 | `php_value`, `php_flag`, `php_admin_value`, `php_admin_flag` | PHP settings, applied through LSAPI |
 | `php_flag engine off`, `RemoveHandler .php`, `SetHandler none` | PHP files in that folder are blocked |
@@ -58,6 +57,8 @@ Stop Apache before reloading OpenLiteSpeed, both cannot listen on the same ports
 | `SetHandler proxy:fcgi://host:port` | FastCGI external app for PHP |
 | `ErrorDocument` with a path or URL | Error page |
 | `ErrorLog`, `CustomLog`, `LogLevel`, `LogFormat` | Logs of the site, at the same paths |
+
+`.htaccess` files are not converted, OpenLiteSpeed for Windows reads them itself while it runs: rewrite rules, `Require`, `RequireAll`, `RequireAny`, `Order`, `Allow`, `Deny`, `Satisfy`, Basic authentication, `<Files>` and `<FilesMatch>`, `<Limit>`, `Options Indexes` and `php_flag engine off`. A changed, new or deleted `.htaccess` file takes effect within a second, and its rules apply together with the rules of the site configuration. When `AllowOverride` is enabled for only some folders in Apache, OpenLiteSpeed reads `.htaccess` files in the whole site.
 
 Conditions such as `<IfModule>`, `<IfDefine>`, `<IfVersion>` and `<IfFile>` are evaluated with the modules loaded by the configuration. `Include` and `IncludeOptional` with wildcards, `Define`, `${VAR}` and line continuations are supported. Paths are matched case-insensitively and written with the case they have on disk.
 

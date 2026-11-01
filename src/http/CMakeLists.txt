@@ -56,6 +56,7 @@ SET(http_STAT_SRCS
    httpmime.cpp
    sendfileinfo.cpp
    httpcontext.cpp
+   htaccessacl.cpp
    httpserverversion.cpp
    vhostmap.cpp
    eventdispatcher.cpp

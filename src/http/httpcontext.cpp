@@ -16,6 +16,7 @@
 *    along with this program. If not, see http://www.gnu.org/licenses/.      *
 *****************************************************************************/
 #include "httpcontext.h"
+#include "htaccessacl.h"
 
 #include <extensions/extworker.h>
 #include <http/contextlist.h>
@@ -46,6 +47,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -67,6 +69,7 @@ struct HtWatch
     AutoStr2                m_base;
     const RewriteMapList   *m_pMaps;
     RewriteRuleList        *m_pOwn;
+    HtAcl                  *m_pAcl;
     uint32_t                m_iCfgBits;
     unsigned char           m_iCfgEngine;
     char                    m_iHasBase;
@@ -298,6 +301,7 @@ void HttpContext::releaseHTAConf()
         if (m_pRewriteRules == m_pHtWatch->m_pOwn)
             m_pRewriteRules = NULL;
         delete m_pHtWatch->m_pOwn;
+        delete m_pHtWatch->m_pAcl;
         delete m_pHtWatch;
         m_pHtWatch = NULL;
     }
@@ -1511,6 +1515,7 @@ int HttpContext::watchHtaccess(const RewriteMapList *pMapList,
         w->m_rules.setStr(pRule);
     w->m_pMaps = pMapList;
     w->m_pOwn = new RewriteRuleList();
+    w->m_pAcl = NULL;
     w->m_iCfgBits = m_iConfigBits & (BIT_REWRITE_ENGINE | BIT_REWRITE_INHERIT);
     w->m_iCfgEngine = m_iRewriteEtag & REWRITE_MASK;
     w->m_iHasBase = (m_pRewriteBase != NULL);
@@ -1550,6 +1555,27 @@ void HttpContext::loadHtaccessRules()
         m_pRewriteRules = w->m_pOwn;
         m_iConfigBits |= BIT_REWRITE_RULE;
     }
+    HtAcl *pAcl = NULL;
+    int fd = w->m_iExists ? open(w->m_path.c_str(), O_RDONLY) : -1;
+    if (fd != -1)
+    {
+        AutoStr2 text;
+        char buf[8192];
+        int n;
+        while ((n = read(fd, buf, sizeof(buf))) > 0 && text.len() < 1024 * 1024)
+            text.append(buf, n);
+        close(fd);
+        pAcl = new HtAcl();
+        pAcl->parse(text.c_str() ? text.c_str() : "", text.len());
+    }
+    delete w->m_pAcl;
+    w->m_pAcl = pAcl;
+}
+
+
+const HtAcl *HttpContext::getHtAcl() const
+{
+    return m_pHtWatch ? m_pHtWatch->m_pAcl : NULL;
 }
 
 

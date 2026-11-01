@@ -15,6 +15,7 @@
 *    You should have received a copy of the GNU General Public License       *
 *    along with this program. If not, see http://www.gnu.org/licenses/.      *
 *****************************************************************************/
+#include <http/htaccessacl.h>
 #include <http/httpsession.h>
 #include <http/httplistenerlist.h>
 #include <lsdef.h>
@@ -2584,6 +2585,31 @@ int HttpSession::processContextAuth()
             }
             if (aaa.m_pAuthorizer)
                 return runExtAuthorizer(aaa.m_pAuthorizer);
+        }
+        const HTAuth *pHtAuth = NULL;
+        const AuthRequired *pHtReq = NULL;
+        const AutoStr2 *pReal = m_request.getRealPath();
+        int ht = htAclCheck(m_request.getContext(), pReal ? pReal->c_str() : NULL,
+                            getPeerAddr(), &pHtAuth, &pHtReq);
+        if (ht == HTACL_DENY)
+        {
+            LS_INFO(getLogSession(), "[HTACCESS] Access to [%s] is denied by .htaccess.",
+                    m_request.getURI());
+            return SC_403;
+        }
+        if (ht == HTACL_AUTH)
+        {
+            m_request.setHtAuth(pHtAuth, pHtReq);
+            ret1 = checkAuthentication(pHtAuth, pHtReq, 0);
+            if (ret1)
+            {
+                if (ret1 == -1)
+                {
+                    setState(HSS_EXT_AUTH);
+                    return LSI_SUSPEND;
+                }
+                return ret1;
+            }
         }
     }
     setProcessState(HSPS_HKPT_HTTP_AUTH);

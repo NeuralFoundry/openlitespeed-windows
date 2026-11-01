@@ -33,6 +33,7 @@ class AccessControl;
 class AuthRequired;
 class ContextList;
 class HTAuth;
+class HtAcl;
 //class HTACache;
 class HttpMime;
 class MimeSetting;
@@ -289,6 +290,7 @@ public:
     uint32_t isNullContext()           { return m_iConfigBits2 & BIT2_NULL_CONTEXT; }
     int reviveNullContext();
     static void refreshHtaccess(const HttpContext *pContext);
+    const HtAcl *getHtAcl() const;
 
     const char *getLocation() const {   return m_sLocation.c_str();    }
     int getLocationLen() const       {   return m_sLocation.len();      }

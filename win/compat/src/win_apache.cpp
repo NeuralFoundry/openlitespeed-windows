@@ -993,7 +993,6 @@ struct Importer
     bool dryRun = false;
     Parser parser;
     Node top;
-    std::vector<std::unique_ptr<Node>> htRoots;
     std::vector<std::unique_ptr<Sec>> mainSecs;
     SV listenPorts;
     std::map<int, SV> listenHosts;
@@ -2164,40 +2163,12 @@ struct Importer
         return v;
     }
 
-    void load_ht(const S &dir, VhState &st)
-    {
-        S ht = dir + "/.htaccess", text;
-        if (!st.htLoaded.insert(lower(dir)).second || !is_file(ht) || !read_file(ht, text))
-            return;
-        std::unique_ptr<Node> root(new Node());
-        parser.parse_text(text, ht, root.get(), 0);
-        std::unique_ptr<Sec> s(new Sec());
-        s->kind = Sec::HT;
-        s->n = root.get();
-        s->path = dir;
-        s->order = 1 << 20;
-        section_conf(root.get(), s->conf, true);
-        s->conf.rewrite.clear();
-        s->conf.rewriteOn = -1;
-        int ord = 1 << 21;
-        std::vector<std::unique_ptr<Sec>> inner;
-        collect_secs(root.get(), true, inner, ord, s.get());
-        st.ht.push_back(std::move(s));
-        for (auto &i : inner)
-        {
-            i->in = st.ht.back().get();
-            st.ht.push_back(std::move(i));
-        }
-        htRoots.push_back(std::move(root));
-    }
-
     void walk(const S &dir, int depth, VhState &st, int &count, SV &dirs)
     {
         if (depth > 16 || count > 30000)
             return;
         ++count;
         dirs.push_back(dir);
-        load_ht(dir, st);
         WIN32_FIND_DATAW fd;
         HANDLE f = FindFirstFileW(W(dir + "/*").c_str(), &fd);
         if (f == INVALID_HANDLE_VALUE)
@@ -2660,12 +2631,6 @@ struct Importer
         {
             int count = 0;
             htSeen.clear();
-            for (S p = parent_dir(r.dir); !p.empty() && p != r.dir; p = parent_dir(p))
-            {
-                load_ht(p, st);
-                if (p.size() <= 3)
-                    break;
-            }
             walk(r.dir, 0, st, count, r.dirs);
             if (count > 30000)
                 site.notes.push_back(r.dir + " has more than 30000 folders, only the first 30000 were checked");
@@ -3223,7 +3188,7 @@ struct Importer
         if (rootIdx == 1)
             site.converted.push_back("directory listing");
         if (anyOverride)
-            site.converted.push_back(".htaccess rewrite rules");
+            site.converted.push_back(".htaccess files");
         if (rootAcc.denied)
             site.warnings.push_back("Apache denies access to " + site.docroot + ", so does OpenLiteSpeed");
 

@@ -14,7 +14,8 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - Finds installed PHP versions, Laragon and XAMPP and configures itself for them
 - Imports Apache sites from `httpd.conf`: virtual hosts, SSL certificates, redirects, aliases, proxies, access rules and password protection, including the rules in `.htaccess` files
 - Local development sites: every folder in the projects folder becomes `http://folder.test/`
-- HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache, `.htaccess` rewrite rules and the WebAdmin console
+- HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache and the WebAdmin console
+- `.htaccess` files work as in Apache: rewrite rules, access rules (`Require`, `Order`, `Allow`, `Deny`), passwords, `<Files>` sections, `Options Indexes` and `php_flag engine off`, applied within a second when a file changes
 - LiteSpeed Cache for WordPress works out of the box: install and activate the plugin, no server configuration needed. Pages are purged automatically when content changes.
 - Hardened for Windows: file names are checked against case, short name, stream and device name tricks, PHP runs with a restricted token and the service runs under a virtual account
 
@@ -104,7 +105,7 @@ Switch the PHP version from the tray menu or with `openlitespeed --set-php <fold
 
 ## Moving from Apache
 
-OpenLiteSpeed reads an existing Apache configuration and creates one site for every `<VirtualHost>`, with its domains, document root, SSL certificate, redirects, rewrite rules, aliases, proxies, access rules and password protection. Rules that only live in `.htaccess` files, such as `Require all denied` or a password, are converted as well.
+OpenLiteSpeed reads an existing Apache configuration and creates one site for every `<VirtualHost>`, with its domains, document root, SSL certificate, redirects, rewrite rules, aliases, proxies, access rules and password protection. Rules in `.htaccess` files keep working, because OpenLiteSpeed applies them itself.
 
 ```bat
 bin\openlitespeed.exe --import-apache --dry-run

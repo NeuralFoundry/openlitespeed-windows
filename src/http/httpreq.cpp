@@ -22,6 +22,7 @@
 #endif
 #include "httpreq.h"
 
+#include <http/htaccessacl.h>
 #include <http/accesscache.h>
 #include <http/denieddir.h>
 #include <http/handlertype.h>
@@ -2973,7 +2974,10 @@ int HttpReq::processPath(const char *pURI, int uriLen, char *pBuf,
         if (l)
         {
             *p = 0;
-            if (m_pContext->isAutoIndexOn())
+            int htIdx = htAclIndexes(m_pContext);
+            if (htIdx == 0)
+                return SC_403;
+            if (m_pContext->isAutoIndexOn() || htIdx == 1)
             {
                 addEnv("LS_AI_PATH", 10, pBuf, p - pBuf);
                 const AutoStr2 *pURI = m_pVHost->getAutoIndexURI();
