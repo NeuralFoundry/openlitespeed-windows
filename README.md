@@ -12,6 +12,7 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - Uses every CPU core: up to 32 HTTP worker processes on the same ports, restarted automatically after a crash, with zero downtime reload
 - PHP 8.2, 8.3, 8.4 and 8.5 through LSAPI (`lsphp.exe` for Windows is included) or FastCGI (`php-cgi.exe`)
 - Finds installed PHP versions, Laragon and XAMPP and configures itself for them
+- Imports Apache sites from `httpd.conf`: virtual hosts, SSL certificates, redirects, aliases, proxies, access rules and password protection, including the rules in `.htaccess` files
 - Local development sites: every folder in the projects folder becomes `http://folder.test/`
 - HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache, `.htaccess` rewrite rules and the WebAdmin console
 - LiteSpeed Cache for WordPress works out of the box: install and activate the plugin, no server configuration needed. Pages are purged automatically when content changes.
@@ -101,6 +102,18 @@ To uninstall, use **Settings > Apps** or run `uninstall.exe --uninstall --silent
 
 Switch the PHP version from the tray menu or with `openlitespeed --set-php <folder>`.
 
+## Moving from Apache
+
+OpenLiteSpeed reads an existing Apache configuration and creates one site for every `<VirtualHost>`, with its domains, document root, SSL certificate, redirects, rewrite rules, aliases, proxies, access rules and password protection. Rules that only live in `.htaccess` files, such as `Require all denied` or a password, are converted as well.
+
+```bat
+bin\openlitespeed.exe --import-apache --dry-run
+bin\openlitespeed.exe --import-apache C:\Apache24\conf\httpd.conf
+bin\openlitespeed.exe -s reload
+```
+
+Without a path, the Apache configuration of Laragon, XAMPP, WampServer or `C:\Apache24` is found automatically. `--dry-run` prints the report without changing anything. Importing again replaces the earlier import, and `--import-apache --remove` takes it out. Rules that cannot be converted are listed in the report. Access rules are converted exactly or made stricter, never more permissive; the only exception, rules that block particular clients by host name or environment variable, is reported as a warning. Details are in [docs/APACHE.md](docs/APACHE.md).
+
 ## Multiple CPU cores
 
 OpenLiteSpeed starts one HTTP worker per CPU core, up to 8 by default. Set **Number of Workers** under **Server Configuration > General** in WebAdmin, or `httpdWorkers` in `conf\httpd_config.conf`, to any value from 1 to 32. Each worker has its own PHP pool. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how workers share the listening sockets on Windows.
@@ -115,11 +128,12 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed -d` | Run in the foreground |
 | `openlitespeed --install-service` / `--uninstall-service` | Register or remove the Windows service |
 | `openlitespeed --set-php <folder>` | Use another PHP version |
+| `openlitespeed --import-apache [httpd.conf] [--dry-run]` / `--import-apache --remove` | Import the Apache sites / remove the imported sites |
 | `openlitespeed --dev-sites <folder> [tld]` | Create a site for every subfolder of a folder |
 | `openlitespeed --dev-hosts` / `--dev-hosts-clear` | Add or remove the site names in the hosts file |
 | `openlitespeed --admin-password admin\conf\htpasswd <password>` | Set the WebAdmin password |
 
-The tray app starts, stops and reloads the server, opens the sites, WebAdmin and logs, and switches the PHP version.
+The tray app starts, stops and reloads the server, opens the sites, WebAdmin and logs, switches the PHP version and imports Apache sites (**Sites > Import Apache sites**).
 
 ## Building from source
 

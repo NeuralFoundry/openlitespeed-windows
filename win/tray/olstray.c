@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <commdlg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +32,7 @@
 #define ID_AUTORUN 110
 #define ID_EXIT 111
 #define ID_SETWWW 112
+#define ID_IMPORT 113
 #define ID_PHP_BASE 1000
 #define ID_SITE_BASE 2000
 #define MAX_SITES 256
@@ -237,6 +239,139 @@ static DWORD run_tool(const wchar_t *args, int wait)
     return code;
 }
 
+static DWORD run_capture(const wchar_t *args, char **out)
+{
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    HANDLE rd, wr;
+    wchar_t cmd[2048];
+    size_t len = 0, cap = 65536;
+    DWORD got, code = 1;
+    *out = (char *)calloc(cap, 1);
+    if (!*out || !CreatePipe(&rd, &wr, &sa, 0))
+        return 1;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    swprintf(cmd, 2048, L"\"%s\" %s", g_exe, args);
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = wr;
+    si.hStdError = wr;
+    if (!CreateProcessW(g_exe, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, g_root, &si, &pi))
+    {
+        CloseHandle(rd);
+        CloseHandle(wr);
+        return 1;
+    }
+    CloseHandle(wr);
+    while (ReadFile(rd, *out + len, (DWORD)(cap - len - 1), &got, NULL) && got)
+    {
+        len += got;
+        if (cap - len < 4096)
+        {
+            char *n = (char *)realloc(*out, cap * 2);
+            if (!n)
+                break;
+            *out = n;
+            cap *= 2;
+        }
+    }
+    (*out)[len] = 0;
+    CloseHandle(rd);
+    WaitForSingleObject(pi.hProcess, 120000);
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return code;
+}
+
+static wchar_t *report_text(const char *utf8, const wchar_t *tail)
+{
+    size_t max = 2400, tl = wcslen(tail);
+    int n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    wchar_t *w = (wchar_t *)calloc((size_t)n + tl + 64, sizeof(wchar_t));
+    if (!w)
+        return NULL;
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, w, n);
+    if (wcslen(w) > max)
+        wcscpy(w + max, L"\n...");
+    wcscat(w, tail);
+    return w;
+}
+
+static void notify(const wchar_t *title, const wchar_t *msg);
+
+static void import_apache(void)
+{
+    wchar_t conf[MAX_PATH] = L"", args[MAX_PATH + 64], log[MAX_PATH], *msg;
+    char *out = NULL;
+    DWORD code = run_capture(L"--import-apache --dry-run", &out);
+    HANDLE h;
+    if (code == 2)
+    {
+        OPENFILENAMEW ofn;
+        free(out);
+        out = NULL;
+        memset(&ofn, 0, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = g_wnd;
+        ofn.lpstrFilter = L"Apache configuration\0httpd.conf;*.conf\0All files\0*.*\0";
+        ofn.lpstrFile = conf;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrTitle = L"Select httpd.conf of Apache";
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+        if (!GetOpenFileNameW(&ofn))
+            return;
+        swprintf(args, MAX_PATH + 64, L"--import-apache \"%s\" --dry-run", conf);
+        code = run_capture(args, &out);
+    }
+    if (!out)
+        return;
+    if (code != 0 || strstr(out, "\n0 site(s) would be imported"))
+    {
+        msg = report_text(out, L"");
+        if (msg)
+            MessageBoxW(g_wnd, msg, L"Import Apache sites", MB_OK | (code ? MB_ICONWARNING : MB_ICONINFORMATION));
+        free(msg);
+        free(out);
+        return;
+    }
+    msg = report_text(out, L"\n\nImport these sites into OpenLiteSpeed?");
+    free(out);
+    if (!msg || MessageBoxW(g_wnd, msg, L"Import Apache sites", MB_YESNO | MB_ICONQUESTION) != IDYES)
+    {
+        free(msg);
+        return;
+    }
+    free(msg);
+    if (conf[0])
+        swprintf(args, MAX_PATH + 64, L"--import-apache \"%s\"", conf);
+    else
+        wcscpy(args, L"--import-apache");
+    code = run_capture(args, &out);
+    swprintf(log, MAX_PATH, L"%s\\logs\\apache-import.log", g_root);
+    h = CreateFileW(log, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE)
+    {
+        DWORD n;
+        WriteFile(h, out, (DWORD)strlen(out), &n, NULL);
+        CloseHandle(h);
+    }
+    if (code == 0)
+    {
+        if (g_running)
+            run_tool(L"-s reload", 1);
+        notify(L"Apache sites imported", L"The report is in logs\\apache-import.log.");
+    }
+    else if ((msg = report_text(out, L"")) != NULL)
+    {
+        MessageBoxW(g_wnd, msg, L"Import Apache sites", MB_OK | MB_ICONWARNING);
+        free(msg);
+    }
+    free(out);
+}
+
 static int run_elevated(const wchar_t *args)
 {
     SHELLEXECUTEINFOW sei;
@@ -429,6 +564,8 @@ static void show_menu(void)
     AppendMenuW(sites, MF_STRING, ID_REFRESH, L"Refresh sites");
     AppendMenuW(sites, MF_STRING, ID_WWW, L"Open projects folder");
     AppendMenuW(sites, MF_STRING, ID_SETWWW, L"Change projects folder...");
+    AppendMenuW(sites, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(sites, MF_STRING, ID_IMPORT, L"Import Apache sites...");
     AppendMenuW(m, MF_POPUP, (UINT_PTR)sites, L"Sites");
     for (i = 0; i < phpd_count; ++i)
     {
@@ -511,6 +648,8 @@ static void on_command(int id)
     }
     else if (id == ID_SETWWW)
         choose_www();
+    else if (id == ID_IMPORT)
+        import_apache();
     else if (id == ID_ERRLOG || id == ID_ACCLOG)
     {
         swprintf(buf, MAX_PATH, L"%s\\logs\\%s", g_root, id == ID_ERRLOG ? L"error.log" : L"access.log");

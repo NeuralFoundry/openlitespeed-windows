@@ -113,6 +113,9 @@ target_include_directories(lsbcrypt PRIVATE "${BCRYPT_SRC}" "${BCRYPT_SRC}/crypt
 target_compile_options(lsbcrypt PRIVATE "/FI${COMPAT}/include/ols_win.h" /W0)
 target_include_directories(http PRIVATE "${BCRYPT_SRC}")
 
+add_library(olsimport STATIC "${COMPAT}/src/win_apache.cpp")
+target_include_directories(olsimport PRIVATE "${OLS_TOP}/win/common")
+
 add_executable(openlitespeed
     "${OLS_SRC}/modules/prelinkedmods.cpp"
     "${OLS_SRC}/httpdtest.cpp"
@@ -124,7 +127,7 @@ if(OLS_POISON_NEW)
 endif()
 target_link_options(openlitespeed PRIVATE /STACK:8388608 /OPT:REF /OPT:ICF /WHOLEARCHIVE:util /WHOLEARCHIVE:lsr)
 target_link_libraries(openlitespeed
-    ${OLS_LIBS} lsquic lsbcrypt olscompat
+    ${OLS_LIBS} lsquic lsbcrypt olscompat olsimport
     "${DEPS}/lib/ssl.lib" "${DEPS}/lib/crypto.lib" "${DEPS}/lib/decrepit.lib"
     "${DEPS}/lib/zs.lib" "${DEPS}/lib/pcre2-8-static.lib" "${DEPS}/lib/libexpatMT.lib"
     "${DEPS}/lib/brotlienc.lib" "${DEPS}/lib/brotlidec.lib" "${DEPS}/lib/brotlicommon.lib"
@@ -132,7 +135,7 @@ target_link_libraries(openlitespeed
     ws2_32 mswsock bcrypt crypt32 iphlpapi userenv advapi32 ntdll)
 add_executable(olstray WIN32 "${OLS_TOP}/win/tray/olstray.c" "${OLS_TOP}/win/tray/olstray.rc")
 target_include_directories(olstray PRIVATE "${OLS_TOP}/win/common")
-target_link_libraries(olstray user32 gdi32 shell32 advapi32 ole32 version)
+target_link_libraries(olstray user32 gdi32 shell32 advapi32 ole32 version comdlg32)
 add_executable(setup WIN32 "${OLS_TOP}/win/setup/setup.c" "${OLS_TOP}/win/setup/setup.rc")
 target_include_directories(setup PRIVATE "${OLS_TOP}/win/common")
 target_link_libraries(setup user32 gdi32 shell32 ole32 advapi32 comctl32 cabinet uuid ws2_32 version)

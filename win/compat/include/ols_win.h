@@ -1034,6 +1034,7 @@ int ols_pid_is_ours(pid_t pid);
 int ols_dev_sites(const char *www, const char *tld, int with_root);
 int ols_dev_hosts(int clear);
 int ols_set_php(const char *dir);
+int ols_import_apache(int argc, char **argv);
 int ols_win_control(const char *cmd);
 int ols_win_service_run(void);
 int ols_win_service_install(int install);

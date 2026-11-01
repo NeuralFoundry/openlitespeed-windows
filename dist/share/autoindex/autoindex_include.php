@@ -379,7 +379,7 @@ class Index
 		}
 		$this->path = $_SERVER['LS_AI_PATH'];
 
-		ini_set('open_basedir', $_SERVER['DOCUMENT_ROOT']);
+		ini_set('open_basedir', $this->path);
 
 		$this->dir = new Directory($this->path);
 		if ($this->dir->cannotLoad()) {
