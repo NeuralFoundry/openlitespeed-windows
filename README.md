@@ -17,6 +17,7 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - Local development sites: every folder in the projects folder becomes `http://folder.test/`
 - HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache and the WebAdmin console
 - `.htaccess` files work as in Apache: rewrite rules, access rules (`Require`, `Order`, `Allow`, `Deny`), passwords, `<Files>` sections, `Options Indexes` and `php_flag engine off`, applied within a second when a file changes
+- Bot protection: reCAPTCHA or hCaptcha challenges and request, bandwidth and connection limits per client IP, see [docs/PROTECTION.md](docs/PROTECTION.md)
 - LiteSpeed Cache for WordPress works out of the box: install and activate the plugin, no server configuration needed. Pages are purged automatically when content changes.
 - Hardened for Windows: file names are checked against case, short name, stream and device name tricks, PHP runs with a restricted token and the service runs under a virtual account
 
