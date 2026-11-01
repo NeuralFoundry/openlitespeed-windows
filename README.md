@@ -16,6 +16,15 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache, `.htaccess` rewrite rules and the WebAdmin console
 - Hardened for Windows: file names are checked against case, short name, stream and device name tricks, PHP runs with a restricted token and the service runs under a virtual account
 
+## Performance
+
+Requests per second on the same Windows machine with PHP 8.4 and 32 concurrent connections. Every server used the same 12 CPU cores and the same PHP build. Results for PHP 8.2 to 8.5, memory use and the full test setup are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bench-overview-dark.svg">
+  <img src="docs/bench-overview-light.svg" width="880" alt="Requests per second on Windows for OpenLiteSpeed, nginx, Apache and the PHP built-in server">
+</picture>
+
 ## Requirements
 
 - Windows 10, Windows 11 or Windows Server 2019 or newer, x64
