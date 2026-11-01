@@ -41,6 +41,23 @@ Every run is reported with its error count. No run was left out.
 | Apache + mod_php | 105 | 574 ms | 1,229 ms | 0 of 2,110 | 929 MB |
 | Apache + PHP-CGI | 118 | 425 ms | 1,621 ms | 0 of 2,372 | 500 MB |
 
+## WordPress with a page cache
+
+The same WordPress site with a full page cache, 20 second runs, PHP 8.4. OpenLiteSpeed uses its built-in cache through the LiteSpeed Cache plugin, installed and activated with no server changes. Apache uses `mod_cache_disk` and nginx `fastcgi_cache`, each set up to cache the page for an hour.
+
+| Server and cache | Page | Connections | Requests/s | p50 | p99 | Errors |
+|---|---|--:|--:|--:|--:|--:|
+| OpenLiteSpeed + LiteSpeed Cache plugin | Home page | 64 | 21,180 | 2.9 ms | 6.1 ms | 0 of 423,617 |
+| OpenLiteSpeed + LiteSpeed Cache plugin | Home page | 128 | 21,028 | 6.1 ms | 11.3 ms | 0 of 420,556 |
+| OpenLiteSpeed + LiteSpeed Cache plugin | Post | 128 | 21,373 | 5.8 ms | 10.9 ms | 0 of 427,470 |
+| Apache + mod_cache_disk | Home page | 64 | 18,362 | 3.5 ms | 6.1 ms | 0 of 367,256 |
+| Apache + mod_cache_disk | Home page | 128 | 18,234 | 7.0 ms | 12.2 ms | 0 of 364,681 |
+| nginx + fastcgi_cache | Home page | 64 | 7,745 | 8.1 ms | 10.8 ms | 0 of 154,906 |
+| nginx + fastcgi_cache | Home page | 128 | 7,633 | 16.6 ms | 20.9 ms | 0 of 152,655 |
+| nginx + fastcgi_cache | Post | 128 | 8,142 | 15.6 ms | 19.4 ms | 0 of 162,848 |
+
+Without a cache the same home page runs at about 120 requests per second on every server. The LiteSpeed Cache plugin also knows when content changes: it tags every cached page and purges exactly the pages a new post or comment affects. The Apache and nginx caches in this test do not know about WordPress, so they serve the stored copy until it expires.
+
 ## Stress test
 
 60 seconds of continuous load with PHP 8.4, measured in 6 windows of 10 seconds. The chart shows whether throughput holds up, the table whether memory grows.
@@ -83,14 +100,14 @@ The PHP application over TLS, 10 second run, 128 keep-alive connections, PHP 8.4
 - nginx 1.30.6, official Windows build: one worker process, because the nginx documentation for Windows notes that only one worker actually does any work. `open_file_cache` on, 24 `php-cgi.exe` processes, a new FastCGI connection per request (`fastcgi_keep_conn` caused 30 second stalls with `php-cgi.exe`).
 - Apache 2.4.54 (Apache Lounge build shipped with Laragon): `mpm_winnt` with 1024 threads, `AllowOverride None` everywhere. PHP through `mod_php`, or through `mod_proxy_fcgi` to the same 24 `php-cgi.exe` processes as nginx.
 - PHP built-in server: `php -S`, which handles one request at a time and is meant for development only.
-- WordPress 7.1.4 with the default theme, 31 posts with comments, no page cache plugin, MySQL 8.0.30 on the same machine.
+- WordPress 7.1.4 with the default theme, 31 posts with comments, MySQL 8.0.30 on the same machine. The uncached runs used no cache plugin, the page cache runs LiteSpeed Cache 7.9.2.
 - HTTPS: TLS with a P-256 ECDSA certificate, session cache enabled on every server.
 - Run lengths: 20 seconds per sustained run, 60 seconds for the stress test and 10 seconds over HTTPS, each after a 2 second warm-up. The whole series takes under 10 minutes.
 - Access logging was on for every server.
 
 ## Notes
 
-- Uncached WordPress is limited by PHP and MySQL work, so every server lands at about the same speed. A page cache changes that picture, and page caching was not part of this test.
+- Uncached WordPress is limited by PHP and MySQL work, so every server lands at about the same speed. A page cache changes that picture, see above.
 - nginx for Windows serves every connection from one worker process, and its documentation lists that as a known limitation. In these runs its throughput fell sharply at 512 connections and over HTTPS.
 - Apache keeps one thread per connection. With 1024 threads it used about 1.6 GB of memory in the stress test.
 - Earlier 5 second runs with PHP 8.2 to 8.5 gave the same order of servers.

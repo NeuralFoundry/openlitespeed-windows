@@ -14,6 +14,7 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - Finds installed PHP versions, Laragon and XAMPP and configures itself for them
 - Local development sites: every folder in the projects folder becomes `http://folder.test/`
 - HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache, `.htaccess` rewrite rules and the WebAdmin console
+- LiteSpeed Cache for WordPress works out of the box: install and activate the plugin, no server configuration needed. Pages are purged automatically when content changes.
 - Hardened for Windows: file names are checked against case, short name, stream and device name tricks, PHP runs with a restricted token and the service runs under a virtual account
 
 ## Performance
@@ -25,7 +26,7 @@ Requests per second on the same Windows machine with PHP 8.4 and the same 12 CPU
   <img src="docs/bench-overview-light.svg" width="880" alt="Requests per second on Windows for OpenLiteSpeed, nginx and Apache: static file, PHP application and WordPress">
 </picture>
 
-| Server | Static file | PHP application | WordPress | PHP over HTTPS | PHP at 512 connections |
+| Server | Static file | PHP application | WordPress, uncached | PHP over HTTPS | PHP at 512 connections |
 |---|--:|--:|--:|--:|--:|
 | OpenLiteSpeed + LSAPI | 175,203 | 9,548 | 117 | 8,687 | 7,706 |
 | OpenLiteSpeed + FastCGI |  | 9,538 | 119 | 8,961 | 9,780 |
@@ -40,7 +41,15 @@ Static files do not involve PHP, so they were measured once per server. Static f
   <img src="docs/bench-stress-app-light.svg" width="880" alt="Requests per second every 10 seconds during a 60 second stress test with 512 connections for each server">
 </picture>
 
-Uncached WordPress runs at about the same speed on every server because PHP and MySQL do most of the work. Latency, memory, the full setup and the raw data are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Uncached WordPress runs at about the same speed on every server because PHP and MySQL do most of the work. With a page cache the picture changes. The home page of the same site, 64 connections:
+
+| Server and cache | Requests/s | p99 |
+|---|--:|--:|
+| OpenLiteSpeed + LiteSpeed Cache plugin | 21,180 | 6.1 ms |
+| Apache + mod_cache_disk | 18,362 | 6.1 ms |
+| nginx + fastcgi_cache | 7,745 | 10.8 ms |
+
+Latency, memory, the full setup and the raw data are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Requirements
 
