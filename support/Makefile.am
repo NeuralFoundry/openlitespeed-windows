@@ -1,1 +1,0 @@
-SUBDIRS = unmount_ns

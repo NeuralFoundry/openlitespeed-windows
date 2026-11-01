@@ -1,1 +1,0 @@
-../../src/extensions/cgi/ns.c
