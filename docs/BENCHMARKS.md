@@ -1,15 +1,15 @@
-# Benchmarks
+# OpenLiteSpeed for Windows benchmarks
 
-OpenLiteSpeed for Windows compared with nginx, Apache and the PHP built-in server on one Windows machine. Each server runs with the PHP integration it normally uses on Windows, so the results compare complete deployments, not only the server engines. Apache is tested twice: with `mod_php`, which needs the thread safe PHP build, and with PHP-CGI, the same non thread safe PHP that nginx and OpenLiteSpeed use.
+OpenLiteSpeed for Windows, the native Windows build of OpenLiteSpeed from this repository, compared with nginx, Apache and the PHP built-in server on one Windows machine. Each server runs with the PHP integration it normally uses on Windows, so the results compare complete deployments, not only the server engines. Apache is tested twice: with `mod_php`, which needs the thread safe PHP build, and with PHP-CGI, the same non thread safe PHP that nginx and OpenLiteSpeed use.
 
 Every run is reported with its error count. No run was left out.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="bench-overview-dark.svg">
-  <img src="bench-overview-light.svg" width="880" alt="Requests per second on Windows for a static file, a PHP application and WordPress">
+  <img src="bench-overview-light.svg" width="880" alt="OpenLiteSpeed for Windows vs nginx and Apache: requests per second for a static file, a PHP application and WordPress">
 </picture>
 
-## Sustained load
+## Sustained load on Windows
 
 20 second runs with PHP 8.4, 128 keep-alive connections, 64 for WordPress. p50 and p99 are per-request latencies.
 
@@ -41,7 +41,7 @@ Every run is reported with its error count. No run was left out.
 | Apache + mod_php | 105 | 574 ms | 1,229 ms | 0 of 2,110 | 929 MB |
 | Apache + PHP-CGI | 118 | 425 ms | 1,621 ms | 0 of 2,372 | 500 MB |
 
-## WordPress with a page cache
+## WordPress with a page cache on Windows
 
 The same WordPress site with a full page cache, 20 second runs, PHP 8.4. OpenLiteSpeed uses its built-in cache through the LiteSpeed Cache plugin, installed and activated with no server changes. Apache uses `mod_cache_disk` and nginx `fastcgi_cache`, each set up to cache the page for an hour.
 
@@ -58,7 +58,7 @@ The same WordPress site with a full page cache, 20 second runs, PHP 8.4. OpenLit
 
 Without a cache the same home page runs at about 120 requests per second on every server. The LiteSpeed Cache plugin also knows when content changes: it tags every cached page and purges exactly the pages a new post or comment affects. The Apache and nginx caches in this test do not know about WordPress, so they serve the stored copy until it expires.
 
-## Stress test
+## Stress test on Windows
 
 One continuous 60 second run with PHP 8.4. Requests per second for each 10 second window are computed from the start time of every request, so the load never pauses. The chart shows whether throughput holds up, the table whether memory grows.
 
@@ -77,7 +77,7 @@ One continuous 60 second run with PHP 8.4. Requests per second for each 10 secon
 | Apache + mod_php | 3,078 | 2,322 | 586 ms | 0 of 184,708 | 1508 / 1508 MB |
 | Apache + PHP-CGI | 5,396 | 5,262 | 600 ms | 0 of 323,765 | 388 / 409 MB |
 
-## HTTPS
+## HTTPS on Windows
 
 The PHP application over TLS, 10 second run, 128 keep-alive connections, PHP 8.4. Each keep-alive connection performs one TLS handshake.
 
