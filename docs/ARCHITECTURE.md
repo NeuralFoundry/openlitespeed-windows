@@ -14,6 +14,7 @@ This port builds OpenLiteSpeed 1.9.4 as a native Win32 program with Microsoft Vi
 | Paths | The server works with drive-less absolute paths such as `/Users/me/www`; they are resolved against the drive the server runs from. Every file open is checked against the real on-disk name to block Windows specific tricks: wrong letter case, trailing dots and spaces, `::$DATA` streams, 8.3 short names and device names such as `CON` and `NUL`. A name that cannot be verified is refused. |
 | Shared memory | `mmap` on a file maps the same file view in every process, so LSCache, the SSL session cache, TLS ticket keys and the DNS cache are shared between HTTP workers. Locks in shared memory are atomic spin locks and work across processes. |
 | Unix sockets | `AF_UNIX` sockets are native Windows Unix domain sockets. Socket files get an ACL that only allows SYSTEM, Administrators and the server account. |
+| Socket pairs | Windows has no `socketpair()`. A stream pair is a native `AF_UNIX` connection set up in a temporary folder that only SYSTEM, Administrators and the server account can open, and removed right after. TCP over loopback is the fallback. The LSAPI connection to every `lsphp.exe` is such a pair, and `AF_UNIX` makes PHP requests 5 to 8 percent faster than loopback TCP. |
 
 ## Processes
 

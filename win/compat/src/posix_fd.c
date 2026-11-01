@@ -1370,12 +1370,67 @@ int ols_getpeername(int fd, struct sockaddr *addr, socklen_t *len)
     return 0;
 }
 
+static int unix_stream_pair(SOCKET *pa, SOCKET *pc)
+{
+    static volatile LONG s_seq;
+    wchar_t dir[MAX_PATH], wpath[MAX_PATH];
+    struct sockaddr_un addr;
+    SECURITY_ATTRIBUTES sa;
+    SOCKET l = INVALID_SOCKET, a = INVALID_SOCKET, c = INVALID_SOCKET;
+    unsigned char rnd[8];
+    DWORD n = GetTempPathW(MAX_PATH - 64, dir);
+    int ok = 0;
+    if (n == 0 || n >= MAX_PATH - 64
+        || BCryptGenRandom(NULL, rnd, sizeof(rnd), BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+        return -1;
+    swprintf(dir + n, MAX_PATH - n, L"ols-sp-%lu-%ld-%02x%02x%02x%02x%02x%02x%02x%02x", GetCurrentProcessId(),
+             InterlockedIncrement(&s_seq), rnd[0], rnd[1], rnd[2], rnd[3], rnd[4], rnd[5], rnd[6], rnd[7]);
+    swprintf(wpath, MAX_PATH, L"%s\\s", dir);
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    if (WideCharToMultiByte(CP_UTF8, 0, wpath, -1, addr.sun_path, sizeof(addr.sun_path), NULL, NULL) <= 0)
+        return -1;
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = FALSE;
+    sa.lpSecurityDescriptor = ols_private_sd(1);
+    if (!sa.lpSecurityDescriptor)
+        return -1;
+    n = CreateDirectoryW(dir, &sa);
+    LocalFree(sa.lpSecurityDescriptor);
+    if (!n)
+        return -1;
+    l = WSASocketW(AF_UNIX, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+    c = WSASocketW(AF_UNIX, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+    if (l != INVALID_SOCKET && c != INVALID_SOCKET
+        && bind(l, (struct sockaddr *)&addr, sizeof(addr)) == 0 && listen(l, 1) == 0
+        && connect(c, (struct sockaddr *)&addr, sizeof(addr)) == 0)
+    {
+        a = accept(l, NULL, NULL);
+        ok = a != INVALID_SOCKET;
+    }
+    if (l != INVALID_SOCKET)
+        closesocket(l);
+    DeleteFileW(wpath);
+    RemoveDirectoryW(dir);
+    if (!ok)
+    {
+        if (c != INVALID_SOCKET)
+            closesocket(c);
+        return -1;
+    }
+    *pa = a;
+    *pc = c;
+    return 0;
+}
+
 int socketpair(int domain, int type, int proto, int fds[2])
 {
     SOCKET l = INVALID_SOCKET, a = INVALID_SOCKET, c = INVALID_SOCKET;
     struct sockaddr_in addr, caddr, paddr;
     int alen, base = type & ~(SOCK_NONBLOCK | SOCK_CLOEXEC), tries;
     ols_wsa_init();
+    if (domain == AF_UNIX && base == SOCK_STREAM && unix_stream_pair(&a, &c) == 0)
+        goto done;
     if (base == SOCK_DGRAM)
     {
         a = WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
@@ -1447,6 +1502,7 @@ int socketpair(int domain, int type, int proto, int fds[2])
             setsockopt(c, IPPROTO_TCP, TCP_NODELAY, (char *)&nd, sizeof(nd));
         }
     }
+done:
     fds[0] = ols_fd_from_socket(a);
     fds[1] = ols_fd_from_socket(c);
     ols_fd_set_meta(fds[0], OLS_T_SOCKET | (O_RDWR << OLS_F_ACC_SHIFT));
