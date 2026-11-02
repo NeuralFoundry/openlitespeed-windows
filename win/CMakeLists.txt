@@ -33,7 +33,7 @@ add_compile_definitions(
     _CRT_DECLARE_NONSTDC_NAMES=0 _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS _CRT_RAND_S
     _WINSOCK_DEPRECATED_NO_WARNINGS WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
     PCRE2_STATIC XML_STATIC HAVE_BORINGSSL OPENSSL_NO_CXX DISABLE_OBJ_POOL
-    USE_UDNS USE_BROTLI LS_WINDOWS
+    USE_UDNS USE_BROTLI LS_WINDOWS ENABLE_IPTOGEO2 USE_IP2LOCATION
 )
 
 configure_file("${OLS_SRC}/config.h.cmake" "${PROJECT_BINARY_DIR}/src/config.h")
@@ -134,7 +134,7 @@ target_link_libraries(openlitespeed
     "${DEPS}/lib/ssl.lib" "${DEPS}/lib/crypto.lib" "${DEPS}/lib/decrepit.lib"
     "${DEPS}/lib/zs.lib" "${DEPS}/lib/pcre2-8-static.lib" "${DEPS}/lib/libexpatMT.lib"
     "${DEPS}/lib/brotlienc.lib" "${DEPS}/lib/brotlidec.lib" "${DEPS}/lib/brotlicommon.lib"
-    "${DEPS}/lib/udns.lib"
+    "${DEPS}/lib/udns.lib" "${DEPS}/lib/maxminddb.lib" "${DEPS}/lib/IP2Location.lib"
     ws2_32 mswsock bcrypt crypt32 iphlpapi userenv advapi32 ntdll winhttp)
 file(STRINGS "${OLS_TOP}/win/RELEASE" OLS_RELEASE LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${OLS_TOP}/win/RELEASE")

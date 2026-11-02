@@ -10,6 +10,8 @@ $pins = @(
     @{ Dir = 'libexpat';  Url = 'https://github.com/libexpat/libexpat.git';         Commit = 'a76b1174c1ea52abb639a4c69d52b630a8a106a2' },
     @{ Dir = 'pcre2';     Url = 'https://github.com/PCRE2Project/pcre2.git';        Commit = '2dce7761b1831fd3f82a9c2bd5476259d945da4d' },
     @{ Dir = 'udns';      Url = 'https://github.com/ortclib/udns.git';              Commit = 'e0148dfba90ce0d17a8e2cae15f218b5ab99ad62' },
+    @{ Dir = 'libmaxminddb'; Url = 'https://github.com/maxmind/libmaxminddb.git';   Commit = '4a3d17a621c0ebcb81498fd34d313f67fd940ab5' },
+    @{ Dir = 'ip2location';  Url = 'https://github.com/chrislim2888/IP2Location-C-Library.git'; Commit = 'e0ecd2216fb8d373fa1b3a687051100379c9f600' },
     @{ Dir = 'zlib';      Url = 'https://github.com/madler/zlib.git';               Commit = 'da607da739fa6047df13e66a2af6b8bec7c2a498' }
 )
 

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+project(ip2location C)
+add_library(IP2Location STATIC ${IP2LOC_SRC}/libIP2Location/IP2Location.c)
+target_compile_definitions(IP2Location PRIVATE WIN32 _CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
+install(TARGETS IP2Location ARCHIVE DESTINATION lib)
+install(FILES ${IP2LOC_SRC}/libIP2Location/IP2Location.h DESTINATION include)

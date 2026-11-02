@@ -25,7 +25,14 @@
 #include <inttypes.h>
 
 #include <lsdef.h>
+#ifdef _WIN32
+#pragma push_macro("WIN32")
+#undef WIN32
+#endif
 #include "IP2Location.h"
+#ifdef _WIN32
+#pragma pop_macro("WIN32")
+#endif
 
 //class HttpReq;
 class IEnv;
@@ -67,6 +74,9 @@ public:
     {   s_pIpToLoc = pItl;  }
     static IpToLoc *getIpToLoc()
     {   return s_pIpToLoc;  }
+#ifdef _WIN32
+    static int testMain(char *pFile, int flag);
+#endif
 
 private:
     int loadIpToLocDbFile(char *pFile, int flag);

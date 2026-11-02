@@ -22,6 +22,7 @@
 
 #include <main/lshttpdmain.h>
 #include <http/useacme.h>
+#include <http/iptoloc.h>
 
 #include <sys/stat.h>
 #include <stdio.h>
@@ -90,6 +91,8 @@ int main(int argc, char *argv[])
         return ols_acme_main(argc - 2, argv + 2);
     if (argc >= 7 && strcmp(argv[1], "--acme-batch") == 0)
         return acmeBatchMain(argc, argv);
+    if (argc >= 4 && strcmp(argv[1], "--test-ip2loc") == 0)
+        return IpToLoc::testMain(argv[2], atoi(argv[3]));
     if (argc >= 2 && strcmp(argv[1], "--dev-hosts") == 0)
         return ols_dev_hosts(0);
     if (argc >= 2 && strcmp(argv[1], "--dev-hosts-clear") == 0)

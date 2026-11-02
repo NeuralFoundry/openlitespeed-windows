@@ -13,6 +13,8 @@ call :dep pcre2 "-DPCRE2_BUILD_PCRE2_8=ON -DPCRE2_SUPPORT_JIT=ON -DPCRE2_SUPPORT
 call :dep libexpat\expat "-DEXPAT_SHARED_LIBS=OFF -DEXPAT_MSVC_STATIC_CRT=ON -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_DOCS=OFF" || exit /b 1
 call :dep brotli "-DBROTLI_DISABLE_TESTS=ON -DBROTLI_BUILD_TOOLS=OFF" || exit /b 1
 call :dep udns "-DUDNS_SRC=%D:\=/%/udns" "%~dp0udns" || exit /b 1
+call :dep libmaxminddb "-DBUILD_TESTING=OFF -DMAXMINDDB_BUILD_BINARIES=OFF -DMSVC_STATIC_RUNTIME=ON" || exit /b 1
+call :dep ip2location "-DIP2LOC_SRC=%D:\=/%/ip2location" "%~dp0ip2location" || exit /b 1
 
 echo [boringssl]
 cmake -S %D%\boringssl -B %D%\build\boringssl %C% -DOPENSSL_NO_ASM=1 -DBUILD_TESTING=OFF >%D%\build\boringssl.log 2>&1 || goto fail

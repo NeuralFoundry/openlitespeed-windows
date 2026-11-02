@@ -18,6 +18,8 @@ Expat                  MIT                 https://github.com/libexpat/libexpat
 udns                   LGPL-2.1-or-later   https://www.corpit.ru/mjt/udns.html
 libbcrypt              CC0-1.0             https://github.com/litespeedtech/libbcrypt
 wepoll                 BSD-2-Clause        https://github.com/piscisaureus/wepoll
+libmaxminddb           Apache-2.0          https://github.com/maxmind/libmaxminddb
+IP2Location C Library  MIT                 https://github.com/chrislim2888/IP2Location-C-Library
 
 bin\lsphp\*\lsphp.exe is built from the LiteSpeed SAPI of PHP:
 

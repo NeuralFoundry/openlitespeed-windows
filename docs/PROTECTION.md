@@ -73,6 +73,37 @@ Measured on Windows with `staticReqPerSec 5`, `dynReqPerSec 2`, `outBandwidth 10
 | 4 connections held open for 5 s | client blocked after the grace period |
 | Blocked client after 10 s | served again |
 
+## Country of the visitor
+
+OpenLiteSpeed looks up each client address in a MaxMind GeoIP2 or IP2Location database and passes the result to PHP and to rewrite rules. The databases are not included. GeoLite2 is free with a [MaxMind account](https://www.maxmind.com/en/geolite2/signup), IP2Location LITE with an [IP2Location account](https://lite.ip2location.com).
+
+```text
+enableIpGeo              1
+geoipDB C:/OpenLiteSpeed/geoip/GeoLite2-Country.mmdb {
+  geoipDBName            COUNTRY_DB
+}
+ip2locDB {
+  ip2locDBFile           C:/OpenLiteSpeed/geoip/IP2LOCATION-LITE-DB1.BIN
+  ip2locDBCache          MemoryCache
+}
+```
+
+| Database | Variables |
+|---|---|
+| `GeoLite2-Country.mmdb` | `GEOIP_COUNTRY_CODE`, `GEOIP_COUNTRY_NAME`, `GEOIP_CONTINENT_CODE` |
+| `GeoLite2-City.mmdb` | Also `GEOIP_REGION`, `GEOIP_CITY`, `GEOIP_POSTAL_CODE`, `GEOIP_LATITUDE`, `GEOIP_LONGITUDE` |
+| `GeoLite2-ASN.mmdb` | `GEOIP_ORGANIZATION`, `GEOIP_ISP` |
+| IP2Location | `IP2LOCATION_COUNTRY_SHORT`, `IP2LOCATION_COUNTRY_LONG` and the other fields of the database |
+
+Several `geoipDB` blocks can be loaded at the same time. A rewrite rule can then block countries, for example:
+
+```apache
+RewriteCond %{ENV:GEOIP_COUNTRY_CODE} ^(CN|RU)$
+RewriteRule .* - [F]
+```
+
+`ip2locDBCache` is `FileIo`, `MemoryCache` or `SharedMemoryCache`. On Windows `SharedMemoryCache` works like `MemoryCache`, so each HTTP worker keeps its own copy of the database. A database that cannot be read is tested in a separate process and disabled with an error in the log; the server keeps running.
+
 ## Several HTTP workers
 
 Every HTTP worker keeps its own list of clients, as on Linux. Request and bandwidth limits apply to each connection as configured, but connection counts and passed challenges are counted per worker: with 8 workers a client can open up to 8 times `hardLimit` connections, and a visitor may be challenged again when a new connection reaches another worker. Set **Number of Workers** to 1 when exact connection limits matter more than using every CPU core.

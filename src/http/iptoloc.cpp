@@ -302,6 +302,13 @@ IpToLoc::~IpToLoc()
 int IpToLoc::loadIpToLocDbFile(char *pFile, int flag)
 {
     IP2Location *pIpToLoc;
+#ifdef _WIN32
+    char achNative[MAX_PATH_LEN];
+    if (ols_native_path(pFile, (int)strlen(pFile), achNative, sizeof(achNative)) > 0)
+        pFile = achNative;
+    if (flag == IP2LOCATION_SHARED_MEMORY)
+        flag = IP2LOCATION_CACHE_MEMORY;
+#endif
     pIpToLoc = IP2Location_open(pFile);
 
     if (!pIpToLoc)
@@ -316,8 +323,13 @@ int IpToLoc::loadIpToLocDbFile(char *pFile, int flag)
     }
 
     int fd = fileno(pIpToLoc->file);
+#ifdef _WIN32
+    if (fd != -1)
+        SetHandleInformation((HANDLE)_get_osfhandle(fd), HANDLE_FLAG_INHERIT, 0);
+#else
     if (fd != -1)
         ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
 
     if (m_pDb)
         IP2Location_close(m_pDb);
@@ -327,6 +339,46 @@ int IpToLoc::loadIpToLocDbFile(char *pFile, int flag)
 }
 
 
+#ifdef _WIN32
+int IpToLoc::testIpToLocDbFile(char *pFile, int flag)
+{
+    wchar_t wexe[MAX_PATH];
+    char exe[MAX_PATH * 3], achFlag[16];
+    DWORD n = GetModuleFileNameW(NULL, wexe, MAX_PATH);
+    if (n > 0 && n < MAX_PATH
+        && WideCharToMultiByte(CP_UTF8, 0, wexe, -1, exe, sizeof(exe), NULL, NULL) > 0)
+    {
+        snprintf(achFlag, sizeof(achFlag), "%d", flag);
+        char *argv[] = { exe, (char *)"--test-ip2loc", pFile, achFlag, NULL };
+        pid_t pid = ols_spawn(exe, argv, NULL, NULL, -1, -1, -1, 0);
+        int status;
+        if (pid > 0 && waitpid(pid, &status, 0) == pid && WIFEXITED(status)
+            && WEXITSTATUS(status) == 0)
+            return 0;
+    }
+    LS_ERROR("IpToLoc DB file test failed: '%s'.", pFile);
+    return -1;
+}
+
+
+static LONG WINAPI quietCrash(EXCEPTION_POINTERS *)
+{
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+
+int IpToLoc::testMain(char *pFile, int flag)
+{
+    SetUnhandledExceptionFilter(quietCrash);
+    IpToLoc loc;
+    if (loc.loadIpToLocDbFile(pFile, flag) != 0)
+        return 1;
+    const char *addr = "88.252.206.167";
+    LocInfo info;
+    loc.lookUp(addr, strlen(addr), &info);
+    return 0;
+}
+#else
 int IpToLoc::testIpToLocDbFile(char *pFile, int flag)
 {
     pid_t pid = fork();
@@ -353,6 +405,7 @@ int IpToLoc::testIpToLocDbFile(char *pFile, int flag)
     }
     return -1;
 }
+#endif
 
 
 int IpToLoc::setIpToLocDbFile(char *pFile, const char *cacheMode)

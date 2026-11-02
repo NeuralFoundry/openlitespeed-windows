@@ -706,6 +706,12 @@ int IpToGeo2::loadGeoIpDbFile(const char *pFile, const char *pDbLogical)
         LS_ERROR("[GEO] Insufficient memory allocating DB handle\n");
         return LS_FAIL; // Free it all in the destructor
     }
+#ifdef _WIN32
+    char achNative[MAX_PATH_LEN];
+    if (ols_native_path(pFile, (int)strlen(pFile), achNative, sizeof(achNative)) > 0)
+        ret = MMDB_open(achNative, 0, m_dbs[m_ndbs].m_mmdb);
+    else
+#endif
     ret = MMDB_open(pFile, 0, m_dbs[m_ndbs].m_mmdb);
     if (ret != 0)
     {
@@ -734,6 +740,11 @@ int IpToGeo2::testGeoIpDbFile(const char *pFile)
     //if (pid == 0)
     //{
         MMDB_s mmdb;
+#ifdef _WIN32
+        char achNative[MAX_PATH_LEN];
+        if (ols_native_path(pFile, (int)strlen(pFile), achNative, sizeof(achNative)) > 0)
+            pFile = achNative;
+#endif
         int ret = MMDB_open(pFile, 0/*MMDB_MODE_MMAP*/, &mmdb);
         if (ret == 0)
         {
