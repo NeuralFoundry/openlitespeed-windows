@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 PackageIdentifier: NeuralFoundry.OpenLiteSpeed
 PackageVersion: 1.9.4-win.6
 InstallerType: exe
@@ -18,4 +18,4 @@ Installers:
   InstallerUrl: https://github.com/NeuralFoundry/openlitespeed-windows/releases/download/v1.9.4-win.6/OpenLiteSpeed-1.9.4-win64-setup.exe
   InstallerSha256: 7AB7DD175126939A7443A35B88920FB7F9193E88F81576499153C4BADB22D00D
 ManifestType: installer
-ManifestVersion: 1.9.0
+ManifestVersion: 1.12.0
