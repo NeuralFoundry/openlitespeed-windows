@@ -50,6 +50,7 @@ class HttpVHost;
 class RewriteMapList;
 class HttpSession;
 class ModuleConfig;
+class ExtWorker;
 class HttpSessionHooks;
 class HttpHeaderOps;
 struct HtWatch;
@@ -206,6 +207,7 @@ typedef struct _CTX_INT
 
     GSockAddr            *m_pAddrWebSock;
     char                 *m_pWebSockAddrStr;
+    ExtWorker            *m_pWebSockWorker;
 
 } CtxInt;
 
@@ -509,6 +511,13 @@ public:
     const char *getWebSockAddrStr() const
     {   return m_pInternal->m_pWebSockAddrStr;   }
     void setWebSockAddr(const char *addrStr, const GSockAddr *gsockAddr, bool ssl);
+    void setWebSockWorker(ExtWorker *pWorker)
+    {
+        if (!allocateInternal())
+            m_pInternal->m_pWebSockWorker = pWorker;
+    }
+    ExtWorker *getWebSockWorker() const
+    {   return m_pInternal->m_pWebSockWorker;   }
     bool isWebSockSec() const
     {   return m_iFeatures & BIT_F_WSS;   }
 

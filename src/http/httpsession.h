@@ -476,7 +476,7 @@ private:
     void clearDeferredWebSocket();
     int sendOptionsAsteriskResp();
     int switchToWebSocket(const GSockAddr *pAddr, bool ssl,
-                          const char *url, int url_len);
+                          const char *url, int url_len, int retry = 0);
     int switchToWebSocket(const char *pAddr, bool ssl,
                           const char *url, int url_len);
     int switchToWebSocket(const char *pWsUrl);

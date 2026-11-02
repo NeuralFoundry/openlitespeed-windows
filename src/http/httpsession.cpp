@@ -80,6 +80,7 @@
 #include <util/vmembuf.h>
 #include <util/blockbuf.h>
 #include <extensions/extworker.h>
+#include <extensions/localworker.h>
 #include <extensions/cgi/lscgiddef.h>
 #include <extensions/registry/extappregistry.h>
 #include <arpa/inet.h>
@@ -1359,7 +1360,7 @@ int HttpSession::switchToWebSocket(const char *pAddr, bool ssl,
 
 
 int HttpSession::switchToWebSocket(const GSockAddr *pAddr, bool ssl,
-                                   const char *url, int url_len)
+                                   const char *url, int url_len, int retry)
 {
     if (!pAddr)
         return -1;
@@ -1367,6 +1368,7 @@ int HttpSession::switchToWebSocket(const GSockAddr *pAddr, bool ssl,
     logAccess(0);
     L4Handler *pL4Handler = new L4Handler();
     getStream()->switchHandler(this, pL4Handler);
+    pL4Handler->setConnectRetry(retry);
     pL4Handler->init(m_request, pAddr, getPeerAddrString(), getPeerAddrStrLen(),
                      ssl, url, url_len);
     setState(HSS_TOBERECYCLED);
@@ -1497,9 +1499,21 @@ int HttpSession::processWebSocketUpgrade(HttpVHost *pVHost,
              pVHost->getName(), m_request.getURI());
     const GSockAddr *pAddr = NULL;
     bool ssl = false;
+    int retry = 0;
     if (pContext)
     {
-        if (pContext->getWebSockAddr() && pContext->getWebSockAddr()->get())
+        ExtWorker *pWorker = pContext->getWebSockWorker();
+        if (pWorker)
+        {
+            LocalWorker *pLocal = dynamic_cast<LocalWorker *>(pWorker);
+            if (pWorker->notStarted())
+                pWorker->start();
+            else if (pLocal && pLocal->getCurInstances() == 0)
+                pLocal->addNewProcess();
+            pAddr = &pWorker->getConfigPointer()->getServerAddr();
+            retry = 30;
+        }
+        else if (pContext->getWebSockAddr() && pContext->getWebSockAddr()->get())
             pAddr = pContext->getWebSockAddr();
         ssl = pContext->isWebSockSec();
     }
@@ -1507,7 +1521,7 @@ int HttpSession::processWebSocketUpgrade(HttpVHost *pVHost,
     {
         LS_DBG(getLogSession(), "[%s] Upgrade to WebSocket Backend [%s].",
                 pVHost->getName(), pAddr->toString());
-        return switchToWebSocket(pAddr, ssl, NULL, 0);
+        return switchToWebSocket(pAddr, ssl, NULL, 0, retry);
     }
     else
     {

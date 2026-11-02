@@ -25,6 +25,7 @@
 #include <util/datetime.h>
 #include <util/loopbuf.h>
 #include <util/ssnprintf.h>
+#include <lsiapi/moduletimer.h>
 
 #include <fcntl.h>
 
@@ -103,7 +104,8 @@ int Ssl4conn::onInitConnected()
             errno = error;
         LS_DBG_L(getLogSession(), "L4conn::onInitConnected() socket error: (%d) %s",
                  error, strerror(error));
-       return -1;
+        connectFailed(error);
+        return 1;
     }
     LS_DBG_L(getLogSession(), "L4conn::onInitConnected() socket connected.");
     setState(SS_CONNECTED);
@@ -163,6 +165,7 @@ int Ssl4conn::onRead()
 
 int Ssl4conn::close()
 {
+    cancelRetry();
     if (getState() != SS_DISCONNECTED)
     {
         setState(SS_DISCONNECTED);
@@ -176,6 +179,8 @@ int Ssl4conn::close()
 
 
 Ssl4conn::Ssl4conn(L4Handler  *pL4Handler)
+    : m_iRetryTimer(-1)
+    , m_tmRetryUntil(0)
 {
     m_pL4Handler = pL4Handler;
     m_buf = new LoopBuf(MAX_OUTGOING_BUF_ZISE);
@@ -185,8 +190,51 @@ Ssl4conn::Ssl4conn(L4Handler  *pL4Handler)
 
 Ssl4conn::~Ssl4conn()
 {
+    cancelRetry();
     if (getState() != SS_DISCONNECTED)
         close();
+}
+
+
+void Ssl4conn::setConnectRetry(int secs)
+{
+    m_tmRetryUntil = secs > 0 ? DateTime::s_curTime + secs : 0;
+}
+
+
+void Ssl4conn::cancelRetry()
+{
+    if (m_iRetryTimer != -1)
+    {
+        ModTimerList::getInstance().removeTimer(m_iRetryTimer);
+        m_iRetryTimer = -1;
+    }
+}
+
+
+void Ssl4conn::connectFailed(int error)
+{
+    EdStream::close();
+    setState(SS_CONNECTING);
+    bool retry = (error == ECONNREFUSED && m_tmRetryUntil > 0
+                  && DateTime::s_curTime < m_tmRetryUntil);
+    LS_DBG_L(getLogSession(), "[L4conn] connect failed (%d), %s", error,
+             retry ? "retry" : "close");
+    if (!retry)
+        m_tmRetryUntil = -1;
+    m_iRetryTimer = ModTimerList::getInstance().addTimer(retry ? 250 : 0, 0,
+                                                         retryCb, this);
+}
+
+
+void Ssl4conn::retryCb(const void *pParam)
+{
+    Ssl4conn *pConn = (Ssl4conn *)pParam;
+    pConn->m_iRetryTimer = -1;
+    if (pConn->m_tmRetryUntil == -1)
+        pConn->m_pL4Handler->closeBothConnection();
+    else
+        pConn->connectEx(&pConn->m_adns.getResolvedAddr());
 }
 
 
@@ -309,7 +357,8 @@ int Ssl4conn::connectEx(const GSockAddr *pGSockAddr)
             setState(SS_CONNECTING);
         return 0;
     }
-    return -1;
+    connectFailed(errno);
+    return 0;
 }
 
 

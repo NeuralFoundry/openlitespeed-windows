@@ -846,6 +846,7 @@ void HttpContext::inherit(const HttpContext *pRootContext)
         {
             m_pInternal->m_pAddrWebSock = m_pParent->m_pInternal->m_pAddrWebSock;
             m_pInternal->m_pWebSockAddrStr = m_pParent->m_pInternal->m_pWebSockAddrStr;
+            m_pInternal->m_pWebSockWorker = m_pParent->m_pInternal->m_pWebSockWorker;
             setFeaturesBit(BIT_F_WSS, m_pParent->m_iFeatures & BIT_F_WSS);
         }
     }

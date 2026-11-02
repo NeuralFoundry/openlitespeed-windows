@@ -764,7 +764,11 @@ void LocalWorker::configRlimit(RLimits *pRLimits, const XmlNode *pNode)
 
 void LocalWorker::setRestartMarker(const char* path, int reset_me_path_pos)
 {
+#ifdef _WIN32
+    if (path && (*path == '/' || (isalpha((unsigned char)path[0]) && path[1] == ':')))
+#else
     if (path && *path == '/')
+#endif
     {
         if (m_pRestartMarker)
         {

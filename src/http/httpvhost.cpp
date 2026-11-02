@@ -2201,8 +2201,11 @@ static int winRunner(char *pCmd, int len, const char *pBin, const char *pExe,
             return LS_FAIL;
         pBin = achBin;
     }
-    snprintf(achPath, sizeof(achPath), "%s%s",
-             MainServerConfig::getInstance().getServerRoot(), pScript);
+    if (pScript[0] == '/' || (pScript[0] && pScript[1] == ':'))
+        lstrncpy(achPath, pScript, sizeof(achPath));
+    else
+        snprintf(achPath, sizeof(achPath), "%s%s",
+                 MainServerConfig::getInstance().getServerRoot(), pScript);
     if (ols_native_path(achPath, (int)strlen(achPath), achScript, sizeof(achScript)) <= 0)
         lstrncpy(achScript, achPath, sizeof(achScript));
     snprintf(pCmd, len, strchr(pBin, ' ') ? "\"%s\" \"%s\"" : "%s \"%s\"", pBin, achScript);
@@ -2290,6 +2293,19 @@ LocalWorker *HttpVHost::addNodejsApp(const char *pAppName,
     if (!pBinPath || *pBinPath == 0x00)
         pBinPath = AppConfig::s_nodeAppConfig.s_binPath.c_str();
 
+#ifdef _WIN32
+    char achLocal[MAX_PATH_LEN];
+    snprintf(achLocal, sizeof(achLocal), "%snode_modules/openlitespeed-node/lsnode.js",
+             achFileName);
+    if (access(achLocal, F_OK) == 0
+        && winRunner(achRunnerCmd, sizeof(achRunnerCmd), pBinPath, "node.exe",
+                     achLocal) == 0)
+    {
+        LS_INFO("[%s] Node.js app uses its own runner %s", TmpLogId::getLogId(), achLocal);
+        pNodejsStarter = achRunnerCmd;
+    }
+    else
+#endif
     if (pBinPath
         && configNodeJsStarter(achRunnerCmd, sizeof(achRunnerCmd),
                                pBinPath, is_esm) != -1)
@@ -2446,6 +2462,7 @@ HttpContext *HttpVHost::addNodejsContext(const char *pURI,
 
     //pContext->setHandler(pWorker);
     pContext->setWebSockAddr(NULL, &pWorker->getConfigPointer()->getServerAddr(), false);
+    pContext->setWebSockWorker(pWorker);
 
     HttpContext *pDispatch;
     char appURL[MAX_URI_LEN];

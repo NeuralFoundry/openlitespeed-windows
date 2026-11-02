@@ -14,7 +14,7 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - Finds installed PHP versions, Laragon and XAMPP and configures itself for them
 - Imports Apache sites from `httpd.conf`: virtual hosts, SSL certificates, redirects, aliases, proxies, CGI, access rules and password protection, including the rules in `.htaccess` files
 - CGI programs: `.exe`, `.bat` and `.cmd` files and scripts with a `#!` line such as Perl or Python, each in its own job object with a restricted token
-- Node.js and Python (WSGI) applications, started and restarted by the server, see [docs/APPS.md](docs/APPS.md)
+- Node.js and Python (WSGI) applications, started and restarted by the server. Node.js apps run unchanged through [openlitespeed-node](https://github.com/NeuralFoundry/openlitespeed-node), WebSockets included, see [docs/APPS.md](docs/APPS.md)
 - Local development sites: every folder in the projects folder becomes `http://folder.test/`
 - HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache and the WebAdmin console
 - Free HTTPS certificates from Let's Encrypt, requested and renewed automatically by a built-in ACME client, see [docs/ACME.md](docs/ACME.md)

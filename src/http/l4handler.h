@@ -44,6 +44,7 @@ public:
     void        suspendWrite()      {   getStream()->suspendWrite();    }
     void        continueWrite()     {   getStream()->continueWrite();   }
     bool        isWantRead() const  {   return getStream()->isWantRead();   }
+    void        setConnectRetry(int secs)   {   m_pL4conn->setConnectRetry(secs);  }
 
     int         onReadEx();
     int         doWrite();

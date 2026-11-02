@@ -58,10 +58,18 @@ public:
 
     LoopBuf  *getBuf()             {   return m_buf;  }
 
+    void setConnectRetry(int secs);
+
 private:
     AdnsFetch       m_adns;
     L4Handler      *m_pL4Handler;
     LoopBuf        *m_buf;
+    int             m_iRetryTimer;
+    long            m_tmRetryUntil;
+
+    void connectFailed(int error);
+    void cancelRetry();
+    static void retryCb(const void *pParam);
 
     enum
     {
