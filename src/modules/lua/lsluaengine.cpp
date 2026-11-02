@@ -265,6 +265,8 @@ LsLuaSession *LsLuaEngine::prepState(const lsi_session_t *session,
     if ((ret = LsLuaFuncMap::loadLuaScript(session, getSystemState(),
                                            scriptpath)) != 0)
     {
+        if (ret == -1)
+            g_api->set_status_code(session, 404);
         g_api->end_resp(session);
         return NULL;
     }
@@ -831,7 +833,7 @@ LsLuaFuncMap::LsLuaFuncMap(const lsi_session_t *session, lua_State *L,
     m_iStatus = 0;
 
     top = LsLuaApi::gettop(L);
-    if ((loadData.fp = fopen(m_pScriptName, "r")) == NULL)
+    if ((loadData.fp = fopen(m_pScriptName, "rb")) == NULL)
     {
         m_iStatus = -1;
         memset(&m_stat, 0, sizeof(m_stat));

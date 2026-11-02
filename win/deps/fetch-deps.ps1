@@ -12,6 +12,7 @@ $pins = @(
     @{ Dir = 'udns';      Url = 'https://github.com/ortclib/udns.git';              Commit = 'e0148dfba90ce0d17a8e2cae15f218b5ab99ad62' },
     @{ Dir = 'libmaxminddb'; Url = 'https://github.com/maxmind/libmaxminddb.git';   Commit = '4a3d17a621c0ebcb81498fd34d313f67fd940ab5' },
     @{ Dir = 'ip2location';  Url = 'https://github.com/chrislim2888/IP2Location-C-Library.git'; Commit = 'e0ecd2216fb8d373fa1b3a687051100379c9f600' },
+    @{ Dir = 'luajit';       Url = 'https://github.com/LuaJIT/LuaJIT.git';          Commit = 'ea9eb7edb5eac4a9d175d74523db34fac0fa5180' },
     @{ Dir = 'zlib';      Url = 'https://github.com/madler/zlib.git';               Commit = 'da607da739fa6047df13e66a2af6b8bec7c2a498' }
 )
 

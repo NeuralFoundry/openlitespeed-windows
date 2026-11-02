@@ -481,13 +481,20 @@ int LsLuaSession::setupLuaEnv(lua_State *L, LsLuaUserParam *pUser)
     if (pUser->getMaxLineCount() > 0)
     {
         int ret;
+        static int s_jitOff = 0;
+        if (!s_jitOff)
+        {
+            s_jitOff = 1;
+            luaJIT_setmode(L, 0, LUAJIT_MODE_ENGINE | LUAJIT_MODE_FLUSH);
+            luaJIT_setmode(L, 0, LUAJIT_MODE_ENGINE | LUAJIT_MODE_OFF);
+        }
         //
         // NOTE - the behavior is different between 5.2 and JIT 2
         //          The JIT doesn't use MASKLINE too well!
 
         //  Hack - jit mode will divid the counter by 1000000
         //
-        int linecount = pUser->getMaxLineCount() / LsLuaEngine::getJitLineMod();
+        int linecount = pUser->getMaxLineCount();
 
         ret = LsLuaApi::sethook(getLuaState(),
                                 LsLuaSession::luaLineHookCb,

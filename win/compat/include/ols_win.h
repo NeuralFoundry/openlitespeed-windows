@@ -943,6 +943,10 @@ char *strndup(const char *s, size_t n);
 char *strsep(char **sp, const char *delim);
 char *stpcpy(char *dst, const char *src);
 char *stpncpy(char *dst, const char *src, size_t n);
+static __forceinline int strerror_r(int err, char *buf, size_t n)
+{
+    return strerror_s(buf, n, err);
+}
 size_t strlcpy(char *dst, const char *src, size_t size);
 size_t strlcat(char *dst, const char *src, size_t size);
 char *strchrnul(const char *s, int c);

@@ -16,6 +16,18 @@ call :dep udns "-DUDNS_SRC=%D:\=/%/udns" "%~dp0udns" || exit /b 1
 call :dep libmaxminddb "-DBUILD_TESTING=OFF -DMAXMINDDB_BUILD_BINARIES=OFF -DMSVC_STATIC_RUNTIME=ON" || exit /b 1
 call :dep ip2location "-DIP2LOC_SRC=%D:\=/%/ip2location" "%~dp0ip2location" || exit /b 1
 
+if exist "%P%\lib\luajit.lib" goto luajit_done
+echo [luajit]
+pushd "%D%\luajit\src"
+set NoDefaultCurrentDirectoryInExePath=
+call .\msvcbuild.bat static >"%D%\build\luajit.log" 2>&1
+popd
+if not exist "%D%\luajit\src\lua51.lib" goto fail
+if not exist "%P%\include\luajit-2.1" mkdir "%P%\include\luajit-2.1"
+copy /y "%D%\luajit\src\lua51.lib" "%P%\lib\luajit.lib" >nul
+for %%f in (lua.h luaconf.h lualib.h lauxlib.h luajit.h lua.hpp) do copy /y "%D%\luajit\src\%%f" "%P%\include\luajit-2.1\" >nul
+:luajit_done
+
 echo [boringssl]
 cmake -S %D%\boringssl -B %D%\build\boringssl %C% -DOPENSSL_NO_ASM=1 -DBUILD_TESTING=OFF >%D%\build\boringssl.log 2>&1 || goto fail
 ninja -C %D%\build\boringssl -j%JOBS% ssl crypto decrepit >>%D%\build\boringssl.log 2>&1 || goto fail

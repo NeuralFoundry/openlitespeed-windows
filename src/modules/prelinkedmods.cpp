@@ -26,6 +26,7 @@ extern lsi_module_t cache;
 extern "C" lsi_module_t mod_acme;
 extern lsi_module_t uploadprogress;
 extern lsi_module_t modreqparser;
+extern lsi_module_t mod_lua;
 #endif
 
 extern int addModgzipFilter(lsi_session_t *session, int isSend,
@@ -49,7 +50,8 @@ Prelinked_Module g_optional[] =
 {
     { "mod_acme",       &mod_acme       },
     { "uploadprogress", &uploadprogress },
-    { "modreqparser",   &modreqparser   }
+    { "modreqparser",   &modreqparser   },
+    { "mod_lua",        &mod_lua        }
 };
 
 lsi_module_t *getOptionalPrelinkedModule(const char *pName)

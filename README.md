@@ -17,7 +17,7 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - Local development sites: every folder in the projects folder becomes `http://folder.test/`
 - HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache and the WebAdmin console
 - Free HTTPS certificates from Let's Encrypt, requested and renewed automatically by a built-in ACME client, see [docs/ACME.md](docs/ACME.md)
-- Built-in modules: LSCache, upload progress and request body parsing, see [docs/MODULES.md](docs/MODULES.md)
+- Built-in modules: LSCache, upload progress, request body parsing and Lua scripting with LuaJIT, see [docs/MODULES.md](docs/MODULES.md)
 - `.htaccess` files work as in Apache: rewrite rules, access rules (`Require`, `Order`, `Allow`, `Deny`), passwords, `<Files>` sections, `Options Indexes` and `php_flag engine off`, applied within a second when a file changes
 - Bot protection: reCAPTCHA or hCaptcha challenges, request, bandwidth and connection limits per client IP, and the visitor's country from MaxMind GeoIP2 or IP2Location databases for PHP and rewrite rules, see [docs/PROTECTION.md](docs/PROTECTION.md)
 - LiteSpeed Cache for WordPress works out of the box: install and activate the plugin, no server configuration needed. Pages are purged automatically when content changes.
