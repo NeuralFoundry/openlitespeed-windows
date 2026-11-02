@@ -72,9 +72,22 @@ int SUExec::buildArgv(char *pCmd, char **pDir,
     if (!pCmd || !pDir || !pArgv)
         return LS_FAIL;
     *pDir = NULL;
-    char *p = (char *)StringTool::strNextArg(pCmd);
-    if (p)
+    char *p;
+#ifdef _WIN32
+    if (*pCmd == '"' && (p = strchr(pCmd + 1, '"')) != NULL)
+    {
         *p++ = 0;
+        ++pCmd;
+        if (!*p)
+            p = NULL;
+    }
+    else
+#endif
+    {
+        p = (char *)StringTool::strNextArg(pCmd);
+        if (p)
+            *p++ = 0;
+    }
     char *pAppName = strrchr(pCmd, '/');
     if (pAppName)
     {

@@ -1038,6 +1038,7 @@ int ols_pid_is_ours(pid_t pid);
 int ols_dev_sites(const char *www, const char *tld, int with_root);
 int ols_dev_hosts(int clear);
 int ols_set_php(const char *dir);
+int ols_find_runtime(const char *exe, char *out, int outlen);
 int ols_import_apache(int argc, char **argv);
 int ols_import_nginx(int argc, char **argv);
 int ols_lscgid_main(int argc, char **argv);

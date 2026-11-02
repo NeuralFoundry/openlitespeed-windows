@@ -789,3 +789,103 @@ int ols_set_php(const char *dir)
     printf("PHP %d.%d %s via %s: %s\n", major, minor, ts ? "TS" : "NTS", lsapi ? "LSAPI (lsphp)" : "FastCGI (php-cgi)", dir);
     return 0;
 }
+
+static int rt_natcmp(const wchar_t *a, const wchar_t *b)
+{
+    while (*a && *b)
+    {
+        if (iswdigit(*a) && iswdigit(*b))
+        {
+            unsigned long x = wcstoul(a, (wchar_t **)&a, 10), y = wcstoul(b, (wchar_t **)&b, 10);
+            if (x != y)
+                return x < y ? -1 : 1;
+            continue;
+        }
+        if (towlower(*a) != towlower(*b))
+            return towlower(*a) < towlower(*b) ? -1 : 1;
+        ++a;
+        ++b;
+    }
+    return *a ? 1 : *b ? -1 : 0;
+}
+
+static int rt_pick(const wchar_t *pattern, const wchar_t *inner, wchar_t *best)
+{
+    WIN32_FIND_DATAW fd;
+    wchar_t base[MAX_PATH], cand[MAX_PATH], name[MAX_PATH] = L"", *s;
+    HANDLE h;
+    wcscpy(base, pattern);
+    if ((s = wcsrchr(base, L'\\')) == NULL)
+        return 0;
+    *s = 0;
+    h = FindFirstFileW(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE)
+        return 0;
+    do
+    {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.')
+            continue;
+        swprintf(cand, MAX_PATH, L"%s\\%s\\%s", base, fd.cFileName, inner);
+        if (phpd_exists(cand) && (!name[0] || rt_natcmp(fd.cFileName, name) > 0))
+        {
+            wcscpy(name, fd.cFileName);
+            wcscpy(best, cand);
+        }
+    }
+    while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return name[0] != 0;
+}
+
+int ols_find_runtime(const char *exe, char *out, int outlen)
+{
+    wchar_t w[MAX_PATH] = L"", wexe[64], d[MAX_PATH], pat[MAX_PATH], env[MAX_PATH];
+    DWORD n;
+    int node;
+    char *p;
+    if (MultiByteToWideChar(CP_UTF8, 0, exe, -1, wexe, 64) <= 0)
+        return -1;
+    node = _wcsicmp(wexe, L"node.exe") == 0;
+    n = SearchPathW(NULL, wexe, NULL, MAX_PATH, w, NULL);
+    if (n == 0 || n >= MAX_PATH || wcsstr(w, L"\\WindowsApps\\"))
+    {
+        w[0] = 0;
+        if (phpd_find_laragon(d))
+        {
+            swprintf(pat, MAX_PATH, L"%s\\bin\\%s\\*", d, node ? L"nodejs" : L"python");
+            rt_pick(pat, wexe, w);
+        }
+        if (!w[0] && node && GetEnvironmentVariableW(L"ProgramFiles", env, MAX_PATH))
+        {
+            swprintf(pat, MAX_PATH, L"%s\\nodejs\\node.exe", env);
+            if (phpd_exists(pat))
+                wcscpy(w, pat);
+        }
+        if (!w[0] && !node)
+        {
+            if (GetEnvironmentVariableW(L"LOCALAPPDATA", env, MAX_PATH))
+            {
+                swprintf(pat, MAX_PATH, L"%s\\Programs\\Python\\Python3*", env);
+                rt_pick(pat, wexe, w);
+            }
+            if (!w[0] && GetEnvironmentVariableW(L"ProgramFiles", env, MAX_PATH))
+            {
+                swprintf(pat, MAX_PATH, L"%s\\Python3*", env);
+                rt_pick(pat, wexe, w);
+            }
+            if (!w[0] && GetEnvironmentVariableW(L"SystemDrive", env, MAX_PATH))
+            {
+                swprintf(pat, MAX_PATH, L"%s\\Python3*", env);
+                rt_pick(pat, wexe, w);
+            }
+        }
+        if (!w[0])
+            return -1;
+    }
+    if (WideCharToMultiByte(CP_UTF8, 0, w, -1, out, outlen, NULL, NULL) <= 0)
+        return -1;
+    for (p = out; *p; ++p)
+        if (*p == '\\')
+            *p = '/';
+    return 0;
+}

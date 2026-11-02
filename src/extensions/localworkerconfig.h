@@ -34,6 +34,7 @@ class LocalWorkerConfig : public ExtWorkerConfig
     RLimits     m_rlimits;
     int         m_umask;
     int         m_iPhpHandler;
+    int         m_iBindSelf;
 
     void operator=(const LocalWorkerConfig &rhs);
     int isUserBlocked(const char *pUser);
@@ -83,6 +84,8 @@ public:
     int isProcPerConn() const       {   return m_iInstances >= getMaxConns();   }
     int isPhpHandler() { return m_iPhpHandler ; }
     void setPhpHandler(int v)       {   m_iPhpHandler = v;      }
+    int getBindSelf() const         {   return m_iBindSelf;     }
+    void setBindSelf(int v)         {   m_iBindSelf = v;        }
 
     int checkExtAppSelfManagedAndFixEnv(int maxIdleTime);
     void applyStderrLog();

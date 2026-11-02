@@ -448,8 +448,24 @@ int LocalWorker::workerExec(LocalWorkerConfig &config, int fd)
             *(argvw[0] - 1) = '/';
             pExe = pDirW;
         }
-        int pid = ols_spawn(pExe, argvw, config.getEnv()->get(), pCwd, fd, -1, -1,
-                            OLS_SPAWN_FCGI);
+        char *const *pEnv = config.getEnv()->get();
+        char **pEnvW = NULL;
+        char achAddr[300];
+        if (config.getBindSelf())
+        {
+            int n = 0;
+            while (pEnv && pEnv[n])
+                ++n;
+            pEnvW = new char *[n + 2];
+            for (int i = 0; i < n; ++i)
+                pEnvW[i] = pEnv[i];
+            snprintf(achAddr, sizeof(achAddr), "OLS_APP_ADDRESS=%s", config.getURL());
+            pEnvW[n] = achAddr;
+            pEnvW[n + 1] = NULL;
+            pEnv = pEnvW;
+        }
+        int pid = ols_spawn(pExe, argvw, pEnv, pCwd, fd, -1, -1, OLS_SPAWN_FCGI);
+        delete [] pEnvW;
         if (pid == -1)
             LS_ERROR("[LocalWorker::workerExec] Config[%s]: failed to start %s: %s",
                      config.getName(), pExe, strerror(errno));
@@ -648,7 +664,7 @@ int LocalWorker::startWorker()
 //                config.getName(), config.getCommand());
 //        return LS_FAIL;
 //    }
-    if (fd < 0)
+    if (fd < 0 && !config.getBindSelf())
     {
         fd = ExtWorker::startServerSock(&config, config.getBackLog());
         if (fd != -1)

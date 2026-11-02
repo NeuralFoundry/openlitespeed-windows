@@ -1954,6 +1954,13 @@ HttpContext *HttpVHost::configRailsContext(const char *contextUri,
 }
 
 
+#ifdef _WIN32
+static void winAppAddr(const char *pVHost, const char *pApp, char *pBuf, int len);
+static int winRunner(char *pCmd, int len, const char *pBin, const char *pExe,
+                     const char *pScript);
+#endif
+
+
 LocalWorker *HttpVHost::addPythonApp(const char *pAppName, const char *appPath,
                                      const char *pStartupFile, int maxConns,
                                      const char *pPythonEnv,
@@ -1988,15 +1995,32 @@ LocalWorker *HttpVHost::addPythonApp(const char *pAppName, const char *appPath,
     char achName[MAX_PATH_LEN];
     snprintf(achAppName, 1024, "wsgi:%s:%s", getName(), pAppName);
 
+    if (!pBinPath || *pBinPath == 0x00)
+        pBinPath = AppConfig::s_wsgiAppConfig.s_binPath.c_str();
+#ifdef _WIN32
+    char achRunner[MAX_PATH_LEN];
+    if (winRunner(achRunner, sizeof(achRunner), pBinPath, "python.exe",
+                  "fcgi-bin/lswsgi.py") != 0)
+    {
+        LS_ERROR("[%s] Cannot find python.exe, set Python path to python.exe",
+                 TmpLogId::getLogId());
+        return NULL;
+    }
+    pWorker = (LocalWorker *)ExtAppRegistry::getApp(EA_PROXY, achAppName);
+    if (pWorker)
+        return pWorker;
+    pWorker = (LocalWorker *) ExtAppRegistry::addApp(EA_PROXY, achAppName);
+    winAppAddr(getName(), pAppName, achName, sizeof(achName));
+    pWorker->setURL(achName);
+    pBinPath = achRunner;
+    achFileName[pathLen] = 0;
+#else
     pWorker = (LocalWorker *)ExtAppRegistry::getApp(EA_LSAPI, achAppName);
     if (pWorker)
         return pWorker;
     pWorker = (LocalWorker *) ExtAppRegistry::addApp(EA_LSAPI, achAppName);
     buildUdsSocket(achName, LS_UDS_MAX_LEN + 5, getName(), pAppName);
     pWorker->setURL(achName);
-
-    if (!pBinPath || *pBinPath == 0x00)
-        pBinPath = AppConfig::s_wsgiAppConfig.s_binPath.c_str();
 
     achFileName[pathLen] = 0;
     if (pStartupFile)
@@ -2008,6 +2032,7 @@ LocalWorker *HttpVHost::addPythonApp(const char *pAppName, const char *appPath,
                      achFileName, pStartupFile);
         pBinPath = achName;
     }
+#endif
 
     LocalWorkerConfig &config = pWorker->getConfig();
     setDefaultConfig(config, pBinPath, maxConns, maxIdle, pAppDefault);
@@ -2019,7 +2044,16 @@ LocalWorker *HttpVHost::addPythonApp(const char *pAppName, const char *appPath,
     snprintf(achName, MAX_PATH_LEN, "WSGI_ROOT=%s", &achFileName[iChrootlen]);
     config.addEnv(achName);
 
+#ifdef _WIN32
+    snprintf(achName, MAX_PATH_LEN, "LSWSGI_STARTUP=%s",
+             pStartupFile ? pStartupFile : "wsgi.py");
+    config.addEnv(achName);
+    snprintf(achName, MAX_PATH_LEN, "OLS_APP_URI=%s", pAppName);
+    config.addEnv(achName);
+    snprintf(achName, MAX_PATH_LEN, "PYTHONPATH=%s", &achFileName[iChrootlen]);
+#else
     snprintf(achName, MAX_PATH_LEN, "PYTHONPATH=.:%s", &achFileName[iChrootlen]);
+#endif
     config.addEnvIfNotExist(achName, "PYTHONPATH");
 
     snprintf(achName, MAX_PATH_LEN, "LS_STDERR_LOG=%sstderr.log",
@@ -2038,7 +2072,11 @@ LocalWorker *HttpVHost::addPythonApp(const char *pAppName, const char *appPath,
     config.addEnvIfNotExist(achName, "LSAPI_KEEP_LISTEN");
 
     config.setSelfManaged(1);
+#ifdef _WIN32
+    config.setBindSelf(1);
+#else
     config.setDetached(1);
+#endif
     if (config.isDetached())
     {
         if (maxIdle < DETACH_MODE_MIN_MAX_IDLE)
@@ -2057,6 +2095,9 @@ LocalWorker *HttpVHost::addPythonApp(const char *pAppName, const char *appPath,
     config.addEnv(NULL);
     config.setUGid(getUid(), getGid());
     config.setRunOnStartUp(runOnStart);
+#ifdef _WIN32
+    config.setDetached(0);
+#endif
 
     snprintf(achName, MAX_PATH_LEN, "%stmp/restart.txt", achFileName);
     pWorker->setRestartMarker(achName, 0);
@@ -2116,22 +2157,72 @@ HttpContext *HttpVHost::addPythonContext(const char *pURI,
     pDispatch = addContext(0, achURI, HandlerType::HT_NULL, //NULL TYPE is static
                            appURL, NULL, 1);
     pDispatch->setHandler(pWorker);
+#ifdef _WIN32
+    pDispatch->setNodejsContext();
+#else
     pDispatch->setPythonContext();
+#endif
     pDispatch->setParent(pContext);
 
     pContext->setAutoIndex(0);
     pContext->setAutoIndexOff(1);
     pContext->setCustomErrUrls("404", achURI);
 
+#ifdef _WIN32
+    pContext->setNodejsContext();
+#else
     pContext->setPythonContext();
+#endif
     return pContext;
 }
 
 
 
+#ifdef _WIN32
+static void winAppAddr(const char *pVHost, const char *pApp, char *pBuf, int len)
+{
+    unsigned int h = 2166136261u;
+    for (const char *p = pVHost; *p; ++p)
+        h = (h ^ (unsigned char)*p) * 16777619u;
+    h = (h ^ ':') * 16777619u;
+    for (const char *p = pApp; *p; ++p)
+        h = (h ^ (unsigned char)*p) * 16777619u;
+    snprintf(pBuf, len, "127.0.0.1:%u", 30000 + (h % 500) * 64);
+}
+
+
+static int winRunner(char *pCmd, int len, const char *pBin, const char *pExe,
+                     const char *pScript)
+{
+    char achBin[MAX_PATH_LEN], achScript[MAX_PATH_LEN], achPath[MAX_PATH_LEN];
+    if (!pBin || !*pBin)
+    {
+        if (ols_find_runtime(pExe, achBin, sizeof(achBin)) != 0)
+            return LS_FAIL;
+        pBin = achBin;
+    }
+    snprintf(achPath, sizeof(achPath), "%s%s",
+             MainServerConfig::getInstance().getServerRoot(), pScript);
+    if (ols_native_path(achPath, (int)strlen(achPath), achScript, sizeof(achScript)) <= 0)
+        lstrncpy(achScript, achPath, sizeof(achScript));
+    snprintf(pCmd, len, strchr(pBin, ' ') ? "\"%s\" \"%s\"" : "%s \"%s\"", pBin, achScript);
+    return 0;
+}
+#endif
+
+
 int HttpVHost::configNodeJsStarter(char *pRunnerCmd, int cmdLen,
                                    const char *pBinPath, int is_esm)
 {
+#ifdef _WIN32
+    if (winRunner(pRunnerCmd, cmdLen, pBinPath, "node.exe", "fcgi-bin/lsnode.js") != 0)
+    {
+        LS_NOTICE("[%s] Cannot find node.exe, set Node path to node.exe",
+                  TmpLogId::getLogId());
+        return LS_FAIL;
+    }
+    return 0;
+#endif
     const char *defaultBin[2] = { "/usr/local/bin/node", "/usr/bin/node" };
     if (!pBinPath || !*pBinPath)
     {
@@ -2232,6 +2323,9 @@ LocalWorker *HttpVHost::addNodejsApp(const char *pAppName,
     //    snprintf( achName, MAX_PATH_LEN, "uds://%s/RailsRunner.sock",
     //            &achFileName[m_sChroot.len()] );
     //}
+#ifdef _WIN32
+    winAppAddr(getName(), pAppName, achName, sizeof(achName));
+#endif
     pWorker->setURL(achName);
 
 
@@ -2253,9 +2347,11 @@ LocalWorker *HttpVHost::addNodejsApp(const char *pAppName,
         config.addEnv(achName);
     }
 
+#ifndef _WIN32
     snprintf(achName, MAX_PATH_LEN, "LSNODE_SOCKET=%s",
              config.getServerAddr().getUnix());
     config.addEnv(achName);
+#endif
 
     if (pRunModeEnv)
     {
@@ -2264,10 +2360,14 @@ LocalWorker *HttpVHost::addNodejsApp(const char *pAppName,
     }
 
     config.setSelfManaged(1);
+#ifdef _WIN32
+    config.setBindSelf(1);
+#else
     config.setDetached(1);
     if (maxIdle < DETACH_MODE_MIN_MAX_IDLE)
         maxIdle = DETACH_MODE_MIN_MAX_IDLE;
     setDetachedAppEnv(config.getEnv(), maxIdle);
+#endif
 
     achFileName[pathLen] = 0;
     snprintf(achName, MAX_PATH_LEN, "LS_STDERR_LOG=%s/log/stderr.log",
@@ -2278,6 +2378,9 @@ LocalWorker *HttpVHost::addNodejsApp(const char *pAppName,
     config.addEnv(NULL);
     config.setUGid(getUid(), getGid());
     config.setRunOnStartUp(runOnStart);
+#ifdef _WIN32
+    config.setDetached(0);
+#endif
 
     snprintf(achName, MAX_PATH_LEN, "%stmp/restart.txt", achFileName);
     pWorker->setRestartMarker(achName, 0);

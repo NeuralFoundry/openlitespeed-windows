@@ -46,6 +46,7 @@ LocalWorkerConfig::LocalWorkerConfig(const char *pName)
     , m_iRunOnStartUp(0)
     , m_umask(ServerProcessConfig::getInstance().getUMask())
     , m_iPhpHandler(0)
+    , m_iBindSelf(0)
 {
 }
 
@@ -58,6 +59,7 @@ LocalWorkerConfig::LocalWorkerConfig()
     , m_iRunOnStartUp(0)
     , m_umask(ServerProcessConfig::getInstance().getUMask())
     , m_iPhpHandler(0)
+    , m_iBindSelf(0)
 {
 }
 
@@ -76,6 +78,7 @@ LocalWorkerConfig::LocalWorkerConfig(const LocalWorkerConfig &rhs)
     m_iRunOnStartUp = rhs.m_iRunOnStartUp;
     m_umask = ServerProcessConfig::getInstance().getUMask();
     m_iPhpHandler = 0;
+    m_iBindSelf = rhs.m_iBindSelf;
 }
 
 

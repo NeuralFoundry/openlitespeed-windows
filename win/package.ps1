@@ -46,6 +46,7 @@ $rec = [IO.File]::ReadAllText((Join-Path $Msc 'modsecurity.conf-recommended')).R
 [IO.File]::WriteAllText((Join-Path $Out 'conf\modsec\modsecurity.conf'), $rec)
 [IO.File]::WriteAllText((Join-Path $Out 'conf\modsec\main.conf'),
     "Include modsecurity.conf`nInclude crs-setup.conf`nInclude ../../modsec/crs/rules/*.conf`n")
+Copy-Item -Recurse (Join-Path $Pkg 'fcgi-bin') (Join-Path $Out 'fcgi-bin')
 Copy-Item (Join-Path $Pkg 'install.ps1') $Out
 Copy-Item (Join-Path $Top 'LICENSE') (Join-Path $Out 'LICENSE.txt')
 Copy-Item (Join-Path $Pkg 'THIRD-PARTY-NOTICES.txt') $Out
