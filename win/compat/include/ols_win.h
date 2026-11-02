@@ -1039,6 +1039,7 @@ int ols_dev_sites(const char *www, const char *tld, int with_root);
 int ols_dev_hosts(int clear);
 int ols_set_php(const char *dir);
 int ols_import_apache(int argc, char **argv);
+int ols_import_nginx(int argc, char **argv);
 int ols_lscgid_main(int argc, char **argv);
 typedef void (*ols_acme_log_fn)(int error, const char *msg);
 int ols_acme_main(int argc, char **argv);

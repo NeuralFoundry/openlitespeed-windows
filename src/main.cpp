@@ -87,6 +87,8 @@ int main(int argc, char *argv[])
         return ols_lscgid_main(argc, argv);
     if (argc >= 2 && strcmp(argv[1], "--import-apache") == 0)
         return ols_import_apache(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--import-nginx") == 0)
+        return ols_import_nginx(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--acme-install") == 0)
         return ols_acme_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--modsec-install") == 0)

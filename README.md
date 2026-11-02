@@ -120,6 +120,17 @@ bin\openlitespeed.exe -s reload
 
 Without a path, the Apache configuration of Laragon, XAMPP, WampServer or `C:\Apache24` is found automatically. `--dry-run` prints the report without changing anything. Importing again replaces the earlier import, and `--import-apache --remove` takes it out. Rules that cannot be converted are listed in the report. Access rules are converted exactly or made stricter, never more permissive; the only exception, rules that block particular clients by host name or environment variable, is reported as a warning. Details are in [docs/APACHE.md](docs/APACHE.md).
 
+## Moving from nginx
+
+`--import-nginx` does the same for nginx: every `server` block becomes a site with its domains, listeners, SSL certificate, locations, `try_files`, rewrites, redirects, aliases, proxies, access rules and password protection, and PHP behind `fastcgi_pass` runs through the PHP of OpenLiteSpeed.
+
+```bat
+bin\openlitespeed.exe --import-nginx --dry-run
+bin\openlitespeed.exe --import-nginx C:\nginx\conf\nginx.conf
+```
+
+Details are in [docs/NGINX.md](docs/NGINX.md).
+
 ## Multiple CPU cores
 
 OpenLiteSpeed starts one HTTP worker per CPU core, up to 8 by default. Set **Number of Workers** under **Server Configuration > General** in WebAdmin, or `httpdWorkers` in `conf\httpd_config.conf`, to any value from 1 to 32. Each worker has its own PHP pool. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how workers share the listening sockets on Windows.
@@ -135,6 +146,7 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed --install-service` / `--uninstall-service` | Register or remove the Windows service |
 | `openlitespeed --set-php <folder>` | Use another PHP version |
 | `openlitespeed --import-apache [httpd.conf] [--dry-run]` / `--import-apache --remove` | Import the Apache sites / remove the imported sites |
+| `openlitespeed --import-nginx [nginx.conf] [--dry-run]` / `--import-nginx --remove` | Import the nginx sites / remove the imported sites |
 | `openlitespeed --acme-install [--email <address>]` | Turn on automatic Let's Encrypt certificates |
 | `openlitespeed --modsec-install [--detection-only]` / `--modsec-install --remove` | Turn the ModSecurity firewall with the OWASP Core Rule Set on or off |
 | `openlitespeed --dev-sites <folder> [tld]` | Create a site for every subfolder of a folder |

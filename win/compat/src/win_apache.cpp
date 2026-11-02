@@ -13,18 +13,13 @@
 #include "phpdetect.h"
 
 extern "C" int ols_import_apache(int argc, char **argv);
+extern "C" int ols_import_nginx(int argc, char **argv);
 
 namespace
 {
 
 typedef std::string S;
 typedef std::vector<S> SV;
-
-const char IMPORT_BEGIN[] = "# apache-import begin";
-const char IMPORT_END[] = "# apache-import end";
-const char MAPS_BEGIN[] = "# apache-import maps begin";
-const char MAPS_END[] = "# apache-import maps end";
-const char MARK[] = "# Imported from Apache";
 
 S lower(S s)
 {
@@ -1002,6 +997,13 @@ struct Importer
     SV report;
     int realmSeq = 0, procSeq = 0;
     std::set<S> htSeen;
+    S kind = "apache", label = "Apache", listenerBase = "Apache";
+
+    S mark() const { return "# Imported from " + label; }
+    S import_begin() const { return "# " + kind + "-import begin"; }
+    S import_end() const { return "# " + kind + "-import end"; }
+    S maps_begin() const { return "# " + kind + "-import maps begin"; }
+    S maps_end() const { return "# " + kind + "-import maps end"; }
 
     static bool is_known(const S &k)
     {
@@ -1906,7 +1908,7 @@ struct Importer
         auto it = realms.find(key);
         if (it != realms.end())
             return it->second[0];
-        S name = "apache" + std::to_string(++realmSeq);
+        S name = kind + std::to_string(++realmSeq);
         realms[key] = SV{name, c.userFile, c.groupFile};
         S text;
         if (read_file(c.userFile, text))
@@ -3086,7 +3088,7 @@ struct Importer
             add_unique(site.notes, n);
 
         S conf;
-        conf += S(MARK) + ": " + site.file + "\n";
+        conf += mark() + ": " + site.file + "\n";
         conf += kv("docRoot", site.docroot + "/", 0);
         if (!site.admin.empty())
             conf += kv("adminEmails", site.admin, 0);
@@ -3412,7 +3414,7 @@ struct Importer
         return out;
     }
 
-    S state_path() const { return olsRoot + "/conf/apache-import.state"; }
+    S state_path() const { return olsRoot + "/conf/" + kind + "-import.state"; }
 
     void read_state(SV &vhs, SV &lss)
     {
@@ -3440,7 +3442,7 @@ struct Importer
     {
         if (vhs.empty() && lss.empty())
             return DeleteFileW(W(state_path()).c_str()) || GetLastError() == ERROR_FILE_NOT_FOUND;
-        S out = "# Written by openlitespeed --import-apache\n";
+        S out = "# Written by openlitespeed --import-" + kind + "\n";
         for (auto &v : vhs)
             out += "virtualhost " + v + "\n";
         for (auto &l : lss)
@@ -3448,7 +3450,7 @@ struct Importer
         return write_file(state_path(), out);
     }
 
-    static S drop_objects(const S &text, const SV &vhs, const SV &lss)
+    S drop_objects(const S &text, const SV &vhs, const SV &lss)
     {
         SV lines;
         size_t i = 0;
@@ -3482,7 +3484,7 @@ struct Importer
                     drop[k] = true;
                 continue;
             }
-            if (t == IMPORT_BEGIN || t == IMPORT_END || t == MAPS_BEGIN || t == MAPS_END)
+            if (t == import_begin() || t == import_end() || t == maps_begin() || t == maps_end())
             {
                 drop[k] = true;
                 continue;
@@ -3532,7 +3534,7 @@ struct Importer
         for (auto &v : vhs)
         {
             S dir = olsRoot + "/conf/vhosts/" + v, text;
-            if (!read_file(dir + "/vhconf.conf", text) || !starts(text, MARK))
+            if (!read_file(dir + "/vhconf.conf", text) || !starts(text, mark()))
                 continue;
             DeleteFileW(W(dir + "/vhconf.conf").c_str());
             DeleteFileW(W(dir + "/vhconf.conf0").c_str());
@@ -3809,7 +3811,30 @@ struct Importer
             sites[i].members.push_back(keep);
             sites.push_back(split);
         }
+        return emit(sites, skippedTop, text, base, listeners, existingDomains, vhnames, oldVh, adminPort,
+                    [&](Site &s) { build_site(s); }, [&]() { print_header(); });
+    }
 
+    void print_header()
+    {
+        printf("Apache configuration: %s (%d file%s)\n", apacheConf.c_str(), (int)parser.files.size(),
+               parser.files.size() == 1 ? "" : "s");
+        for (auto &m : parser.missing)
+            printf("  missing: %s\n", m.c_str());
+        if (!apachePhpDir.empty())
+        {
+            printf("Apache PHP: %s (%s)\n", apachePhpDir.c_str(), apachePhpHow.c_str());
+            if (!olsPhpDir.empty() && !ieq(norm(apachePhpDir), norm(olsPhpDir)))
+                printf("  OpenLiteSpeed uses %s. To switch: openlitespeed --set-php \"%s\"\n", olsPhpDir.c_str(),
+                       apachePhpDir.c_str());
+        }
+    }
+
+    int emit(std::vector<Site> &sites, SV &skippedTop, const S &text, const S &base,
+             std::vector<Listener> &listeners, std::set<S> &existingDomains, std::set<S> &vhnames,
+             const SV &oldVh, int adminPort, const std::function<void(Site &)> &build,
+             const std::function<void()> &header)
+    {
         std::map<S, S> used;
         std::vector<Listener> created;
         for (auto &s : sites)
@@ -3827,7 +3852,7 @@ struct Importer
                 return vhnames.count(lower(n)) || (is_dir(olsRoot + "/conf/vhosts/" + n) && !has(oldVh, n));
             };
             if (taken(vh))
-                vh = "apache-" + vh;
+                vh = kind + "-" + vh;
             S candidate = vh;
             for (int i = 2; taken(candidate); ++i)
                 candidate = vh + "-" + std::to_string(i);
@@ -3869,7 +3894,7 @@ struct Importer
                 for (const char *sc : {"http", "https"})
                     if ((scheme == "*" || scheme == sc) && used.count(S(sc) + ":" + d))
                     {
-                        s.notes.push_back(d + " is already used by " + used[S(sc) + ":" + d] + ", Apache uses the first");
+                        s.notes.push_back(d + " is already used by " + used[S(sc) + ":" + d] + ", " + label + " uses the first");
                         clash = true;
                         break;
                     }
@@ -3881,7 +3906,7 @@ struct Importer
                 s.skipWhy = "all domains are already served by OpenLiteSpeed";
                 continue;
             }
-            build_site(s);
+            build(s);
             if (!s.skipWhy.empty())
                 continue;
             for (auto &d : s.domains)
@@ -3931,7 +3956,7 @@ struct Importer
                 if (l.port == b.port && l.secure == secure && l.host == b.host)
                     return &l;
             Listener l;
-            S base = S(secure ? "ApacheSSL" : "Apache") + std::to_string(b.port);
+            S base = listenerBase + (secure ? "SSL" : "") + std::to_string(b.port);
             if (b.host != "*")
             {
                 S h = b.host;
@@ -3972,17 +3997,7 @@ struct Importer
             if (ieq(l.name, "Default"))
                 defaultPort = l.port;
 
-        printf("Apache configuration: %s (%d file%s)\n", apacheConf.c_str(), (int)parser.files.size(),
-               parser.files.size() == 1 ? "" : "s");
-        for (auto &m : parser.missing)
-            printf("  missing: %s\n", m.c_str());
-        if (!apachePhpDir.empty())
-        {
-            printf("Apache PHP: %s (%s)\n", apachePhpDir.c_str(), apachePhpHow.c_str());
-            if (!olsPhpDir.empty() && !ieq(norm(apachePhpDir), norm(olsPhpDir)))
-                printf("  OpenLiteSpeed uses %s. To switch: openlitespeed --set-php \"%s\"\n", olsPhpDir.c_str(),
-                       apachePhpDir.c_str());
-        }
+        header();
         printf("\n");
         int count = 0;
         for (auto &s : sites)
@@ -4101,7 +4116,7 @@ struct Importer
             if (!s.chain.empty() && s.chain.find("-----BEGIN") != S::npos)
                 write_file(dir + "/cert-chain.pem", s.chain);
         }
-        S block = S(IMPORT_BEGIN) + "\n";
+        S block = import_begin() + "\n";
         for (auto &s : sites)
         {
             if (!s.imported)
@@ -4124,7 +4139,7 @@ struct Importer
         }
         while (ends(block, "\n\n"))
             block.pop_back();
-        block += S(IMPORT_END) + "\n";
+        block += import_end() + "\n";
         for (auto &l : listeners)
         {
             if (l.maps.empty())
@@ -4157,10 +4172,10 @@ struct Importer
                 continue;
             size_t ls = out.rfind('\n', close);
             ls = ls == S::npos ? 0 : ls + 1;
-            S ins = "    " + S(MAPS_BEGIN) + "\n";
+            S ins = "    " + maps_begin() + "\n";
             for (auto &m : l.maps)
                 ins += kv("map", m, 4);
-            ins += "    " + S(MAPS_END) + "\n";
+            ins += "    " + maps_end() + "\n";
             out.insert(ls, fix_nl(ins));
         }
         if (!out.empty() && !ends(out, "\n"))
@@ -4186,6 +4201,1415 @@ struct Importer
     }
 };
 
+struct NgxParser
+{
+    S confDir;
+    SV files, missing;
+
+    static bool space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+
+    static void unescape(char e, S &tok)
+    {
+        if (e == '"' || e == '\'' || e == '\\')
+            tok += e;
+        else if (e == 't')
+            tok += '\t';
+        else if (e == 'n')
+            tok += '\n';
+        else if (e == 'r')
+            tok += '\r';
+        else
+        {
+            tok += '\\';
+            tok += e;
+        }
+    }
+
+    void parse(const S &path, Node *parent, int depth)
+    {
+        S text;
+        if (depth > 16 || !read_file(path, text))
+        {
+            missing.push_back(path);
+            return;
+        }
+        files.push_back(path);
+        std::vector<Node *> stack{parent};
+        SV toks;
+        int line = 1, tokLine = 1;
+        size_t i = 0, n = text.size();
+        while (i < n)
+        {
+            char c = text[i];
+            if (c == '\n')
+            {
+                ++line;
+                ++i;
+                continue;
+            }
+            if (space(c))
+            {
+                ++i;
+                continue;
+            }
+            if (c == '#')
+            {
+                while (i < n && text[i] != '\n')
+                    ++i;
+                continue;
+            }
+            if (c == ';' || c == '{' || c == '}')
+            {
+                ++i;
+                if (c == '}')
+                {
+                    toks.clear();
+                    if (stack.size() > 1)
+                        stack.pop_back();
+                    continue;
+                }
+                if (toks.empty())
+                    continue;
+                Node *cur = stack.back();
+                SV args(toks.begin() + 1, toks.end());
+                if (c == ';' && lower(toks[0]) == "include" && !args.empty())
+                {
+                    S pat = resolve(confDir, args[0]);
+                    SV got;
+                    if (has_wild(pat))
+                        glob(pat, got);
+                    else
+                        got.push_back(pat);
+                    std::sort(got.begin(), got.end());
+                    for (auto &f : got)
+                        parse(f, cur, depth + 1);
+                }
+                else
+                {
+                    Node *k = cur->add(toks[0], args, join(toks, " "), path, tokLine, c == '{');
+                    if (c == '{')
+                        stack.push_back(k);
+                }
+                toks.clear();
+                continue;
+            }
+            if (toks.empty())
+                tokLine = line;
+            S tok;
+            if (c == '"' || c == '\'')
+            {
+                char q = c;
+                ++i;
+                while (i < n && text[i] != q)
+                {
+                    if (text[i] == '\\' && i + 1 < n)
+                    {
+                        unescape(text[i + 1], tok);
+                        i += 2;
+                        continue;
+                    }
+                    if (text[i] == '\n')
+                        ++line;
+                    tok += text[i++];
+                }
+                ++i;
+            }
+            else
+            {
+                while (i < n && !space(text[i]) && text[i] != ';' && text[i] != '}')
+                {
+                    if (text[i] == '{')
+                    {
+                        if (tok.empty() || tok.back() != '$')
+                            break;
+                        while (i < n && text[i] != '}')
+                            tok += text[i++];
+                        if (i < n)
+                            tok += text[i++];
+                        continue;
+                    }
+                    if (text[i] == '\\' && i + 1 < n)
+                    {
+                        unescape(text[i + 1], tok);
+                        i += 2;
+                        continue;
+                    }
+                    tok += text[i++];
+                }
+            }
+            toks.push_back(tok);
+        }
+    }
+};
+
+struct NginxImporter : Importer
+{
+    S nginxConf, prefix, confDir;
+    NgxParser np;
+    std::map<S, S> upstreams;
+
+    NginxImporter()
+    {
+        kind = "nginx";
+        label = "nginx";
+        listenerBase = "Nginx";
+    }
+
+    static bool ngx_known(const S &k)
+    {
+        static const char *known[] = {
+            "listen", "server_name", "root", "alias", "index", "autoindex", "location", "allow", "deny",
+            "auth_basic", "auth_basic_user_file", "return", "rewrite", "try_files", "error_page", "add_header",
+            "proxy_pass", "fastcgi_pass", "fastcgi_param", "fastcgi_index", "fastcgi_split_path_info",
+            "fastcgi_read_timeout", "fastcgi_buffers", "fastcgi_buffer_size", "fastcgi_intercept_errors",
+            "fastcgi_hide_header", "fastcgi_keep_conn", "include", "ssl", "ssl_certificate", "ssl_certificate_key",
+            "ssl_protocols", "ssl_ciphers", "ssl_prefer_server_ciphers", "ssl_session_cache", "ssl_session_timeout",
+            "ssl_session_tickets", "ssl_dhparam", "ssl_stapling", "ssl_stapling_verify", "ssl_trusted_certificate",
+            "ssl_ecdh_curve", "http2", "http3", "access_log", "error_log", "log_not_found", "charset",
+            "client_max_body_size", "client_body_timeout", "client_header_timeout", "keepalive_timeout",
+            "send_timeout", "sendfile", "tcp_nopush", "tcp_nodelay", "gzip", "gzip_types", "gzip_vary",
+            "gzip_comp_level", "gzip_proxied", "gzip_min_length", "gzip_disable", "gzip_static", "expires", "etag",
+            "server_tokens", "if", "proxy_set_header", "proxy_http_version", "proxy_read_timeout",
+            "proxy_connect_timeout", "proxy_send_timeout", "proxy_buffering", "proxy_redirect", "proxy_cache_bypass",
+            "proxy_buffers", "proxy_buffer_size", "proxy_hide_header", "open_file_cache", "open_file_cache_valid",
+            "open_file_cache_errors", "open_file_cache_min_uses", "default_type", "types", "limit_rate",
+            "internal", "set_real_ip_from", "real_ip_header",
+        };
+        for (const char *x : known)
+            if (k == x)
+                return true;
+        return false;
+    }
+
+    S find_nginx(SV &found)
+    {
+        wchar_t d[MAX_PATH];
+        auto try_add = [&](const S &p) {
+            S n = norm(p);
+            if (!is_file(n))
+                return;
+            for (auto &f : found)
+                if (ieq(f, n))
+                    return;
+            found.push_back(n);
+        };
+        if (phpd_find_laragon(d))
+        {
+            S lr = norm(U(d)), ini, ver;
+            if (read_file(lr + "/usr/laragon.ini", ini))
+            {
+                size_t a = ini.find("[nginx]");
+                if (a != S::npos)
+                {
+                    size_t v = ini.find("Version=", a), nx = ini.find("[", a + 1);
+                    if (v != S::npos && (nx == S::npos || v < nx))
+                        ver = trim(ini.substr(v + 8, ini.find('\n', v) - v - 8));
+                }
+            }
+            if (!ver.empty())
+                try_add(lr + "/bin/nginx/" + ver + "/conf/nginx.conf");
+            else
+            {
+                SV names;
+                list_dir(lr + "/bin/nginx", names, true);
+                for (auto &n : names)
+                    try_add(lr + "/bin/nginx/" + n + "/conf/nginx.conf");
+            }
+        }
+        if (phpd_running_exe_dir(L"nginx.exe", d))
+            try_add(norm(U(d)) + "/conf/nginx.conf");
+        wchar_t drives[128];
+        if (GetLogicalDriveStringsW(128, drives))
+            for (wchar_t *p = drives; *p; p += wcslen(p) + 1)
+            {
+                if (GetDriveTypeW(p) != DRIVE_FIXED)
+                    continue;
+                S r = norm(U(p));
+                SV names;
+                list_dir(r, names, true);
+                for (auto &n : names)
+                    if (istarts(n, "nginx"))
+                        try_add(r + "/" + n + "/conf/nginx.conf");
+                try_add(r + "/WinNMP/conf/nginx.conf");
+            }
+        return found.size() == 1 ? found[0] : S();
+    }
+
+    void member_of(const Node *s, Member &m, SV &notes)
+    {
+        m.n = s;
+        for (auto &k : s->kids)
+        {
+            if (k->key == "listen" && !k->args.empty())
+            {
+                S a = k->args[0];
+                if (istarts(a, "unix:"))
+                    continue;
+                Bind b;
+                if (starts(a, "["))
+                {
+                    size_t e = a.find(']');
+                    if (e == S::npos)
+                        continue;
+                    b.host = a.substr(1, e - 1);
+                    b.port = e + 1 < a.size() && a[e + 1] == ':' ? atoi(a.c_str() + e + 2) : 80;
+                }
+                else if (a.find(':') != S::npos)
+                {
+                    size_t c = a.rfind(':');
+                    b.host = a.substr(0, c);
+                    b.port = atoi(a.c_str() + c + 1);
+                }
+                else if (a.find_first_not_of("0123456789") == S::npos)
+                    b.port = atoi(a.c_str());
+                else
+                {
+                    b.host = a;
+                    b.port = 80;
+                }
+                if (b.host == "*" || b.host == "0.0.0.0" || b.host == "::")
+                    b.host = "*";
+                if (ieq(b.host, "localhost"))
+                    b.host = "127.0.0.1";
+                for (size_t i = 1; i < k->args.size(); ++i)
+                    if (k->args[i] == "ssl")
+                        m.ssl = true;
+                if (b.port > 0 && std::find(m.binds.begin(), m.binds.end(), b) == m.binds.end())
+                    m.binds.push_back(b);
+            }
+            else if (k->key == "server_name")
+                for (auto &a : k->args)
+                {
+                    S d = lower(a);
+                    if (d.empty() || d == "_")
+                        continue;
+                    if (starts(d, "~"))
+                    {
+                        notes.push_back(k->where() + "  server name " + a + " is a regular expression, not converted");
+                        continue;
+                    }
+                    if (starts(d, "."))
+                    {
+                        d = d.substr(1);
+                        add_unique(m.aliases, "*." + d);
+                    }
+                    if (ends(d, ".*"))
+                    {
+                        notes.push_back(k->where() + "  server name " + a + " is not supported");
+                        continue;
+                    }
+                    if (m.name.empty() && d.find('*') == S::npos)
+                        m.name = d;
+                    else if (d != m.name)
+                        add_unique(m.aliases, d);
+                }
+            else if (k->key == "root" && !k->args.empty())
+                m.docroot = real_path(resolve(prefix, k->args[0]));
+            else if (k->key == "ssl_certificate" && !k->args.empty())
+                m.cert = real_file(resolve(confDir, k->args[0]));
+            else if (k->key == "ssl_certificate_key" && !k->args.empty())
+                m.key = real_file(resolve(confDir, k->args[0]));
+            else if (k->key == "ssl" && !k->args.empty() && ieq(k->args[0], "on"))
+                m.ssl = true;
+        }
+        if (m.name.empty() && !m.aliases.empty())
+        {
+            m.name = m.aliases[0];
+            m.aliases.erase(m.aliases.begin());
+        }
+        if (m.binds.empty())
+            m.binds.push_back(Bind{"*", m.ssl ? 443 : 80});
+    }
+
+    bool redirect_only(const Node *s) const
+    {
+        bool redirect = false;
+        for (auto &k : s->kids)
+        {
+            if (k->key == "listen" || k->key == "server_name" || k->key == "access_log" || k->key == "error_log"
+                || k->key == "server_tokens")
+                continue;
+            if (k->key == "return" && k->args.size() >= 2 && (k->args[0] == "301" || k->args[0] == "302"
+                                                              || k->args[0] == "307" || k->args[0] == "308")
+                && istarts(k->args[1], "https://"))
+            {
+                redirect = true;
+                continue;
+            }
+            if (k->key == "rewrite" && k->args.size() >= 2 && istarts(k->args[1], "https://"))
+            {
+                redirect = true;
+                continue;
+            }
+            return false;
+        }
+        return redirect;
+    }
+
+    static S canonical(const Node *s)
+    {
+        S out;
+        for (auto &k : s->kids)
+        {
+            if (k->key == "listen" || istarts(k->key, "ssl") || k->key == "http2" || k->key == "server_name")
+                continue;
+            out += k->raw + (k->block ? "{" + canonical(k.get()) + "}" : ";");
+        }
+        return out;
+    }
+
+    S var_map(S v, const Site &site, bool &ok, SV &notes, const Node *where)
+    {
+        static const char *drop[] = { "$is_args$args", "?$query_string", "?$args", "$is_args$query_string" };
+        for (const char *d : drop)
+        {
+            size_t p;
+            while ((p = v.find(d)) != S::npos)
+                v.erase(p, strlen(d));
+        }
+        S out;
+        for (size_t i = 0; i < v.size();)
+        {
+            if (v[i] != '$')
+            {
+                out += v[i++];
+                continue;
+            }
+            size_t j = i + 1;
+            bool brace = j < v.size() && v[j] == '{';
+            if (brace)
+                ++j;
+            size_t s = j;
+            while (j < v.size() && (isalnum((unsigned char)v[j]) || v[j] == '_'))
+                ++j;
+            S name = v.substr(s, j - s);
+            if (brace && j < v.size() && v[j] == '}')
+                ++j;
+            if (!name.empty() && isdigit((unsigned char)name[0]))
+                out += "$" + name;
+            else if (name == "host")
+                out += "%{SERVER_NAME}";
+            else if (name == "http_host")
+                out += "%{HTTP_HOST}";
+            else if (name == "server_name")
+                out += site.name;
+            else if (name == "request_uri" || name == "uri" || name == "document_uri")
+                out += "%{REQUEST_URI}";
+            else if (name == "args" || name == "query_string")
+                out += "%{QUERY_STRING}";
+            else
+            {
+                ok = false;
+                notes.push_back(where->where() + "  " + where->raw + "  uses $" + name + ", not converted");
+                return S();
+            }
+            i = j;
+        }
+        return out;
+    }
+
+    static S redirect_flag(const S &code) { return "[R=" + code + ",L]"; }
+
+    SV return_rules(const Node *k, const Site &site, SV &notes)
+    {
+        SV out;
+        if (k->args.empty())
+            return out;
+        S code = k->args[0], url = k->args.size() > 1 ? k->args[1] : S();
+        if (code.find_first_not_of("0123456789") != S::npos)
+        {
+            url = code;
+            code = "302";
+        }
+        bool ok = true;
+        if (code == "301" || code == "302" || code == "303" || code == "307" || code == "308")
+        {
+            S target = var_map(url, site, ok, notes, k);
+            if (ok && !target.empty())
+                out.push_back("RewriteRule ^ " + quote_arg(target) + " " + redirect_flag(code));
+        }
+        else if (code == "403" && url.empty())
+            out.push_back("RewriteRule ^ - [F,L]");
+        else if (code == "410" && url.empty())
+            out.push_back("RewriteRule ^ - [G,L]");
+        else
+            notes.push_back(k->where() + "  " + k->raw + "  not converted");
+        return out;
+    }
+
+    SV rewrite_rule(const Node *k, const Site &site, SV &notes)
+    {
+        SV out;
+        if (k->args.size() < 2)
+            return out;
+        bool ok = true;
+        S target = var_map(k->args[1], site, ok, notes, k);
+        if (!ok)
+            return out;
+        S flag = k->args.size() > 2 ? k->args[2] : S();
+        SV fl;
+        bool absolute = istarts(target, "http://") || istarts(target, "https://");
+        if (flag == "permanent")
+            fl = {"R=301", "L"};
+        else if (flag == "redirect" || (flag.empty() && absolute))
+            fl = {"R=302", "L"};
+        else if (flag == "last" || flag == "break")
+            fl = {"L"};
+        if (target.find('?') != S::npos && !ends(target, "?"))
+            fl.push_back("QSA");
+        out.push_back("RewriteRule " + quote_arg(k->args[0]) + " " + quote_arg(target)
+                      + (fl.empty() ? S() : " [" + join(fl, ",") + "]"));
+        return out;
+    }
+
+    SV if_rules(const Node *k, const Site &site, SV &notes)
+    {
+        SV out, conds, t;
+        S expr = trim(join(k->args, " "));
+        if (starts(expr, "("))
+            expr = expr.substr(1);
+        if (ends(expr, ")"))
+            expr.pop_back();
+        for (size_t i = 0; i < expr.size();)
+        {
+            size_t j = expr.find_first_of(" \t", i);
+            if (j == S::npos)
+                j = expr.size();
+            if (j > i)
+                t.push_back(expr.substr(i, j - i));
+            i = j + 1;
+        }
+        S a0 = t.size() > 0 ? t[0] : S(), a1 = t.size() > 1 ? t[1] : S(), a2 = t.size() > 2 ? t[2] : S();
+        if (a0 == "$scheme" && ((a1 == "=" && a2 == "http") || (a1 == "!=" && a2 == "https")))
+            conds.push_back("RewriteCond %{HTTPS} !on");
+        else if ((a0 == "!-e" || a0 == "!-f") && a1 == "$request_filename")
+        {
+            conds.push_back("RewriteCond %{REQUEST_FILENAME} !-f");
+            if (a0 == "!-e")
+                conds.push_back("RewriteCond %{REQUEST_FILENAME} !-d");
+        }
+        else if (a0 == "$host" && (a1 == "=" || a1 == "!=") && !a2.empty())
+            conds.push_back("RewriteCond %{HTTP_HOST} " + S(a1 == "!=" ? "!" : "") + "^" + re_escape(a2) + "(:[0-9]+)?$ [NC]");
+        else
+        {
+            notes.push_back(k->where() + "  " + k->raw + "  not converted");
+            return out;
+        }
+        for (auto &x : k->kids)
+        {
+            SV r;
+            if (x->key == "return")
+                r = return_rules(x.get(), site, notes);
+            else if (x->key == "rewrite")
+                r = rewrite_rule(x.get(), site, notes);
+            else
+            {
+                notes.push_back(x->where() + "  " + x->raw + "  inside if, not converted");
+                continue;
+            }
+            for (auto &rule : r)
+            {
+                out.insert(out.end(), conds.begin(), conds.end());
+                out.push_back(rule);
+            }
+        }
+        return out;
+    }
+
+    SV try_rules(const Node *k, const Site &site, SV &notes, const std::map<S, const Node *> &named,
+                 std::vector<Proxy> &prox)
+    {
+        SV out, a = k->args;
+        if (a.size() < 2)
+            return out;
+        S fallback = a.back();
+        a.pop_back();
+        bool file = false, dir = false;
+        for (auto &x : a)
+        {
+            if (x == "$uri")
+                file = true;
+            else if (x == "$uri/")
+                dir = true;
+            else
+            {
+                notes.push_back(k->where() + "  " + k->raw + "  not converted");
+                return out;
+            }
+        }
+        if (starts(fallback, "="))
+            return out;
+        SV conds;
+        if (file)
+            conds.push_back("RewriteCond %{REQUEST_FILENAME} !-f");
+        if (dir)
+            conds.push_back("RewriteCond %{REQUEST_FILENAME} !-d");
+        if (starts(fallback, "@"))
+        {
+            auto it = named.find(fallback);
+            if (it != named.end())
+                for (auto &x : it->second->kids)
+                    if (x->key == "proxy_pass" && !x->args.empty())
+                    {
+                        S url = upstream_url(x->args[0]);
+                        if (istarts(url, "http://"))
+                        {
+                            out = conds;
+                            out.push_back("__PROXY__ " + url);
+                            return out;
+                        }
+                    }
+            notes.push_back(k->where() + "  " + k->raw + "  not converted");
+            return out;
+        }
+        bool ok = true;
+        S target = var_map(fallback, site, ok, notes, k);
+        if (!ok)
+            return out;
+        out = conds;
+        out.push_back("RewriteRule ^ " + quote_arg(target) + " [L]");
+        return out;
+    }
+
+    S upstream_url(const S &u)
+    {
+        S scheme = istarts(u, "https://") ? "https://" : istarts(u, "http://") ? "http://" : S();
+        if (scheme.empty())
+            return u;
+        S rest = u.substr(scheme.size());
+        size_t sl = rest.find('/');
+        S host = sl == S::npos ? rest : rest.substr(0, sl), path = sl == S::npos ? S() : rest.substr(sl);
+        auto it = upstreams.find(lower(host));
+        if (it != upstreams.end())
+            host = it->second;
+        return scheme + host + path;
+    }
+
+    static bool ip4(const S &s, unsigned &addr, int &bits)
+    {
+        unsigned a[4];
+        int n = 0;
+        char tail[8] = { 0 };
+        bits = 32;
+        S x = s;
+        size_t sl = x.find('/');
+        if (sl != S::npos)
+        {
+            bits = atoi(x.c_str() + sl + 1);
+            x = x.substr(0, sl);
+        }
+        if (sscanf(x.c_str(), "%u.%u.%u.%u%1s%n", &a[0], &a[1], &a[2], &a[3], tail, &n) != 4 || bits < 0 || bits > 32)
+            return false;
+        for (unsigned v : a)
+            if (v > 255)
+                return false;
+        addr = (a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3];
+        return true;
+    }
+
+    static bool covers(const S &net, const S &ip)
+    {
+        unsigned na, ia;
+        int nb, ib;
+        if (!ip4(net, na, nb) || !ip4(ip, ia, ib))
+            return ieq(net, ip);
+        if (ib < nb)
+            return false;
+        unsigned mask = nb == 0 ? 0 : 0xFFFFFFFFu << (32 - nb);
+        return (na & mask) == (ia & mask);
+    }
+
+    Access access_of(const std::vector<std::pair<bool, S>> &rules, SV &warns, const S &where)
+    {
+        Access a;
+        SV allows, denies;
+        bool endAllow = true;
+        for (auto &r : rules)
+        {
+            if (ieq(r.second, "all"))
+            {
+                endAllow = r.first;
+                break;
+            }
+            S ip = ols_ip(r.second);
+            bool shadowed = false;
+            for (auto &o : r.first ? denies : allows)
+                if (covers(o, ip))
+                    shadowed = true;
+            if (shadowed)
+            {
+                warns.push_back(where + "  " + S(r.first ? "allow " : "deny ") + r.second
+                                + " follows a rule that already matches it, nginx ignores it, so does OpenLiteSpeed");
+                continue;
+            }
+            (r.first ? allows : denies).push_back(ip);
+        }
+        if (endAllow)
+            a.deny = denies;
+        else if (allows.empty())
+            a.denied = true;
+        else
+        {
+            a.allow = allows;
+            a.deny = denies;
+        }
+        return a;
+    }
+
+    struct Loc
+    {
+        const Node *n;
+        S mod, path, root;
+        int depth;
+    };
+
+    void collect_locs(const Node *scope, const S &root, int depth, std::vector<Loc> &out,
+                      std::map<S, const Node *> &named)
+    {
+        for (auto &k : scope->kids)
+        {
+            if (k->key != "location" || !k->block || k->args.empty())
+                continue;
+            Loc l{k.get(), "", "", root, depth};
+            if (k->args.size() >= 2)
+            {
+                l.mod = k->args[0];
+                l.path = k->args[1];
+            }
+            else
+            {
+                l.path = k->args[0];
+                for (const char *m : {"^~", "~*", "~", "="})
+                    if (starts(l.path, m) && l.path.size() > strlen(m))
+                    {
+                        l.mod = m;
+                        l.path = l.path.substr(strlen(m));
+                        break;
+                    }
+            }
+            if (starts(l.path, "@"))
+            {
+                named[l.path] = k.get();
+                continue;
+            }
+            for (auto &x : k->kids)
+                if (x->key == "root" && !x->args.empty())
+                    l.root = real_path(resolve(prefix, x->args[0]));
+            out.push_back(l);
+            collect_locs(k.get(), l.root, depth + 1, out, named);
+        }
+    }
+
+    SV select_conds(size_t i, const std::vector<Loc> &locs) const
+    {
+        SV out;
+        const Loc &l = locs[i];
+        bool lre = l.mod == "~" || l.mod == "~*";
+        if (l.mod == "=")
+            return out;
+        for (size_t j = 0; j < locs.size(); ++j)
+        {
+            if (j == i)
+                continue;
+            const Loc &o = locs[j];
+            bool ore = o.mod == "~" || o.mod == "~*";
+            if (o.mod == "=")
+            {
+                if (lre || starts(o.path, l.path))
+                    out.push_back("RewriteCond %{REQUEST_URI} !^" + re_escape(o.path) + "$");
+            }
+            else if (ore)
+            {
+                if ((lre && j < i) || (!lre && l.mod != "^~"))
+                    out.push_back("RewriteCond %{REQUEST_URI} " + quote_arg("!" + o.path) + (o.mod == "~*" ? " [NC]" : ""));
+            }
+            else if (lre)
+            {
+                if (o.mod == "^~")
+                    out.push_back("RewriteCond %{REQUEST_URI} !^" + re_escape(o.path));
+            }
+            else if (o.path.size() > l.path.size() && starts(o.path, l.path))
+                out.push_back("RewriteCond %{REQUEST_URI} !^" + re_escape(o.path));
+        }
+        return out;
+    }
+
+    S loc_cond(const Loc &l) const
+    {
+        if (l.mod == "=")
+            return "RewriteCond %{REQUEST_URI} ^" + re_escape(l.path) + "$";
+        if (l.mod == "~")
+            return "RewriteCond %{REQUEST_URI} " + quote_arg(l.path);
+        if (l.mod == "~*")
+            return "RewriteCond %{REQUEST_URI} " + quote_arg(l.path) + " [NC]";
+        if (l.path == "/")
+            return S();
+        return "RewriteCond %{REQUEST_URI} ^" + re_escape(l.path);
+    }
+
+    void build(Site &site)
+    {
+        const Member *prim = &site.members[0];
+        for (auto &m : site.members)
+            if (m.ssl)
+            {
+                site.cert = m.cert;
+                site.key = m.key;
+                prim = &m;
+                break;
+            }
+        const Node *srv = prim->n;
+        site.file = srv->where();
+        std::vector<Loc> locs;
+        std::map<S, const Node *> named;
+        S serverRoot = prim->docroot;
+        collect_locs(srv, serverRoot, 0, locs, named);
+        S docroot = serverRoot;
+        if (docroot.empty())
+            for (auto &l : locs)
+                if (l.mod.empty() && l.path == "/" && !l.root.empty())
+                    docroot = l.root;
+        if (docroot.empty())
+            docroot = real_path(prefix + "/html");
+        site.docroot = docroot;
+        if (!is_dir(docroot))
+        {
+            site.skipWhy = "document root " + docroot + " does not exist";
+            return;
+        }
+        for (auto &l : locs)
+            if (l.root.empty())
+                l.root = docroot;
+
+        SV rootIndex{"index.html"};
+        int rootIdx = 0;
+        std::map<S, S> errors;
+        SV srvRules, notes, warns;
+        bool php = false;
+        SV fcgiAddrs;
+        std::vector<Proxy> prox;
+        std::map<S, SV> realms;
+        std::vector<Ctx> exact, regex, prefixes;
+        SV caret;
+        std::vector<std::pair<int, SV>> locRules;
+
+        auto scan_common = [&](const Node *k, Ctx &c, bool &need, std::vector<std::pair<bool, S>> &acc,
+                               S &authName, S &userFile, bool &authOff) {
+            if (k->key == "allow" || k->key == "deny")
+            {
+                if (!k->args.empty())
+                    acc.push_back({k->key == "allow", k->args[0]});
+                return true;
+            }
+            if (k->key == "auth_basic" && !k->args.empty())
+            {
+                if (ieq(k->args[0], "off"))
+                    authOff = true;
+                else
+                    authName = k->args[0];
+                return true;
+            }
+            if (k->key == "auth_basic_user_file" && !k->args.empty())
+            {
+                userFile = real_file(resolve(confDir, k->args[0]));
+                return true;
+            }
+            if (k->key == "add_header" && k->args.size() >= 2)
+            {
+                c.headers.push_back("Header add " + k->args[0] + " " + quote_arg(k->args[1]));
+                need = true;
+                return true;
+            }
+            return false;
+        };
+        auto finish_access = [&](Ctx &c, bool &need, const std::vector<std::pair<bool, S>> &acc,
+                                 const S &authName, const S &userFile, bool authOff, const S &where) {
+            if (!acc.empty())
+            {
+                c.acc = access_of(acc, warns, where);
+                need = need || !c.acc.open();
+            }
+            if (!authName.empty() && !userFile.empty() && !authOff)
+            {
+                Conf cf;
+                cf.userFile = userFile;
+                c.realm = realm_for(cf, realms, site);
+                c.authName = authName;
+                c.acc.required = "valid-user";
+                need = true;
+            }
+        };
+
+        Ctx rootCtx;
+        rootCtx.uri = "/";
+        bool rootNeed = false;
+        {
+            std::vector<std::pair<bool, S>> acc;
+            S authName, userFile;
+            bool authOff = false;
+            for (auto &k : srv->kids)
+            {
+                if (scan_common(k.get(), rootCtx, rootNeed, acc, authName, userFile, authOff))
+                    continue;
+                if (k->key == "index" && !k->args.empty())
+                    rootIndex = k->args;
+                else if (k->key == "autoindex" && !k->args.empty())
+                    rootIdx = ieq(k->args[0], "on") ? 1 : 0;
+                else if (k->key == "error_page" && k->args.size() >= 2)
+                {
+                    S target = k->args.back();
+                    if (starts(target, "=") || starts(target, "@") || (k->args.size() >= 3 && starts(k->args[k->args.size() - 2], "=")))
+                        notes.push_back(k->where() + "  " + k->raw + "  not converted");
+                    else
+                        for (size_t i = 0; i + 1 < k->args.size(); ++i)
+                            errors[k->args[i]] = target;
+                }
+                else if (k->key == "return")
+                {
+                    SV r = return_rules(k.get(), site, notes);
+                    srvRules.insert(srvRules.end(), r.begin(), r.end());
+                }
+                else if (k->key == "rewrite")
+                {
+                    SV r = rewrite_rule(k.get(), site, notes);
+                    srvRules.insert(srvRules.end(), r.begin(), r.end());
+                }
+                else if (k->key == "if")
+                {
+                    SV r = if_rules(k.get(), site, notes);
+                    srvRules.insert(srvRules.end(), r.begin(), r.end());
+                }
+                else if (k->key == "client_max_body_size")
+                    notes.push_back(k->where() + "  " + k->raw + "  OpenLiteSpeed sets the request body limit for the server");
+                else if (!ngx_known(k->key))
+                    site.skipped.push_back(k->where() + "  " + k->raw);
+            }
+            finish_access(rootCtx, rootNeed, acc, authName, userFile, authOff, srv->where());
+        }
+
+        int seq = 0;
+        for (auto &l : locs)
+        {
+            const Node *n = l.n;
+            if (l.depth > 0)
+                notes.push_back(n->where() + "  nested location " + l.path + " is converted as a location of its own");
+            Ctx c;
+            bool need = false, locPhp = false, isRegex = l.mod == "~" || l.mod == "~*";
+            std::vector<std::pair<bool, S>> acc;
+            S authName, userFile, alias;
+            bool authOff = false;
+            SV rules;
+            for (auto &k : n->kids)
+            {
+                if (scan_common(k.get(), c, need, acc, authName, userFile, authOff))
+                    continue;
+                if (k->key == "alias" && !k->args.empty())
+                {
+                    alias = resolve(prefix, k->args[0]);
+                    if (ends(k->args[0], "/") && !ends(alias, "/"))
+                        alias += "/";
+                    need = true;
+                }
+                else if (k->key == "autoindex" && !k->args.empty())
+                {
+                    c.autoIndex = ieq(k->args[0], "on") ? 1 : 0;
+                    need = true;
+                }
+                else if (k->key == "index" && !k->args.empty())
+                {
+                    c.index = k->args;
+                    need = true;
+                }
+                else if (k->key == "return")
+                {
+                    SV r = return_rules(k.get(), site, notes);
+                    rules.insert(rules.end(), r.begin(), r.end());
+                }
+                else if (k->key == "rewrite")
+                {
+                    SV r = rewrite_rule(k.get(), site, notes);
+                    rules.insert(rules.end(), r.begin(), r.end());
+                }
+                else if (k->key == "try_files")
+                {
+                    SV r = try_rules(k.get(), site, notes, named, prox);
+                    if (!r.empty() && starts(r.back(), "__PROXY__ "))
+                    {
+                        S url = r.back().substr(10);
+                        r.pop_back();
+                        Proxy p{l.path, url, false};
+                        rules.insert(rules.end(), r.begin(), r.end());
+                        rules.push_back("__PROXYRULE__ " + std::to_string(prox.size()));
+                        prox.push_back(p);
+                    }
+                    else
+                        rules.insert(rules.end(), r.begin(), r.end());
+                }
+                else if (k->key == "proxy_pass" && !k->args.empty())
+                {
+                    S url = upstream_url(k->args[0]);
+                    if (isRegex || l.mod == "=" || !istarts(url, "http://"))
+                        notes.push_back(k->where() + "  " + k->raw + "  not converted");
+                    else
+                    {
+                        rules.push_back("__PROXYRULE__ " + std::to_string(prox.size()));
+                        prox.push_back(Proxy{l.path, url, false});
+                    }
+                }
+                else if (k->key == "fastcgi_pass" && !k->args.empty())
+                {
+                    locPhp = php = true;
+                    add_unique(fcgiAddrs, upstream_url(k->args[0]));
+                }
+                else if (k->key == "if")
+                {
+                    SV r = if_rules(k.get(), site, notes);
+                    rules.insert(rules.end(), r.begin(), r.end());
+                }
+                else if (k->key == "root" || k->key == "location")
+                    ;
+                else if (k->key == "client_max_body_size")
+                    notes.push_back(k->where() + "  " + k->raw + "  OpenLiteSpeed sets the request body limit for the server");
+                else if (!ngx_known(k->key))
+                    site.skipped.push_back(k->where() + "  " + k->raw);
+            }
+            finish_access(c, need, acc, authName, userFile, authOff, n->where());
+            if (!alias.empty())
+                c.location = alias;
+            else if (!ieq(l.root, docroot))
+            {
+                if (isRegex)
+                    notes.push_back(n->where() + "  root " + l.root + " in a regex location is not converted");
+                else
+                    c.location = l.root + (l.mod == "=" ? l.path : (ends(l.path, "/") ? l.path : l.path + "/"));
+                need = need || !isRegex;
+            }
+            if (!rules.empty())
+            {
+                S cond = loc_cond(l);
+                SV sel = select_conds(seq, locs), withCond, pending;
+                for (auto &r : rules)
+                {
+                    if (istarts(r, "RewriteCond"))
+                    {
+                        pending.push_back(r);
+                        continue;
+                    }
+                    if (!cond.empty())
+                        withCond.push_back(cond);
+                    withCond.insert(withCond.end(), sel.begin(), sel.end());
+                    withCond.insert(withCond.end(), pending.begin(), pending.end());
+                    pending.clear();
+                    withCond.push_back(r);
+                }
+                int rank = l.mod == "=" ? 0 : isRegex ? 1000 + seq : 1000000 - (int)l.path.size();
+                locRules.push_back({rank, withCond});
+            }
+            ++seq;
+            if (l.mod.empty() && l.path == "/")
+            {
+                if (c.autoIndex >= 0)
+                    rootIdx = c.autoIndex;
+                if (!c.index.empty())
+                    rootIndex = c.index;
+                c.autoIndex = -1;
+                c.index.clear();
+                if (!c.acc.open() || !c.realm.empty() || !c.headers.empty() || !c.location.empty())
+                {
+                    c.uri = "/";
+                    rootCtx = c;
+                    rootNeed = true;
+                }
+                continue;
+            }
+            if (!need)
+            {
+                if (locPhp && isRegex)
+                    site.converted.push_back("PHP location " + l.path);
+                continue;
+            }
+            if (l.mod == "^~")
+                caret.push_back(l.path);
+            if (l.mod == "=")
+            {
+                c.uri = "exp:^" + re_escape(l.path) + "$";
+                exact.push_back(c);
+            }
+            else if (isRegex)
+            {
+                c.uri = "exp:" + S(l.mod == "~*" ? "(?i)" : "") + l.path;
+                regex.push_back(c);
+            }
+            else
+            {
+                c.uri = l.path;
+                prefixes.push_back(c);
+            }
+        }
+
+        S conf;
+        conf += mark() + ": " + site.file + "\n";
+        conf += kv("docRoot", site.docroot + "/", 0);
+        conf += kv("enableGzip", "1", 0);
+        conf += kv("enableBr", "1", 0);
+        conf += "\nindex  {\n" + kv("useServer", "0", 2) + kv("indexFiles", join(rootIndex, ", "), 2)
+              + kv("autoIndex", std::to_string(rootIdx), 2);
+        if (rootIdx == 1)
+            conf += kv("autoIndexURI", "/_autoindex/default.php", 2);
+        conf += "}\n";
+        for (auto &e : errors)
+        {
+            if (starts(e.second, "/") || istarts(e.second, "http://") || istarts(e.second, "https://"))
+                conf += "\nerrorPage " + e.first + " {\n" + kv("url", e.second, 2) + "}\n";
+        }
+        for (auto &r : realms)
+            conf += "\nrealm " + r.second[0] + " {\n  userDB  {\n" + kv("location", r.second[1], 4) + "  }\n}\n";
+        if (php)
+        {
+            conf += "\nscriptHandler  {\n" + kv("add", phpHandler + " php", 2) + "}\n";
+            site.converted.push_back("PHP through OpenLiteSpeed (" + phpHandler + ")");
+            if (!fcgiAddrs.empty())
+                site.notes.push_back("nginx passed PHP to the FastCGI server at " + join(fcgiAddrs, ", ")
+                                     + ", OpenLiteSpeed runs PHP itself");
+        }
+
+        std::map<S, S> procNames;
+        SV procLines;
+        for (auto &p : prox)
+        {
+            S rest = p.url.substr(7);
+            size_t sl = rest.find('/');
+            S hostport = sl == S::npos ? rest : rest.substr(0, sl);
+            S path = sl == S::npos ? p.path : rest.substr(sl);
+            if (hostport.find(':') == S::npos)
+                hostport += ":80";
+            S &nm = procNames[lower(hostport)];
+            if (nm.empty())
+            {
+                nm = "nginx-proxy-" + std::to_string(++procSeq);
+                conf += "\nextprocessor " + nm + " {\n" + kv("type", "proxy", 2) + kv("address", hostport, 2)
+                      + kv("maxConns", "100", 2) + kv("initTimeout", "60", 2) + kv("retryTimeout", "0", 2)
+                      + kv("respBuffer", "0", 2) + "}\n";
+            }
+            procLines.push_back("RewriteRule " + quote_arg("^" + re_escape(p.path) + "(.*)$") + " "
+                                + quote_arg("http://" + nm + path + "$1") + " [P,L]");
+            site.converted.push_back("proxy " + p.path + " -> " + p.url);
+        }
+
+        std::vector<Ctx> ranked;
+        for (auto &c : exact)
+            ranked.push_back(c);
+        for (auto &c : regex)
+        {
+            S pat = c.uri.substr(4);
+            S ci;
+            if (starts(pat, "(?i)"))
+            {
+                ci = "(?i)";
+                pat = pat.substr(4);
+            }
+            if (!caret.empty())
+            {
+                SV esc;
+                for (auto &p : caret)
+                    esc.push_back(re_escape(p));
+                pat = "^(?!" + join(esc, "|") + ")" + (starts(pat, "^") ? pat.substr(1) : ".*?(?:" + pat + ")");
+            }
+            else if (!starts(pat, "^"))
+                pat = "^.*?(?:" + pat + ")";
+            c.uri = "exp:" + ci + pat;
+            ranked.push_back(c);
+        }
+        for (size_t i = 0; i < ranked.size(); ++i)
+        {
+            char rank[16];
+            snprintf(rank, sizeof(rank), "(?#%04d)", (int)i);
+            ranked[i].uri = "exp:" + S(rank) + ranked[i].uri.substr(4);
+            conf += "\n" + render_ctx(ranked[i]);
+        }
+        if (rootNeed)
+            prefixes.push_back(rootCtx);
+        std::stable_sort(prefixes.begin(), prefixes.end(), [](const Ctx &a, const Ctx &b) { return a.uri < b.uri; });
+        for (auto &c : prefixes)
+            conf += "\n" + render_ctx(c);
+
+        SV allRules;
+        if (site.members.size() == 2)
+            for (auto &m : site.members)
+                if (!m.ssl && redirect_only(m.n))
+                {
+                    allRules.push_back("RewriteCond %{HTTPS} !on");
+                    SV r;
+                    for (auto &k : m.n->kids)
+                        if (k->key == "return")
+                            r = return_rules(k.get(), site, notes);
+                        else if (k->key == "rewrite")
+                            r = rewrite_rule(k.get(), site, notes);
+                    if (r.empty())
+                        allRules.pop_back();
+                    else
+                    {
+                        allRules.insert(allRules.end(), r.begin(), r.end());
+                        site.converted.push_back("HTTP to HTTPS redirect");
+                    }
+                }
+        allRules.insert(allRules.end(), srvRules.begin(), srvRules.end());
+        std::stable_sort(locRules.begin(), locRules.end(),
+                         [](const std::pair<int, SV> &a, const std::pair<int, SV> &b) { return a.first < b.first; });
+        for (auto &lr : locRules)
+            for (auto &r : lr.second)
+            {
+                if (starts(r, "__PROXYRULE__ "))
+                    allRules.push_back(procLines[atoi(r.c_str() + 14)]);
+                else
+                    allRules.push_back(r);
+            }
+        int nRules = 0;
+        for (auto &r : allRules)
+            if (istarts(r, "RewriteRule"))
+                ++nRules;
+        conf += "\nrewrite  {\n" + kv("enable", "1", 2) + kv("autoLoadHtaccess", "0", 2);
+        if (!allRules.empty())
+            conf += heredoc("rules", allRules, 2);
+        conf += "}\n";
+
+        if (!site.cert.empty())
+        {
+            conf += "\nvhssl  {\n" + kv("keyFile", site.key.empty() ? site.cert : site.key, 2)
+                  + kv("certFile", site.cert, 2) + kv("certChain", "1", 2) + "}\n";
+            site.converted.push_back("SSL certificate");
+        }
+        if (nRules)
+            site.converted.push_back(std::to_string(nRules) + " rewrite and redirect rule" + (nRules > 1 ? "s" : ""));
+        int restricted = 0, aliases = 0, headers = 0;
+        for (auto *v : {&exact, &regex, &prefixes})
+            for (auto &c : *v)
+            {
+                if (!c.acc.open())
+                    ++restricted;
+                if (!c.location.empty())
+                    ++aliases;
+                if (!c.headers.empty())
+                    ++headers;
+            }
+        if (restricted)
+            site.converted.push_back(std::to_string(restricted) + " access rule" + (restricted > 1 ? "s" : ""));
+        if (aliases)
+            site.converted.push_back(std::to_string(aliases) + " alias" + (aliases > 1 ? "es" : ""));
+        if (headers)
+            site.converted.push_back(std::to_string(headers) + " location" + (headers > 1 ? "s" : "") + " with headers");
+        if (!realms.empty())
+            site.converted.push_back("password protection");
+        if (rootIdx == 1)
+            site.converted.push_back("directory listing");
+        for (auto &n : notes)
+            add_unique(site.notes, n);
+        for (auto &w : warns)
+            add_unique(site.warnings, w);
+        site.conf = conf;
+    }
+
+    void servers(const Node *scope, std::vector<const Node *> &out)
+    {
+        for (auto &k : scope->kids)
+        {
+            if (k->key == "server" && k->block)
+                out.push_back(k.get());
+            else if (k->key == "upstream" && k->block && !k->args.empty())
+            {
+                for (auto &x : k->kids)
+                    if (x->key == "server" && !x->args.empty())
+                    {
+                        upstreams[lower(k->args[0])] = x->args[0];
+                        break;
+                    }
+            }
+            else if (k->block && (k->key == "http" || k->key == "include"))
+                servers(k.get(), out);
+        }
+    }
+
+    int run(const S &confArg)
+    {
+        httpdConf = olsRoot + "/conf/httpd_config.conf";
+        S text;
+        if (!read_file(httpdConf, text))
+        {
+            fprintf(stderr, "cannot read %s\n", httpdConf.c_str());
+            return 1;
+        }
+        if (confArg.empty())
+        {
+            SV found;
+            nginxConf = find_nginx(found);
+            if (nginxConf.empty())
+            {
+                if (found.empty())
+                    fprintf(stderr, "no nginx configuration found, pass the path to nginx.conf\n");
+                else
+                {
+                    fprintf(stderr, "several nginx configurations found, pass one of them:\n");
+                    for (auto &f : found)
+                        fprintf(stderr, "  %s\n", f.c_str());
+                }
+                return 2;
+            }
+        }
+        else
+            nginxConf = norm(confArg);
+        if (!is_file(nginxConf))
+        {
+            fprintf(stderr, "%s not found\n", nginxConf.c_str());
+            return 2;
+        }
+        confDir = parent_dir(nginxConf);
+        prefix = parent_dir(confDir);
+        np.confDir = confDir;
+        np.parse(nginxConf, &top, 0);
+        if (np.files.empty())
+        {
+            fprintf(stderr, "cannot read %s\n", nginxConf.c_str());
+            return 1;
+        }
+        load_php_info();
+
+        std::set<S> existingDomains, vhnames;
+        SV oldVh, oldLs;
+        read_state(oldVh, oldLs);
+        S base = drop_objects(text, oldVh, oldLs);
+        std::vector<Listener> listeners = existing_listeners(base, existingDomains, vhnames);
+        int adminPort = 0;
+        {
+            S at;
+            if (read_file(olsRoot + "/admin/conf/admin_config.conf", at))
+            {
+                size_t p = at.find("address");
+                if (p != S::npos)
+                {
+                    S l = at.substr(p, at.find('\n', p) - p);
+                    size_t c = l.rfind(':');
+                    if (c != S::npos)
+                        adminPort = atoi(l.c_str() + c + 1);
+                }
+            }
+        }
+
+        std::vector<const Node *> snodes;
+        servers(&top, snodes);
+        std::vector<Site> sites;
+        SV skippedTop;
+        for (auto *v : snodes)
+        {
+            Member m;
+            SV notes;
+            member_of(v, m, notes);
+            if (m.name.empty())
+            {
+                skippedTop.push_back(v->where() + "  server block without a server_name");
+                continue;
+            }
+            if (sample_name(m.name))
+            {
+                skippedTop.push_back(v->where() + "  " + m.name + "  sample site");
+                continue;
+            }
+            Site *site = nullptr;
+            for (auto &s : sites)
+                if (s.name == m.name)
+                    site = &s;
+            if (!site)
+            {
+                sites.push_back(Site());
+                site = &sites.back();
+                site->name = m.name;
+            }
+            else
+            {
+                bool clash = false;
+                for (auto &o : site->members)
+                    if (o.ssl == m.ssl)
+                        clash = true;
+                if (clash)
+                {
+                    skippedTop.push_back(v->where() + "  " + m.name + "  duplicate of an earlier server block, nginx uses the first");
+                    continue;
+                }
+            }
+            for (auto &n : notes)
+                add_unique(site->notes, n);
+            if (m.ssl && (m.cert.empty() || !is_file(m.cert) || (!m.key.empty() && !is_file(m.key))))
+            {
+                site->warnings.push_back("HTTPS not imported: certificate file "
+                                         + (m.cert.empty() ? S("(none)") : (is_file(m.cert) ? m.key : m.cert))
+                                         + " not found");
+                continue;
+            }
+            site->members.push_back(m);
+        }
+        size_t nsites = sites.size();
+        for (size_t i = 0; i < nsites; ++i)
+        {
+            if (sites[i].members.size() != 2)
+                continue;
+            Member &a = sites[i].members[0], &b = sites[i].members[1];
+            const Member &http = a.ssl ? b : a, &https = a.ssl ? a : b;
+            if (redirect_only(http.n) || canonical(http.n) == canonical(https.n))
+                continue;
+            Site split;
+            split.name = sites[i].name;
+            split.httpPart = true;
+            split.members.push_back(http);
+            Member keep = https;
+            sites[i].members.clear();
+            sites[i].members.push_back(keep);
+            sites.push_back(split);
+        }
+        return emit(sites, skippedTop, text, base, listeners, existingDomains, vhnames, oldVh, adminPort,
+                    [&](Site &s) { build(s); }, [&]() {
+                        printf("nginx configuration: %s (%d file%s)\n", nginxConf.c_str(), (int)np.files.size(),
+                               np.files.size() == 1 ? "" : "s");
+                        for (auto &m : np.missing)
+                            printf("  missing: %s\n", m.c_str());
+                    });
+    }
+};
+
+}
+
+extern "C" int ols_import_nginx(int argc, char **argv)
+{
+    NginxImporter imp;
+    S conf;
+    bool removeMode = false;
+    wchar_t root[MAX_PATH];
+    SetConsoleOutputCP(CP_UTF8);
+    for (int i = 0; i < argc; ++i)
+    {
+        if (strcmp(argv[i], "--dry-run") == 0)
+            imp.dryRun = true;
+        else if (strcmp(argv[i], "--remove") == 0)
+            removeMode = true;
+        else if (argv[i][0] == '-' && argv[i][1] == '-')
+        {
+            fprintf(stderr, "unknown option %s\n", argv[i]);
+            return 2;
+        }
+        else
+            conf = argv[i];
+    }
+    DWORD n = GetEnvironmentVariableW(L"OLS_ROOT", root, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH)
+    {
+        fprintf(stderr, "OLS_ROOT is not set\n");
+        return 2;
+    }
+    imp.olsRoot = norm(U(root));
+    if (removeMode)
+    {
+        imp.httpdConf = imp.olsRoot + "/conf/httpd_config.conf";
+        return imp.remove();
+    }
+    return imp.run(conf);
 }
 
 extern "C" int ols_import_apache(int argc, char **argv)

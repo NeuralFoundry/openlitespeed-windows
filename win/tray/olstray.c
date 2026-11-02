@@ -51,6 +51,7 @@
 #define ID_IMPORT 113
 #define ID_UPDATE 114
 #define ID_CHECK 115
+#define ID_IMPORT_NGINX 116
 #define ID_PHP_BASE 1000
 #define ID_SITE_BASE 2000
 #define MAX_SITES 256
@@ -323,28 +324,35 @@ static wchar_t *report_text(const char *utf8, const wchar_t *tail)
 
 static void notify(const wchar_t *title, const wchar_t *msg);
 
-static void import_apache(void)
+static void import_sites(int nginx)
 {
-    wchar_t conf[MAX_PATH] = L"", args[MAX_PATH + 64], log[MAX_PATH], *msg;
+    const wchar_t *kind = nginx ? L"nginx" : L"apache", *label = nginx ? L"nginx" : L"Apache";
+    wchar_t conf[MAX_PATH] = L"", args[MAX_PATH + 64], log[MAX_PATH], title[64], *msg;
     char *out = NULL;
-    DWORD code = run_capture(L"--import-apache --dry-run", &out);
+    DWORD code;
     HANDLE h;
+    swprintf(title, 64, L"Import %s sites", label);
+    swprintf(args, MAX_PATH + 64, L"--import-%s --dry-run", kind);
+    code = run_capture(args, &out);
     if (code == 2)
     {
         OPENFILENAMEW ofn;
+        wchar_t pick[64];
         free(out);
         out = NULL;
         memset(&ofn, 0, sizeof(ofn));
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = g_wnd;
-        ofn.lpstrFilter = L"Apache configuration\0httpd.conf;*.conf\0All files\0*.*\0";
+        ofn.lpstrFilter = nginx ? L"nginx configuration\0nginx.conf;*.conf\0All files\0*.*\0"
+                                : L"Apache configuration\0httpd.conf;*.conf\0All files\0*.*\0";
         ofn.lpstrFile = conf;
         ofn.nMaxFile = MAX_PATH;
-        ofn.lpstrTitle = L"Select httpd.conf of Apache";
+        swprintf(pick, 64, L"Select %s of %s", nginx ? L"nginx.conf" : L"httpd.conf", label);
+        ofn.lpstrTitle = pick;
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
         if (!GetOpenFileNameW(&ofn))
             return;
-        swprintf(args, MAX_PATH + 64, L"--import-apache \"%s\" --dry-run", conf);
+        swprintf(args, MAX_PATH + 64, L"--import-%s \"%s\" --dry-run", kind, conf);
         code = run_capture(args, &out);
     }
     if (!out)
@@ -353,25 +361,25 @@ static void import_apache(void)
     {
         msg = report_text(out, L"");
         if (msg)
-            MessageBoxW(g_wnd, msg, L"Import Apache sites", MB_OK | (code ? MB_ICONWARNING : MB_ICONINFORMATION));
+            MessageBoxW(g_wnd, msg, title, MB_OK | (code ? MB_ICONWARNING : MB_ICONINFORMATION));
         free(msg);
         free(out);
         return;
     }
     msg = report_text(out, L"\n\nImport these sites into OpenLiteSpeed?");
     free(out);
-    if (!msg || MessageBoxW(g_wnd, msg, L"Import Apache sites", MB_YESNO | MB_ICONQUESTION) != IDYES)
+    if (!msg || MessageBoxW(g_wnd, msg, title, MB_YESNO | MB_ICONQUESTION) != IDYES)
     {
         free(msg);
         return;
     }
     free(msg);
     if (conf[0])
-        swprintf(args, MAX_PATH + 64, L"--import-apache \"%s\"", conf);
+        swprintf(args, MAX_PATH + 64, L"--import-%s \"%s\"", kind, conf);
     else
-        wcscpy(args, L"--import-apache");
+        swprintf(args, MAX_PATH + 64, L"--import-%s", kind);
     code = run_capture(args, &out);
-    swprintf(log, MAX_PATH, L"%s\\logs\\apache-import.log", g_root);
+    swprintf(log, MAX_PATH, L"%s\\logs\\%s-import.log", g_root, kind);
     h = CreateFileW(log, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h != INVALID_HANDLE_VALUE)
     {
@@ -381,13 +389,16 @@ static void import_apache(void)
     }
     if (code == 0)
     {
+        wchar_t done[64], where[96];
         if (g_running)
             run_tool(L"-s reload", 1);
-        notify(L"Apache sites imported", L"The report is in logs\\apache-import.log.");
+        swprintf(done, 64, L"%s sites imported", label);
+        swprintf(where, 96, L"The report is in logs\\%s-import.log.", kind);
+        notify(done, where);
     }
     else if ((msg = report_text(out, L"")) != NULL)
     {
-        MessageBoxW(g_wnd, msg, L"Import Apache sites", MB_OK | MB_ICONWARNING);
+        MessageBoxW(g_wnd, msg, title, MB_OK | MB_ICONWARNING);
         free(msg);
     }
     free(out);
@@ -753,6 +764,7 @@ static void show_menu(void)
     AppendMenuW(sites, MF_STRING, ID_SETWWW, L"Change projects folder...");
     AppendMenuW(sites, MF_SEPARATOR, 0, NULL);
     AppendMenuW(sites, MF_STRING, ID_IMPORT, L"Import Apache sites...");
+    AppendMenuW(sites, MF_STRING, ID_IMPORT_NGINX, L"Import nginx sites...");
     AppendMenuW(m, MF_POPUP, (UINT_PTR)sites, L"Sites");
     for (i = 0; i < phpd_count; ++i)
     {
@@ -837,7 +849,9 @@ static void on_command(int id)
     else if (id == ID_SETWWW)
         choose_www();
     else if (id == ID_IMPORT)
-        import_apache();
+        import_sites(0);
+    else if (id == ID_IMPORT_NGINX)
+        import_sites(1);
     else if (id == ID_ERRLOG || id == ID_ACCLOG)
     {
         swprintf(buf, MAX_PATH, L"%s\\logs\\%s", g_root, id == ID_ERRLOG ? L"error.log" : L"access.log");
