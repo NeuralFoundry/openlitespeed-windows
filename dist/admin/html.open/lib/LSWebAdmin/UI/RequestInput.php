@@ -80,7 +80,7 @@ class RequestInput
     public function GrabGoodInputWithReset($origin, $name, $type = '')
     {
         $val = $this->GrabInput($origin, $name, $type);
-        $needReset = (($val != null) && (strpos($val, '<') !== false && strpos($val, '?<') === false));
+        $needReset = (($val != null) && (strpos($val, '<') !== false));
 
         if ($needReset) {
             $this->resetValue($origin, $name);

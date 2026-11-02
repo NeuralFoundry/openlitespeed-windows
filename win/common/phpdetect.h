@@ -125,35 +125,6 @@ static void phpd_scan(const wchar_t *base, const wchar_t *pattern, const wchar_t
     FindClose(f);
 }
 
-static void phpd_scan_roots(const wchar_t *parent, const wchar_t *pattern, const wchar_t *inner,
-                            const wchar_t *source, const wchar_t *ols_root)
-{
-    wchar_t drives[128], *d, pat[MAX_PATH], p[MAX_PATH];
-    WIN32_FIND_DATAW fd;
-    HANDLE f;
-    if (!GetLogicalDriveStringsW(128, drives))
-        return;
-    for (d = drives; *d; d += wcslen(d) + 1)
-    {
-        if (GetDriveTypeW(d) != DRIVE_FIXED)
-            continue;
-        swprintf(pat, MAX_PATH, L"%s%s%s", d, parent, pattern);
-        f = FindFirstFileW(pat, &fd);
-        if (f == INVALID_HANDLE_VALUE)
-            continue;
-        do
-        {
-            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && fd.cFileName[0] != L'.')
-            {
-                swprintf(p, MAX_PATH, L"%s%s%s%s", d, parent, fd.cFileName, inner);
-                phpd_scan(p, L"*", source, ols_root);
-            }
-        }
-        while (FindNextFileW(f, &fd));
-        FindClose(f);
-    }
-}
-
 static int phpd_reg_string(HKEY root, const wchar_t *key, const wchar_t *name, wchar_t *out, DWORD len)
 {
     DWORD type, size = len * sizeof(wchar_t);
@@ -169,9 +140,9 @@ static int phpd_uninstall_location(const wchar_t *display_prefix, wchar_t *out)
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
         L"Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
     };
-    HKEY roots[2] = { HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER };
+    HKEY roots[1] = { HKEY_LOCAL_MACHINE };
     int r, k;
-    for (r = 0; r < 2; ++r)
+    for (r = 0; r < 1; ++r)
         for (k = 0; k < 2; ++k)
         {
             HKEY h;
@@ -303,8 +274,7 @@ static int phpd_cmp(const void *a, const void *b)
 
 static void phpd_detect(const wchar_t *laragon, const wchar_t *xampp, const wchar_t *ols_root)
 {
-    wchar_t p[MAX_PATH], env[MAX_PATH], *path, *tok, *ctx;
-    DWORD n;
+    wchar_t p[MAX_PATH], env[MAX_PATH];
     phpd_count = 0;
     if (laragon && laragon[0])
     {
@@ -321,18 +291,6 @@ static void phpd_detect(const wchar_t *laragon, const wchar_t *xampp, const wcha
         swprintf(p, MAX_PATH, L"%s\\php", ols_root);
         phpd_scan(p, L"*", L"OpenLiteSpeed", ols_root);
     }
-    n = GetEnvironmentVariableW(L"PATH", NULL, 0);
-    if (n && (path = (wchar_t *)malloc(n * sizeof(wchar_t))) != NULL)
-    {
-        GetEnvironmentVariableW(L"PATH", path, n);
-        for (tok = wcstok(path, L";", &ctx); tok; tok = wcstok(NULL, L";", &ctx))
-            if (tok[0])
-                phpd_add(tok, L"PATH", ols_root);
-        free(path);
-    }
-    phpd_scan_roots(L"", L"php*", L"", L"PHP", ols_root);
-    phpd_scan_roots(L"", L"wamp*", L"\\bin\\php", L"WampServer", ols_root);
-    phpd_scan_roots(L"tools\\", L"php*", L"", L"Chocolatey", ols_root);
     if (GetEnvironmentVariableW(L"ProgramFiles", env, MAX_PATH))
     {
         swprintf(p, MAX_PATH, L"%s\\PHP", env);

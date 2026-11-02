@@ -487,6 +487,10 @@ class ControllerBase
 
 	protected function buildConfigActionRequest($confdata)
 	{
+		$ctxseq = (int) UIBase::GrabGoodInputWithReset('ANY', 'ctxseq', 'int');
+		if ($ctxseq != 0 && !CAuthorizer::VerifyCsrfToken('any')) {
+			$ctxseq = 0;
+		}
 		return new ConfigActionRequest(
 			ConfigActionContext::fromDisplay($this->getDisplay()),
 			$confdata,
@@ -498,7 +502,7 @@ class ControllerBase
 				return $this->instantiateTemplate();
 			},
 			UI::class,
-			UIBase::GrabGoodInputWithReset('ANY', 'ctxseq', 'int'),
+			$ctxseq,
 			UIBase::GrabGoodInputWithReset('ANY', 'ctxorder')
 		);
 	}

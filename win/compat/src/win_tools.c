@@ -108,7 +108,20 @@ done:
 int ols_set_admin_password(const char *htpasswd, const char *user, const char *pass)
 {
     unsigned char rnd[16];
-    char salt[64], hash[128], line[256];
+    char salt[64], hash[128], line[256], input[256];
+    if (pass && pass[0] == '-' && pass[1] == '\0')
+    {
+        size_t len;
+        if (!fgets(input, sizeof(input), stdin))
+        {
+            fprintf(stderr, "failed to read password from stdin\n");
+            return 2;
+        }
+        len = strlen(input);
+        while (len > 0 && (input[len - 1] == '\n' || input[len - 1] == '\r'))
+            input[--len] = 0;
+        pass = input;
+    }
     if (!user || !*user || strchr(user, ':') || !pass || strlen(pass) < 8)
     {
         fprintf(stderr, "user name must not contain ':' and password must be at least 8 characters\n");

@@ -338,7 +338,7 @@ if (-not $AdminPassword) {
     $AdminPassword = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
     $generated = $true
 }
-& $Exe --admin-password (Join-Path $Root 'admin\conf\htpasswd') $AdminPassword admin
+$AdminPassword | & $Exe --admin-password (Join-Path $Root 'admin\conf\htpasswd') '-' admin
 if ($LASTEXITCODE -ne 0) { throw 'setting the admin password failed' }
 
 $withRoot = $Mode -ne 'standalone'

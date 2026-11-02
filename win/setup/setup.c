@@ -625,6 +625,14 @@ static void log_line(const wchar_t *s)
         PostMessageW(g_wnd, WM_LOG, 0, (LPARAM)copy);
 }
 
+static int unsafe_arg(const wchar_t *s)
+{
+    for (; *s; ++s)
+        if (*s == L'"' || *s < 0x20)
+            return 1;
+    return 0;
+}
+
 static DWORD run_capture(const wchar_t *cmdline, const wchar_t *cwd)
 {
     SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
@@ -665,8 +673,12 @@ static DWORD run_capture(const wchar_t *cmdline, const wchar_t *cwd)
                 line[ll] = 0;
                 MultiByteToWideChar(CP_OEMCP, 0, line, -1, w, 4096);
                 if (wcsncmp(w, L"Admin password: ", 16) == 0)
+                {
                     swscanf(w + 16, L"%63s", g_password);
-                if (w[0])
+                    if (!g_silent)
+                        log_line(w);
+                }
+                else if (w[0])
                     log_line(w);
                 ll = 0;
             }
@@ -791,6 +803,12 @@ static DWORD WINAPI install_thread(void *arg)
     }
     {
         wchar_t php_arg[MAX_PATH + 32], cur[MAX_PATH];
+        if (unsafe_arg(g_www) || unsafe_arg(g_phpdir) || unsafe_arg(g_port) || unsafe_arg(g_aport))
+        {
+            log_line(L"Error: invalid characters in a setup value.");
+            PostMessageW(g_wnd, WM_DONE, 0, 0);
+            return 0;
+        }
         if (g_upgrade && !g_download[0] && !g_phpdir[0] && conf_php_dir(g_dir, cur))
             wcscpy(g_phpdir, cur);
         if (g_download[0])
@@ -1305,6 +1323,8 @@ static int silent_install(int argc, LPWSTR *argv)
         wcscat(logpath, L"OpenLiteSpeed-setup.log");
     }
     g_log = _wfopen(logpath, L"w, ccs=UTF-8");
+    if (AttachConsole(ATTACH_PARENT_PROCESS))
+        _wfreopen(L"CONOUT$", L"w", stdout);
     detect_all();
     v = arg_value(argc, argv, L"--mode");
     g_mode = v ? (wcscmp(v, L"laragon") == 0 ? 1 : wcscmp(v, L"xampp") == 0 ? 2 : 0) : default_mode();
@@ -1367,9 +1387,10 @@ static int silent_install(int argc, LPWSTR *argv)
     install_thread(NULL);
     if (g_password[0])
     {
-        wchar_t line[128];
-        swprintf(line, 128, L"Admin password: %s", g_password);
-        log_line(line);
+        fwprintf(stdout, L"Admin password: %s\n", g_password);
+        fflush(stdout);
+        if (g_log)
+            fwprintf(g_log, L"Admin password: ********\n");
     }
     if (g_log)
         fclose(g_log);

@@ -10,10 +10,19 @@ use LSWebAdmin\UI\UIBase;
 
 class LogViewerAjax
 {
+    private static function emitJson($data)
+    {
+        if (!headers_sent()) {
+            header('Content-Type: application/json; charset=UTF-8');
+            header('X-Content-Type-Options: nosniff');
+        }
+        echo json_encode($data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+    }
+
     public static function viewLog()
     {
         $logfilter = Service::ServiceData(SInfo::DATA_VIEW_LOG);
-        echo json_encode(self::buildResponse($logfilter, 'browse'));
+        self::emitJson(self::buildResponse($logfilter, 'browse'));
     }
 
     public static function searchLog()
@@ -28,7 +37,7 @@ class LogViewerAjax
         }
 
         $logfilter = LogViewer::SearchLog($defaultFile, $requestedFile, $searchTerm, $level, LogViewer::SEARCH_MAX_RESULTS);
-        echo json_encode(self::buildResponse($logfilter, 'search', (string) $searchTerm, $browseFilter));
+        self::emitJson(self::buildResponse($logfilter, 'search', (string) $searchTerm, $browseFilter));
     }
 
     public static function downloadLog()

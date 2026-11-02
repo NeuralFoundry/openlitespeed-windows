@@ -269,11 +269,8 @@ class DTblRenderer
         $ref = $disp->GetRef();
         if ($this->_table->shouldShowParentRef() && $ref != null) {
             $pos = strpos($ref, '`');
-            if ($pos !== false) {
-                $title .= ' - ' . substr($ref, 0, $pos);
-            } else {
-                $title .= ' - ' . $ref;
-            }
+            $refText = ($pos !== false) ? substr($ref, 0, $pos) : $ref;
+            $title .= ' - ' . UIBase::Escape($refText);
         }
 
         $all_blocked = true;
