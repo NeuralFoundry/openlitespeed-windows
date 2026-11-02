@@ -18,6 +18,10 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Exe = Join-Path $Root 'bin\openlitespeed.exe'
 $env:OLS_ROOT = $Root
+foreach ($old in 'dbg-8.4-nts', 'exp-8.4-nts') {
+    $d = Join-Path $Root "bin\lsphp\$old"
+    if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }
+}
 
 function Fwd([string]$p) { return $p.Replace('\', '/') }
 function Say([string]$m) { if (-not $Quiet) { Write-Host $m } }

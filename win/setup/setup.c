@@ -767,6 +767,18 @@ static DWORD WINAPI install_thread(void *arg)
         PostMessageW(g_wnd, WM_DONE, 0, 0);
         return 0;
     }
+    if (g_upgrade)
+    {
+        static const wchar_t *old[] = { L"dbg-8.4-nts", L"exp-8.4-nts" };
+        int i;
+        for (i = 0; i < 2; ++i)
+        {
+            swprintf(path, MAX_PATH, L"%s\\bin\\lsphp\\%s\\lsphp.exe", g_dir, old[i]);
+            DeleteFileW(path);
+            *wcsrchr(path, L'\\') = 0;
+            RemoveDirectoryW(path);
+        }
+    }
     {
         wchar_t php_arg[MAX_PATH + 32], cur[MAX_PATH];
         if (g_upgrade && !g_download[0] && !g_phpdir[0] && conf_php_dir(g_dir, cur))

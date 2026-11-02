@@ -17,7 +17,7 @@ Copy-Item (Join-Path $Top 'build\openlitespeed.exe') (Join-Path $Out 'bin')
 Copy-Item (Join-Path $Top 'build\olstray.exe') (Join-Path $Out 'bin')
 Copy-Item (Join-Path $Top 'build\lsrecaptcha.exe') (Join-Path $Out 'bin')
 Copy-Item (Join-Path $Dist 'lsrecaptcha\_recaptcha.shtml') (Join-Path $Out 'lsrecaptcha')
-Get-ChildItem (Join-Path $Top 'build') -Directory -Filter 'lsphp-*' | ForEach-Object {
+Get-ChildItem (Join-Path $Top 'build') -Directory -Filter 'lsphp-*' | Where-Object { $_.Name -match '^lsphp-\d+\.\d+-n?ts$' } | ForEach-Object {
     $exe = Join-Path $_.FullName 'lsphp.exe'
     if (Test-Path $exe) {
         $dest = Join-Path $Out ('bin\lsphp\' + $_.Name.Substring(6))
