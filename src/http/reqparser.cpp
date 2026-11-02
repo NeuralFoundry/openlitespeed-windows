@@ -506,6 +506,14 @@ int ReqParser::multipartParseHeader(char *pBegin, char *pLineEnd)
                             //m_iFormState = PARSE_FORM_NAME;
                             //Need to append to bodyBuf path, name, content_type
                             appendFileKeyValue("_name", 5, fileStr, fileStrLen, true);
+#ifdef _WIN32
+                            char nativePath[4096];
+                            int nativeLen = ols_native_path(p, strlen(p), nativePath,
+                                                            sizeof(nativePath));
+                            if (nativeLen > 0)
+                                appendFileKeyValue("_path", 5, nativePath, nativeLen);
+                            else
+#endif
                             appendFileKeyValue("_path", 5, p, strlen(p));
                             ls_md5_init(&m_md5Ctx);
                         }
@@ -622,6 +630,11 @@ int ReqParser::checkBoundary(char *&pBegin, char *&pCur)
                 m_pLastFileBuf->shrinkBuf(size - additionalBytes);
             }
             closeLastMFile();
+#ifdef _WIN32
+            if (m_args > 0 && m_pArgs[m_args - 1].filePath)
+                truncate(m_pArgs[m_args - 1].filePath,
+                         size - (additionalBytes > 0 ? additionalBytes : 0));
+#endif
 
             char s[30] = {0};
             int l = ls_snprintf(s, 30, "%ld", (long)(size - additionalBytes));

@@ -165,6 +165,9 @@ ModuleManager::iterator ModuleManager::addModule(const char *name,
 extern int getPrelinkedModuleCount();
 extern lsi_module_t *getPrelinkedModuleByIndex(unsigned int index,
         const char **pName);
+#ifdef _WIN32
+extern lsi_module_t *getOptionalPrelinkedModule(const char *pName);
+#endif
 
 
 int ModuleManager::loadPrelinkedModules()
@@ -208,6 +211,15 @@ lsi_module_t *ModuleManager::loadModule(const char *name)
         return NULL;
     }
 
+#ifdef _WIN32
+    if ((pModule = getOptionalPrelinkedModule(name)) != NULL)
+    {
+        if (addModule(name, "Internal", pModule) != end())
+            return pModule;
+        LS_ERROR("Failed to load module [%s], error: Registration failure.", name);
+        return NULL;
+    }
+#endif
     //prelinked checked, now, check file
     char sFilePath[512];
     getModulePath(name, sFilePath, sizeof(sFilePath));

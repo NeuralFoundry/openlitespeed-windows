@@ -119,6 +119,8 @@ target_include_directories(olsimport PRIVATE "${OLS_TOP}/win/common")
 add_executable(openlitespeed
     "${OLS_SRC}/modules/prelinkedmods.cpp"
     "${OLS_SRC}/modules/modacme/mod_acme.c"
+    "${OLS_SRC}/modules/uploadprogress/uploadprogress.cpp"
+    "${OLS_SRC}/modules/modreqparser/modreqparser.cpp"
     "${OLS_SRC}/httpdtest.cpp"
     "${OLS_SRC}/main.cpp")
 target_compile_options(openlitespeed PRIVATE "/FI${COMPAT}/include/ols_win.h")

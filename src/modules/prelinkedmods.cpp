@@ -24,6 +24,8 @@ extern lsi_module_t moddecompress;
 extern lsi_module_t cache;
 #ifdef _WIN32
 extern "C" lsi_module_t mod_acme;
+extern lsi_module_t uploadprogress;
+extern lsi_module_t modreqparser;
 #endif
 
 extern int addModgzipFilter(lsi_session_t *session, int isSend,
@@ -39,11 +41,25 @@ Prelinked_Module g_prelinked[] =
     { "modcompress",    &modcompress   },
     { "moddecompress",  &moddecompress },
     { "cache",          &cache         }
-#ifdef _WIN32
-    , { "mod_acme",     &mod_acme      }
-#endif
 
 };
+
+#ifdef _WIN32
+Prelinked_Module g_optional[] =
+{
+    { "mod_acme",       &mod_acme       },
+    { "uploadprogress", &uploadprogress },
+    { "modreqparser",   &modreqparser   }
+};
+
+lsi_module_t *getOptionalPrelinkedModule(const char *pName)
+{
+    for (unsigned int i = 0; i < sizeof(g_optional) / sizeof(Prelinked_Module); ++i)
+        if (strcmp(g_optional[i]._pName, pName) == 0)
+            return g_optional[i]._pModule;
+    return NULL;
+}
+#endif
 
 int getPrelinkedModuleCount()
 {
