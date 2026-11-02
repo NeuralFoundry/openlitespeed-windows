@@ -15,6 +15,9 @@ call :dep brotli "-DBROTLI_DISABLE_TESTS=ON -DBROTLI_BUILD_TOOLS=OFF" || exit /b
 call :dep udns "-DUDNS_SRC=%D:\=/%/udns" "%~dp0udns" || exit /b 1
 call :dep libmaxminddb "-DBUILD_TESTING=OFF -DMAXMINDDB_BUILD_BINARIES=OFF -DMSVC_STATIC_RUNTIME=ON" || exit /b 1
 call :dep ip2location "-DIP2LOC_SRC=%D:\=/%/ip2location" "%~dp0ip2location" || exit /b 1
+call :dep yajl "-DYAJL_SRC=%D:\=/%/yajl" "%~dp0yajl" || exit /b 1
+call :dep libxml2 "-DLIBXML2_WITH_ICONV=OFF -DLIBXML2_WITH_ICU=OFF -DLIBXML2_WITH_LZMA=OFF -DLIBXML2_WITH_ZLIB=OFF -DLIBXML2_WITH_PROGRAMS=OFF -DLIBXML2_WITH_TESTS=OFF -DLIBXML2_WITH_PYTHON=OFF -DLIBXML2_WITH_MODULES=OFF -DLIBXML2_WITH_CATALOG=OFF -DLIBXML2_WITH_HTTP=OFF -DLIBXML2_WITH_DEBUG=OFF -DLIBXML2_WITH_DOCS=OFF" || exit /b 1
+call :dep modsecurity "-DMSC_SRC=%D:\=/%/modsecurity -DOLS_DEPS=%P:\=/%" "%~dp0modsecurity" || exit /b 1
 
 if exist "%P%\lib\luajit.lib" goto luajit_done
 echo [luajit]

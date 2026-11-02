@@ -104,6 +104,34 @@ RewriteRule .* - [F]
 
 `ip2locDBCache` is `FileIo`, `MemoryCache` or `SharedMemoryCache`. On Windows `SharedMemoryCache` works like `MemoryCache`, so each HTTP worker keeps its own copy of the database. A database that cannot be read is tested in a separate process and disabled with an error in the log; the server keeps running.
 
+## Web application firewall
+
+ModSecurity 3.0.17 and the OWASP Core Rule Set 4.30 are included and stay off until they are turned on:
+
+```bat
+bin\openlitespeed.exe --modsec-install
+bin\openlitespeed.exe -s reload
+```
+
+`--modsec-install` adds the `mod_security` module to `conf\httpd_config.conf` with the rules in `conf\modsec\main.conf`. Requests that the rules recognize as attacks, such as SQL injection, cross site scripting or path traversal in the URL, a form, a JSON or an XML body, or a known scanner, answer 403. With `--detection-only` matches are only written to `logs\modsec_audit.log`, which helps to find false positives before blocking. `--modsec-install --remove` turns the firewall off.
+
+| File | Content |
+|---|---|
+| `conf\modsec\main.conf` | Loads the files below. Own rules and exclusions go at the end. |
+| `conf\modsec\modsecurity.conf` | Engine settings, based on the recommended ModSecurity configuration |
+| `conf\modsec\crs-setup.conf` | Core Rule Set settings, such as the paranoia level |
+| `modsec\crs\rules` | The Core Rule Set, replaced on upgrade |
+
+The files in `conf\modsec` are kept on upgrade. A rule at the end of `main.conf` turns the firewall off for a path, for example:
+
+```apache
+SecRule REQUEST_URI "@beginsWith /wp-admin/" "id:1000,phase:1,pass,nolog,ctl:ruleEngine=Off"
+```
+
+`RESPONSE-955-WEB-SHELLS.conf` and its list `web-shells-php.data` are not included: Microsoft Defender reports the list as malware and deletes it, and then the whole rule set fails to load. When you install another Core Rule Set version, leave out these two files. If the rules cannot be loaded, the error is written to `logs\error.log` and requests are served without the firewall.
+
+With the Core Rule Set at paranoia level 1, a PHP request takes about 1 ms more processor time.
+
 ## Several HTTP workers
 
 Every HTTP worker keeps its own list of clients, as on Linux. Request and bandwidth limits apply to each connection as configured, but connection counts and passed challenges are counted per worker: with 8 workers a client can open up to 8 times `hardLimit` connections, and a visitor may be challenged again when a new connection reaches another worker. Set **Number of Workers** to 1 when exact connection limits matter more than using every CPU core.

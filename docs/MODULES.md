@@ -6,6 +6,7 @@ On Linux, OpenLiteSpeed loads modules from `.so` files in the `modules` folder. 
 |---|---|
 | `cache` (LSCache), `modcompress`, `moddecompress` | Always |
 | `mod_acme` | When automatic certificates are set up, see [ACME.md](ACME.md) |
+| `mod_security` | When the firewall is turned on, see [PROTECTION.md](PROTECTION.md#web-application-firewall) |
 | `uploadprogress`, `modreqparser`, `mod_lua` | When `conf\httpd_config.conf` has a `module` block for them, as on Linux |
 
 ## uploadprogress

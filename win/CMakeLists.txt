@@ -127,6 +127,7 @@ add_executable(openlitespeed
     "${OLS_SRC}/modules/uploadprogress/uploadprogress.cpp"
     "${OLS_SRC}/modules/modreqparser/modreqparser.cpp"
     ${LUA_SRC}
+    "${OLS_SRC}/modules/modsecurity-ls/mod_security.cpp"
     "${OLS_SRC}/httpdtest.cpp"
     "${OLS_SRC}/main.cpp")
 target_compile_options(openlitespeed PRIVATE "/FI${COMPAT}/include/ols_win.h")
@@ -142,6 +143,8 @@ target_link_libraries(openlitespeed
     "${DEPS}/lib/brotlienc.lib" "${DEPS}/lib/brotlidec.lib" "${DEPS}/lib/brotlicommon.lib"
     "${DEPS}/lib/udns.lib" "${DEPS}/lib/maxminddb.lib" "${DEPS}/lib/IP2Location.lib"
     "${DEPS}/lib/luajit.lib"
+    "${DEPS}/lib/modsecurity.lib" "${DEPS}/lib/injection.lib" "${DEPS}/lib/mbedcrypto.lib"
+    "${DEPS}/lib/yajl.lib" "${DEPS}/lib/libxml2s.lib"
     ws2_32 mswsock bcrypt crypt32 iphlpapi userenv advapi32 ntdll winhttp)
 file(STRINGS "${OLS_TOP}/win/RELEASE" OLS_RELEASE LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${OLS_TOP}/win/RELEASE")

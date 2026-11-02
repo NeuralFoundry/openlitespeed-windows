@@ -1042,6 +1042,7 @@ int ols_import_apache(int argc, char **argv);
 int ols_lscgid_main(int argc, char **argv);
 typedef void (*ols_acme_log_fn)(int error, const char *msg);
 int ols_acme_main(int argc, char **argv);
+int ols_modsec_main(int argc, char **argv);
 int ols_acme_order(const char *configDir, const char *serverUrl, const char *domain,
                    const char *const *names, int nnames, const char *alts, ols_acme_log_fn log);
 int ols_win_control(const char *cmd);

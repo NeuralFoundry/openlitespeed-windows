@@ -65,7 +65,7 @@ void ls_confparser_d(ls_confparser_t *pThis)
 }
 
 
-inline ls_objarray_t *ls_confparser_line(
+ls_objarray_t *ls_confparser_line(
     ls_confparser_t *pThis, const char *pLine, const char *pLineEnd)
 {
     return ls_conf_parse(pThis, pLine, pLineEnd, skipLeadingWhiteSpace);

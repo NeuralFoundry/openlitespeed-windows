@@ -743,6 +743,8 @@ static DWORD run_tool(const wchar_t *dir, const wchar_t *args)
     return run_capture(cmd, dir);
 }
 
+static void delete_tree(const wchar_t *dir, const wchar_t *keep);
+
 static DWORD WINAPI install_thread(void *arg)
 {
     wchar_t cmd[4096], path[MAX_PATH], sm[MAX_PATH], self[MAX_PATH];
@@ -759,6 +761,9 @@ static DWORD WINAPI install_thread(void *arg)
         log_line(L"Existing installation found, upgrading (settings are kept).");
         stop_tray(g_dir);
         run_tool(g_dir, L"-s stop");
+        swprintf(path, MAX_PATH, L"%s\\modsec\\crs", g_dir);
+        delete_tree(path, NULL);
+        RemoveDirectoryW(path);
     }
     log_line(L"Copying files...");
     if (extract(g_dir) < 0)

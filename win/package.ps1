@@ -34,6 +34,18 @@ Copy-Item -Recurse (Join-Path $Dist 'admin\html.open') (Join-Path $Out 'admin\ht
 Copy-Item -Recurse (Join-Path $Dist 'admin\html.disabled') (Join-Path $Out 'admin\html.disabled')
 Copy-Item -Recurse (Join-Path $Dist 'Example\html') (Join-Path $Out 'Example\html')
 Copy-Item -Recurse (Join-Path $Dist 'share\autoindex') (Join-Path $Out 'share\autoindex')
+$Msc = Join-Path $Top '.deps\modsecurity'
+$Crs = Join-Path $Top '.deps\coreruleset'
+New-Item -ItemType Directory -Force (Join-Path $Out 'conf\modsec'), (Join-Path $Out 'modsec\crs\rules') | Out-Null
+Get-ChildItem (Join-Path $Crs 'rules') -File | Where-Object { $_.Name -notin 'RESPONSE-955-WEB-SHELLS.conf', 'web-shells-php.data' } |
+    Copy-Item -Destination (Join-Path $Out 'modsec\crs\rules')
+Copy-Item (Join-Path $Crs 'LICENSE') (Join-Path $Out 'modsec\crs\LICENSE')
+Copy-Item (Join-Path $Crs 'crs-setup.conf.example') (Join-Path $Out 'conf\modsec\crs-setup.conf')
+Copy-Item (Join-Path $Msc 'unicode.mapping') (Join-Path $Out 'conf\modsec')
+$rec = [IO.File]::ReadAllText((Join-Path $Msc 'modsecurity.conf-recommended')).Replace('SecRuleEngine DetectionOnly', 'SecRuleEngine On')
+[IO.File]::WriteAllText((Join-Path $Out 'conf\modsec\modsecurity.conf'), $rec)
+[IO.File]::WriteAllText((Join-Path $Out 'conf\modsec\main.conf'),
+    "Include modsecurity.conf`nInclude crs-setup.conf`nInclude ../../modsec/crs/rules/*.conf`n")
 Copy-Item (Join-Path $Pkg 'install.ps1') $Out
 Copy-Item (Join-Path $Top 'LICENSE') (Join-Path $Out 'LICENSE.txt')
 Copy-Item (Join-Path $Pkg 'THIRD-PARTY-NOTICES.txt') $Out

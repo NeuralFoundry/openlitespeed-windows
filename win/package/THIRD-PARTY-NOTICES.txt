@@ -21,6 +21,12 @@ wepoll                 BSD-2-Clause        https://github.com/piscisaureus/wepol
 libmaxminddb           Apache-2.0          https://github.com/maxmind/libmaxminddb
 IP2Location C Library  MIT                 https://github.com/chrislim2888/IP2Location-C-Library
 LuaJIT                 MIT                 https://luajit.org
+ModSecurity            Apache-2.0          https://github.com/owasp-modsecurity/ModSecurity
+OWASP CRS              Apache-2.0          https://github.com/coreruleset/coreruleset
+libinjection           BSD-3-Clause        https://github.com/libinjection/libinjection
+Mbed TLS               Apache-2.0          https://github.com/Mbed-TLS/mbedtls
+yajl                   ISC                 https://github.com/lloyd/yajl
+libxml2                MIT                 https://gitlab.gnome.org/GNOME/libxml2
 
 bin\lsphp\*\lsphp.exe is built from the LiteSpeed SAPI of PHP:
 

@@ -1021,14 +1021,17 @@ S admin_email(const S &conf)
     return v == "root@localhost" || v.find('@') == S::npos ? S() : v;
 }
 
-bool set_module(const S &conf, const S &thumb)
+bool set_block(const S &conf, const S &name, const S &block)
 {
     S text;
     if (!read_file(conf, text))
         return false;
-    S block = "module mod_acme {\nacmeEnable 1\nacmeThumbPrint " + thumb + "\n}\n";
-    size_t p = text.find("module mod_acme");
-    if (p != S::npos && (p == 0 || text[p - 1] == '\n'))
+    S key = "module " + name;
+    size_t p = text.find(key);
+    while (p != S::npos && !((p == 0 || text[p - 1] == '\n')
+                             && (text[p + key.size()] == ' ' || text[p + key.size()] == '{')))
+        p = text.find(key, p + 1);
+    if (p != S::npos)
     {
         size_t e = text.find('}', p);
         if (e == S::npos)
@@ -1036,13 +1039,18 @@ bool set_module(const S &conf, const S &thumb)
         e = text.find_first_not_of("\r\n", e + 1);
         text.replace(p, (e == S::npos ? text.size() : e) - p, block);
     }
-    else
+    else if (!block.empty())
     {
         if (!text.empty() && text.back() != '\n')
             text += "\n";
         text += "\n" + block;
     }
     return write_file(conf, text);
+}
+
+bool set_module(const S &conf, const S &thumb)
+{
+    return set_block(conf, "mod_acme", "module mod_acme {\nacmeEnable 1\nacmeThumbPrint " + thumb + "\n}\n");
 }
 
 bool set_acme_on(const S &conf)
@@ -1238,5 +1246,78 @@ extern "C" int ols_acme_main(int argc, char **argv)
     printf("ACME account %s\nserver %s\n%s\nACME is on. After a reload, sites on HTTPS listeners get a certificate "
            "for their domains unless they have their own certificate files.\n",
            acme.kid.c_str(), server.c_str(), email.empty() ? "no contact email" : ("contact " + email).c_str());
+    return 0;
+}
+
+static S set_directive(S text, const S &name, const S &value)
+{
+    size_t p = 0;
+    while ((p = text.find(name + " ", p)) != S::npos)
+    {
+        if (p == 0 || text[p - 1] == '\n')
+        {
+            size_t e = text.find_first_of("\r\n", p);
+            text.replace(p, (e == S::npos ? text.size() : e) - p, name + " " + value);
+            break;
+        }
+        p += name.size();
+    }
+    return text;
+}
+
+extern "C" int ols_modsec_main(int argc, char **argv)
+{
+    bool remove = false, detect = false;
+    for (int i = 0; i < argc; ++i)
+    {
+        if (strcmp(argv[i], "--remove") == 0)
+            remove = true;
+        else if (strcmp(argv[i], "--detection-only") == 0)
+            detect = true;
+        else
+        {
+            fprintf(stderr, "usage: openlitespeed --modsec-install [--detection-only] | --modsec-install --remove\n");
+            return 2;
+        }
+    }
+    S root = root_dir();
+    if (root.empty())
+    {
+        fprintf(stderr, "OLS_ROOT is not set\n");
+        return 2;
+    }
+    S conf = root + "\\conf\\httpd_config.conf", dir = root + "\\conf\\modsec", rules, fwd = root;
+    if (remove)
+    {
+        if (!set_block(conf, "mod_security", S()))
+        {
+            fprintf(stderr, "cannot update %s\n", conf.c_str());
+            return 1;
+        }
+        printf("ModSecurity is off after a reload.\n");
+        return 0;
+    }
+    for (auto &c : fwd)
+        if (c == '\\')
+            c = '/';
+    if (!read_file(dir + "\\modsecurity.conf", rules))
+    {
+        fprintf(stderr, "%s\\modsecurity.conf is missing\n", dir.c_str());
+        return 1;
+    }
+    rules = set_directive(rules, "SecAuditLog", fwd + "/logs/modsec_audit.log");
+    rules = set_directive(rules, "SecTmpDir", fwd + "/tmp/");
+    rules = set_directive(rules, "SecDataDir", fwd + "/tmp/");
+    S block = "module mod_security {\nmodsecurity on\n";
+    if (detect)
+        block += "modsecurity_rules `SecRuleEngine DetectionOnly`\n";
+    block += "modsecurity_rules_file " + fwd + "/conf/modsec/main.conf\nls_enabled 1\n}\n";
+    if (!write_file(dir + "\\modsecurity.conf", rules) || !set_block(conf, "mod_security", block))
+    {
+        fprintf(stderr, "cannot update %s\n", conf.c_str());
+        return 1;
+    }
+    printf("ModSecurity with the OWASP Core Rule Set is on after a reload%s.\nRules: %s\\main.conf\n",
+           detect ? ", in detection only mode" : "", dir.c_str());
     return 0;
 }

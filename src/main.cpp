@@ -89,6 +89,8 @@ int main(int argc, char *argv[])
         return ols_import_apache(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--acme-install") == 0)
         return ols_acme_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--modsec-install") == 0)
+        return ols_modsec_main(argc - 2, argv + 2);
     if (argc >= 7 && strcmp(argv[1], "--acme-batch") == 0)
         return acmeBatchMain(argc, argv);
     if (argc >= 4 && strcmp(argv[1], "--test-ip2loc") == 0)

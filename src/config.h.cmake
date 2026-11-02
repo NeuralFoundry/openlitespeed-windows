@@ -8,7 +8,7 @@
 #define PID_FILE        "/tmp/lshttpd/lshttpd.pid"
 
 #define PACKAGE_VERSION "@CMAKE_PROJECT_VERSION@"
-#define LS_MODULE_VERSION_INFO "\tlsquic " LSQUIC_VERSION_STR "\n\tmodgzip 1.1\n\tcache 1.66\n\tmod_acme 1.0\n\tuploadprogress 1.1\n\tmodreqparser 1.0\n\tmod_lua 1.1\n"
-#define LS_MODULE_VERSION_INFO_ONELINE "lsquic " LSQUIC_VERSION_STR ", modgzip 1.1, cache 1.66, mod_acme 1.0, uploadprogress 1.1, modreqparser 1.0, mod_lua 1.1"
+#define LS_MODULE_VERSION_INFO "\tlsquic " LSQUIC_VERSION_STR "\n\tmodgzip 1.1\n\tcache 1.66\n\tmod_acme 1.0\n\tuploadprogress 1.1\n\tmodreqparser 1.0\n\tmod_lua 1.1\n\tmod_security 1.4 (with libmodsecurity v3.0.17)\n"
+#define LS_MODULE_VERSION_INFO_ONELINE "lsquic " LSQUIC_VERSION_STR ", modgzip 1.1, cache 1.66, mod_acme 1.0, uploadprogress 1.1, modreqparser 1.0, mod_lua 1.1, mod_security 1.4 (with libmodsecurity v3.0.17)"
 #endif
 

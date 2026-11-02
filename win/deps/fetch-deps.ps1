@@ -13,6 +13,10 @@ $pins = @(
     @{ Dir = 'libmaxminddb'; Url = 'https://github.com/maxmind/libmaxminddb.git';   Commit = '4a3d17a621c0ebcb81498fd34d313f67fd940ab5' },
     @{ Dir = 'ip2location';  Url = 'https://github.com/chrislim2888/IP2Location-C-Library.git'; Commit = 'e0ecd2216fb8d373fa1b3a687051100379c9f600' },
     @{ Dir = 'luajit';       Url = 'https://github.com/LuaJIT/LuaJIT.git';          Commit = 'ea9eb7edb5eac4a9d175d74523db34fac0fa5180' },
+    @{ Dir = 'modsecurity';  Url = 'https://github.com/owasp-modsecurity/ModSecurity.git'; Commit = '1925753989ccce977cdaae417b55c9726c7cf02c' },
+    @{ Dir = 'yajl';         Url = 'https://github.com/lloyd/yajl.git';             Commit = 'a0ecdde0c042b9256170f2f8890dd9451a4240aa' },
+    @{ Dir = 'libxml2';      Url = 'https://gitlab.gnome.org/GNOME/libxml2.git';    Commit = '96498992efa48d52b0e8b83058bd88dbdaf153c1' },
+    @{ Dir = 'coreruleset';  Url = 'https://github.com/coreruleset/coreruleset.git'; Commit = 'e03a4f6dabc7a30ebd8c52c97d28a154f590a48f' },
     @{ Dir = 'zlib';      Url = 'https://github.com/madler/zlib.git';               Commit = 'da607da739fa6047df13e66a2af6b8bec7c2a498' }
 )
 

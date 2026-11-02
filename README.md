@@ -19,6 +19,7 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - Free HTTPS certificates from Let's Encrypt, requested and renewed automatically by a built-in ACME client, see [docs/ACME.md](docs/ACME.md)
 - Built-in modules: LSCache, upload progress, request body parsing and Lua scripting with LuaJIT, see [docs/MODULES.md](docs/MODULES.md)
 - `.htaccess` files work as in Apache: rewrite rules, access rules (`Require`, `Order`, `Allow`, `Deny`), passwords, `<Files>` sections, `Options Indexes` and `php_flag engine off`, applied within a second when a file changes
+- Web application firewall: ModSecurity 3 with the OWASP Core Rule Set, turned on with one command, see [docs/PROTECTION.md](docs/PROTECTION.md#web-application-firewall)
 - Bot protection: reCAPTCHA or hCaptcha challenges, request, bandwidth and connection limits per client IP, and the visitor's country from MaxMind GeoIP2 or IP2Location databases for PHP and rewrite rules, see [docs/PROTECTION.md](docs/PROTECTION.md)
 - LiteSpeed Cache for WordPress works out of the box: install and activate the plugin, no server configuration needed. Pages are purged automatically when content changes.
 - Hardened for Windows: file names are checked against case, short name, stream and device name tricks, PHP runs with a restricted token and the service runs under a virtual account
@@ -135,6 +136,7 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed --set-php <folder>` | Use another PHP version |
 | `openlitespeed --import-apache [httpd.conf] [--dry-run]` / `--import-apache --remove` | Import the Apache sites / remove the imported sites |
 | `openlitespeed --acme-install [--email <address>]` | Turn on automatic Let's Encrypt certificates |
+| `openlitespeed --modsec-install [--detection-only]` / `--modsec-install --remove` | Turn the ModSecurity firewall with the OWASP Core Rule Set on or off |
 | `openlitespeed --dev-sites <folder> [tld]` | Create a site for every subfolder of a folder |
 | `openlitespeed --dev-hosts` / `--dev-hosts-clear` | Add or remove the site names in the hosts file |
 | `openlitespeed --admin-password admin\conf\htpasswd <password>` | Set the WebAdmin password |

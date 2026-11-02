@@ -31,7 +31,7 @@ powershell -ExecutionPolicy Bypass -File win\package.ps1
 
 | Step | Result |
 |---|---|
-| `fetch-deps.ps1` | BoringSSL, Brotli, Expat, PCRE2, zlib, udns, libbcrypt, libmaxminddb, the IP2Location C library and LuaJIT at pinned commits in `.deps\`. BoringSSL gets the OpenLiteSpeed TLS patch from `win\deps\patches\`. |
+| `fetch-deps.ps1` | BoringSSL, Brotli, Expat, PCRE2, zlib, udns, libbcrypt, libmaxminddb, the IP2Location C library, LuaJIT, ModSecurity, yajl, libxml2 and the OWASP Core Rule Set at pinned commits in `.deps\`. BoringSSL gets the OpenLiteSpeed TLS patch from `win\deps\patches\`. |
 | `build-deps.cmd` | Static libraries in `.deps\prefix\` |
 | `prepare.cmd` | Links the QUIC and HPACK sources from the `lsquic` submodule into `src\` |
 | `build.cmd` | `build\openlitespeed.exe`, `olstray.exe`, `setup.exe` and `olspack.exe` |
