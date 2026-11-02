@@ -23,6 +23,11 @@
 
 #define PRODUCT       L"OpenLiteSpeed for Windows"
 #define VERSION       L"1.9.4"
+#ifndef OLS_RELEASE
+#define OLS_RELEASE "1.9.4"
+#endif
+#define WIDEN2(x) L##x
+#define WIDEN(x) WIDEN2(x)
 #define UNINSTALL_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\OpenLiteSpeed"
 #define MAGIC         "OLSPAYLD"
 
@@ -832,7 +837,7 @@ static DWORD WINAPI install_thread(void *arg)
     {
         DWORD one = 1;
         reg_set(k, L"DisplayName", PRODUCT);
-        reg_set(k, L"DisplayVersion", VERSION);
+        reg_set(k, L"DisplayVersion", WIDEN(OLS_RELEASE));
         reg_set(k, L"Publisher", L"OpenLiteSpeed for Windows");
         reg_set(k, L"InstallLocation", g_dir);
         swprintf(cmd, 4096, L"\"%s\" --uninstall", self);
