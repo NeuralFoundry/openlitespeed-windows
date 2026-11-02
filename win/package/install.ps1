@@ -258,19 +258,47 @@ if ($Mode -eq 'laragon') {
 }
 if (-not $Www) { $Www = Join-Path $Root 'www' }
 
-if ($DownloadPhp) { $PhpPath = Install-Php $DownloadPhp }
+$phpNote = $null
+if ($DownloadPhp) {
+    try { $PhpPath = Install-Php $DownloadPhp }
+    catch { $phpNote = "PHP $DownloadPhp could not be downloaded: $($_.Exception.Message)"; $PhpPath = $null }
+}
 if (-not $PhpPath) { $PhpPath = Find-Php }
-if (-not $PhpPath) { $PhpPath = Install-Php '8.4' }
-if (-not (Test-Path (Join-Path $PhpPath 'php-cgi.exe'))) { throw "php-cgi.exe not found in $PhpPath" }
-$PhpPath = (Resolve-Path $PhpPath).Path
-Ensure-VcRuntime $PhpPath
+if (-not $PhpPath -and -not $phpNote) {
+    try { $PhpPath = Install-Php '8.4' }
+    catch { $phpNote = "PHP 8.4 could not be downloaded: $($_.Exception.Message)" }
+}
+if ($PhpPath) {
+    if (-not (Test-Path (Join-Path $PhpPath 'php-cgi.exe'))) { throw "php-cgi.exe not found in $PhpPath" }
+    $PhpPath = (Resolve-Path $PhpPath).Path
+    try { Ensure-VcRuntime $PhpPath }
+    catch { $phpNote = $_.Exception.Message; $PhpPath = $null }
+}
+if ($PhpOnly -and -not $PhpPath) { throw $phpNote }
+
+function Set-NoPhp {
+    $conf = Join-Path $Root 'conf\httpd_config.conf'
+    $block = "# php begin`r`nextProcessor lsphp {`r`n    type                         lsapi`r`n    address                      uds://tmp/lshttpd/nophp.sock`r`n" +
+        "    maxConns                     1`r`n    retryTimeout                 0`r`n    autoStart                    0`r`n}`r`n`r`n" +
+        "scriptHandler {`r`n    add                          lsapi:lsphp php`r`n}`r`n# php end"
+    $text = Get-Content $conf -Raw
+    $text = [regex]::Replace($text, '(?s)# php begin.*?# php end', { param($m) $block })
+    Set-Content $conf $text -Encoding ascii -NoNewline
+}
 
 function Set-Php {
+    if (-not $PhpPath) {
+        Set-NoPhp
+        return
+    }
     & $Exe --set-php $PhpPath
     if ($LASTEXITCODE -ne 0) { throw 'configuring PHP failed' }
     $adminPhp = Join-Path $Root 'admin\php'
-    if (Test-Path $adminPhp) { cmd /c rmdir "$adminPhp" | Out-Null }
+    $hadAdminPhp = Test-Path $adminPhp
+    if ($hadAdminPhp) { cmd /c rmdir "$adminPhp" | Out-Null }
     cmd /c mklink /J "$adminPhp" "$PhpPath" | Out-Null
+    $enable = Join-Path $Root 'admin\conf\enable_webadmin'
+    if (-not $hadAdminPhp -and -not (Test-Path $enable)) { Set-Content $enable '' -Encoding ascii }
     $ini = Join-Path $Root 'admin\conf\php.ini'
     (Get-Content "$ini.in" -Raw).Replace('%ROOT%', (Fwd $Root)).Replace('%PHP_EXT%', (Fwd (Join-Path $PhpPath 'ext'))) |
         Set-Content $ini -Encoding ascii -NoNewline
@@ -312,7 +340,6 @@ if (-not $AdminPassword) {
 }
 & $Exe --admin-password (Join-Path $Root 'admin\conf\htpasswd') $AdminPassword admin
 if ($LASTEXITCODE -ne 0) { throw 'setting the admin password failed' }
-Set-Content (Join-Path $Root 'admin\conf\enable_webadmin') '' -Encoding ascii
 
 $withRoot = $Mode -ne 'standalone'
 $trayIni = Join-Path $Root 'conf\olstray.ini'
@@ -350,9 +377,10 @@ if ($Service) {
 $portPart = if ($HttpPort -eq 80) { '' } else { ":$HttpPort" }
 Say ''
 Say "Mode:     $Mode"
-Say "PHP:      $PhpPath"
+if ($PhpPath) { Say "PHP:      $PhpPath" }
+else { Say "PHP:      not installed. $phpNote. Run the installer again to download PHP. WebAdmin starts once PHP is installed." }
 Say "Website:  http://localhost$portPart/"
 Say "Projects: $Www  (each folder -> http://<folder>.$Tld$portPart/)"
 if (-not $hostsOk) { Say "          hosts file not updated: use the tray menu Sites > Refresh sites (asks for admin rights)" }
-Say "WebAdmin: https://localhost:$AdminPort/  user: admin"
+if ($PhpPath) { Say "WebAdmin: https://localhost:$AdminPort/  user: admin" }
 if ($generated) { Say "Admin password: $AdminPassword  (change it with: bin\openlitespeed.exe --admin-password admin\conf\htpasswd NEWPASS)" }
