@@ -119,7 +119,13 @@ public:
                     const char *env);
     bool validateDomain(const char *domain, const char *pAddr);
     bool isRunning(char *configDir);
+#ifdef _WIN32
+    int runQueue(const char *queue, int mainPid);
+#endif
 private:
+#ifdef _WIN32
+    pid_t spawnBatch(char *configDir, bool programStart);
+#endif
     char **getEnv(char **argv);
     struct ifaddrs *isMatch(GSockAddr *sockaddr, void *addr);
     void processCerts(char *acmeDir, char *configDir, bool programStart);
@@ -277,5 +283,8 @@ public:
 };
 LS_SINGLETON_DECL(AcmeVHostMap);
 
+#ifdef _WIN32
+int acmeBatchMain(int argc, char **argv);
+#endif
 
 #endif

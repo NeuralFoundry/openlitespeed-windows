@@ -22,6 +22,9 @@
 extern lsi_module_t modcompress;
 extern lsi_module_t moddecompress;
 extern lsi_module_t cache;
+#ifdef _WIN32
+extern "C" lsi_module_t mod_acme;
+#endif
 
 extern int addModgzipFilter(lsi_session_t *session, int isSend,
                             uint8_t compressLevel);
@@ -36,6 +39,9 @@ Prelinked_Module g_prelinked[] =
     { "modcompress",    &modcompress   },
     { "moddecompress",  &moddecompress },
     { "cache",          &cache         }
+#ifdef _WIN32
+    , { "mod_acme",     &mod_acme      }
+#endif
 
 };
 

@@ -113,11 +113,12 @@ target_include_directories(lsbcrypt PRIVATE "${BCRYPT_SRC}" "${BCRYPT_SRC}/crypt
 target_compile_options(lsbcrypt PRIVATE "/FI${COMPAT}/include/ols_win.h" /W0)
 target_include_directories(http PRIVATE "${BCRYPT_SRC}")
 
-add_library(olsimport STATIC "${COMPAT}/src/win_apache.cpp")
+add_library(olsimport STATIC "${COMPAT}/src/win_apache.cpp" "${COMPAT}/src/win_acme.cpp")
 target_include_directories(olsimport PRIVATE "${OLS_TOP}/win/common")
 
 add_executable(openlitespeed
     "${OLS_SRC}/modules/prelinkedmods.cpp"
+    "${OLS_SRC}/modules/modacme/mod_acme.c"
     "${OLS_SRC}/httpdtest.cpp"
     "${OLS_SRC}/main.cpp")
 target_compile_options(openlitespeed PRIVATE "/FI${COMPAT}/include/ols_win.h")
@@ -132,7 +133,7 @@ target_link_libraries(openlitespeed
     "${DEPS}/lib/zs.lib" "${DEPS}/lib/pcre2-8-static.lib" "${DEPS}/lib/libexpatMT.lib"
     "${DEPS}/lib/brotlienc.lib" "${DEPS}/lib/brotlidec.lib" "${DEPS}/lib/brotlicommon.lib"
     "${DEPS}/lib/udns.lib"
-    ws2_32 mswsock bcrypt crypt32 iphlpapi userenv advapi32 ntdll)
+    ws2_32 mswsock bcrypt crypt32 iphlpapi userenv advapi32 ntdll winhttp)
 file(STRINGS "${OLS_TOP}/win/RELEASE" OLS_RELEASE LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${OLS_TOP}/win/RELEASE")
 add_executable(olstray WIN32 "${OLS_TOP}/win/tray/olstray.c" "${OLS_TOP}/win/tray/olstray.rc")

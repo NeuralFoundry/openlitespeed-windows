@@ -29,6 +29,10 @@
 #include "sslpp/sslcontext.h"
 #include "util/autobuf.h"
 #include "util/xmlnode.h"
+#ifdef _WIN32
+#include "http/httplog.h"
+#include <signal.h>
+#endif
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -272,6 +276,10 @@ void AcmeCertMap::deleteCert(AcmeCert *acmeCert)
 bool AcmeCertMap::beginCerts(bool programStart)
 {
     char acmeDir[MAX_PATH_LEN], configDir[MAX_PATH_LEN];
+#ifdef _WIN32
+    if (ols_worker_no())
+        return true;
+#endif
     if (!UseAcme::acmeInstalled(acmeDir, configDir, sizeof(configDir)))
         return true;
     UseAcmeMap::getInstance().findDeleted();
@@ -286,6 +294,10 @@ bool AcmeCertMap::beginCerts(bool programStart)
         return true;
     }
     LS_DBG("[ACME] There are %ld certs to process!\n", size());
+#ifdef _WIN32
+    m_pidRunning = spawnBatch(configDir, programStart);
+    return m_pidRunning > 0;
+#endif
     m_pidRunning = fork();
     if (m_pidRunning == -1)
     {
@@ -788,9 +800,39 @@ static bool same_alts(const char *alts1, const char *alts2)
 }
 
 
+#ifdef _WIN32
+static void acme_log(int error, const char *msg)
+{
+    if (error)
+        LS_ERROR("[ACME] %s\n", msg);
+    else
+        LS_NOTICE("[ACME] %s\n", msg);
+}
+#endif
+
+
 int AcmeCertMap::runAcme(char *acmeFile, AcmeCert *cert, const char **aliases,
                          int numAliases)
 {
+#ifdef _WIN32
+    (void)acmeFile;
+    if (cert->getWildcard())
+    {
+        LS_ERROR("[ACME] %s: wildcard certificates need DNS validation, which "
+                 "OpenLiteSpeed for Windows does not support\n", cert->getDomain());
+        return -1;
+    }
+    char acmeDir[MAX_PATH_LEN], configDir[MAX_PATH_LEN], nativeDir[MAX_PATH_LEN * 2],
+         alts[MAX_PATH_LEN];
+    UseAcme::acmeInstalled(acmeDir, configDir, sizeof(configDir));
+    if (ols_native_path(configDir, strlen(configDir), nativeDir, sizeof(nativeDir)) <= 0
+        || !build_alts(aliases, numAliases, alts, sizeof(alts)))
+        return -1;
+    LS_NOTICE("[ACME] %s certificate for %s\n", cert->getRenew() ? "Renew" : "Create",
+              cert->getDomain());
+    return ols_acme_order(nativeDir, UseAcme::getServer(), cert->getDomain(), aliases,
+                          numAliases, alts, acme_log) == 0 ? 0 : -1;
+#endif
     const char **argv = (const char **)alloca(sizeof(const char *) * (12 + 2 * numAliases));
     argv[0] = acmeFile;
     argv[1] = cert->getRenew() ? "--renew" : "--issue";
@@ -943,6 +985,165 @@ void AcmeCertMap::processCerts(char *acmeDir, char *configDir, bool programStart
     }    
     exit(ok ? 0 : 1);
 }
+
+
+#ifdef _WIN32
+pid_t AcmeCertMap::spawnBatch(char *configDir, bool programStart)
+{
+    char queue[MAX_PATH_LEN];
+    snprintf(queue, sizeof(queue), "%s/queue", configDir);
+    FILE *fp = fopen(queue, "w");
+    if (!fp)
+    {
+        LS_ERROR("[ACME] Unable to write %s: %s\n", queue, strerror(errno));
+        return -1;
+    }
+    for (iterator it = begin(); it != end(); it = next(it))
+    {
+        AcmeCert *cert = it.second();
+        fprintf(fp, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t", cert->getDomain(), cert->getVhost(),
+                cert->getAddr(), cert->getRenew(), cert->getForce(), cert->getIfChanged(),
+                cert->getWildcard(), cert->getVhostOk());
+        AcmeAliasMap *aliases = cert->getAcmeAliasMap();
+        const char *sep = "";
+        for (AcmeAliasMap::iterator a = aliases->begin(); a != aliases->end(); a = aliases->next(a))
+        {
+            fprintf(fp, "%s%s:%d", sep, a.first(), a.second()->getOptional() ? 1 : 0);
+            sep = ",";
+        }
+        fputc('\n', fp);
+    }
+    if (fclose(fp))
+    {
+        LS_ERROR("[ACME] Unable to write %s: %s\n", queue, strerror(errno));
+        return -1;
+    }
+    wchar_t wexe[MAX_PATH];
+    char exe[MAX_PATH * 3], start[4], pid[16], level[16];
+    DWORD n = GetModuleFileNameW(NULL, wexe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH
+        || WideCharToMultiByte(CP_UTF8, 0, wexe, -1, exe, sizeof(exe), NULL, NULL) <= 0)
+        return -1;
+    snprintf(start, sizeof(start), "%d", programStart ? 1 : 0);
+    snprintf(pid, sizeof(pid), "%d", (int)getpid());
+    snprintf(level, sizeof(level), "%d", HttpLog::getLogLevel());
+    char *argv[] = { exe, (char *)"--acme-batch", queue, start, pid, level,
+                     (char *)MainServerConfig::getInstance().getServerRoot(), NULL };
+    pid_t child = ols_spawn(exe, argv, NULL, NULL, -1, -1, -1, 0);
+    if (child <= 0)
+        LS_ERROR("[ACME] Unable to start the certificate process: %s\n", strerror(errno));
+    else
+        LS_NOTICE("[ACME] Requesting %ld certificate(s) in process %d, see logs/acme.log\n",
+                  size(), (int)child);
+    return child;
+}
+
+
+int AcmeCertMap::runQueue(const char *queue, int mainPid)
+{
+    char acmeDir[MAX_PATH_LEN], configDir[MAX_PATH_LEN], line[MAX_PATH_LEN * 4];
+    if (!UseAcme::acmeInstalled(acmeDir, configDir, sizeof(configDir)))
+    {
+        LS_ERROR("[ACME] ACME is not set up, run openlitespeed --acme-install\n");
+        return 1;
+    }
+    FILE *fp = fopen(queue, "r");
+    if (!fp)
+    {
+        LS_ERROR("[ACME] Unable to read %s: %s\n", queue, strerror(errno));
+        return 1;
+    }
+    while (fgets(line, sizeof(line), fp))
+    {
+        line[strcspn(line, "\r\n")] = 0;
+        char *f[9], *p = line;
+        int n = 0;
+        while (n < 9)
+        {
+            f[n++] = p;
+            char *tab = strchr(p, '\t');
+            if (!tab)
+                break;
+            *tab = 0;
+            p = tab + 1;
+        }
+        if (n < 9 || !*f[0])
+            continue;
+        AcmeCert *cert = doQueue(f[1], f[0], atoi(f[7]) != 0, f[2]);
+        if (!cert)
+            continue;
+        cert->setRenew(atoi(f[3]) != 0);
+        cert->setForce(atoi(f[4]) != 0);
+        cert->setIfChanged(atoi(f[5]) != 0);
+        cert->setWildcard(atoi(f[6]) != 0);
+        for (char *a = f[8]; a && *a;)
+        {
+            char *comma = strchr(a, ',');
+            if (comma)
+                *comma = 0;
+            char *colon = strrchr(a, ':');
+            bool optional = false;
+            if (colon)
+            {
+                optional = colon[1] == '1';
+                *colon = 0;
+            }
+            if (*a)
+                cert->getAcmeAliasMap()->addAlias(cert->getDomain(), a, optional);
+            a = comma ? comma + 1 : NULL;
+        }
+    }
+    fclose(fp);
+    unlink(queue);
+    int ok = 0, failed = 0, unchanged = 0;
+    for (iterator it = begin(); it != end(); it = next(it))
+    {
+        int rc = requestCert(acmeDir, configDir, it.second());
+        if (rc == 0)
+            ok++;
+        else if (rc == ACME_CERT_UNCHANGED)
+            unchanged++;
+        else
+            failed++;
+    }
+    LS_NOTICE("[ACME] %d certs succeeded, %d certs failed and %d certs were unchanged\n",
+              ok, failed, unchanged);
+    if (ok)
+    {
+        char stamp[MAX_PATH_LEN];
+        struct stat st;
+        snprintf(stamp, sizeof(stamp), "%s/reload.stamp", configDir);
+        if (stat(stamp, &st) == 0 && time(NULL) - st.st_mtime < 600)
+            LS_NOTICE("[ACME] The new certificates apply at the next reload\n");
+        else
+        {
+            FILE *s = fopen(stamp, "w");
+            if (s)
+                fclose(s);
+            LS_NOTICE("[ACME] Doing graceful restart to apply new certs\n");
+            kill(mainPid, SIGUSR1);
+        }
+    }
+    return ok ? 0 : 1;
+}
+
+
+int acmeBatchMain(int argc, char **argv)
+{
+    if (argc < 7)
+        return 2;
+    char root[MAX_PATH_LEN], log[MAX_PATH_LEN];
+    snprintf(root, sizeof(root), "%s%s", argv[6],
+             *argv[6] && argv[6][strlen(argv[6]) - 1] == '/' ? "" : "/");
+    MainServerConfig::getInstance().setServerRoot(root);
+    HttpLog::init();
+    snprintf(log, sizeof(log), "%slogs/acme.log", root);
+    if (HttpLog::setErrorLogFile(log))
+        return 1;
+    HttpLog::setLogLevel(atoi(argv[5]));
+    return AcmeCertMap::getInstance().runQueue(argv[2], atoi(argv[4]));
+}
+#endif
 
 
 bool AcmeCertMap::isRunning(char *configDir)
@@ -1803,6 +2004,12 @@ void UseAcmeMap::findDeleted()
 bool UseAcmeMap::deleteFromAcme(char *acmeDir, char *configDir, const char *domain,
                                 char *domainDir, char *certDir)
 {
+#ifdef _WIN32
+    (void)acmeDir;
+    (void)configDir;
+    LS_NOTICE("[ACME] No virtual host uses the certificate for %s any more, deleting it\n", domain);
+    return deleteDir(domainDir, certDir);
+#endif
     char acmeFile[MAX_PATH_LEN];
     snprintf(acmeFile, sizeof(acmeFile), "%s/acme.sh", acmeDir);
     const char *argv1[] = { acmeFile, "--revoke", "-d", domain, "--server", 

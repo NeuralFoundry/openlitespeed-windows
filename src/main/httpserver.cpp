@@ -1619,9 +1619,12 @@ void HttpServerImpl::onTimer()
     onTimerSecond();
 #ifdef _WIN32
     if (HttpServerConfig::getInstance().getProcNo() == 1)
+    {
         CgidWorker::checkRestartCgid(MainServerConfig::getInstance().getServerRoot(),
                                      MainServerConfig::getInstance().getChroot(),
                                      ServerProcessConfig::getInstance().getPriority());
+        UseAcmeMap::getInstance().renewCerts();
+    }
 #endif
     static int s_timeOut = 10;
     s_timeOut --;

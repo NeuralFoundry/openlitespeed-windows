@@ -132,9 +132,14 @@ static int acme_req_header_cb(lsi_param_t *param)
     uri = g_api->get_req_uri(param->session, &len);
     g_api->log(param->session, LSI_LOG_DEBUG,
         "[ACME] Enter acme_req_header_cb, I am %d, uri: %s\n", getuid(), uri);
+#ifdef _WIN32
+    if (!g_api->get_config(param->session, &MNAME))
+        return LSI_OK;
+#else
     int count = g_api->get_req_headers_count(param->session);
     struct iovec keys[count + 1], vals[count + 1];
     g_api->get_req_headers(param->session, keys, vals, count);
+#endif
     if (len > (int) sizeof(CHALLENGE_PREFIX)
         && 0 == memcmp(uri, CHALLENGE_PREFIX, sizeof(CHALLENGE_PREFIX) - 1)
         && acme_filename_is_ok(uri + sizeof(CHALLENGE_PREFIX) - 1,

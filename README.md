@@ -16,6 +16,7 @@ A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web ser
 - CGI programs: `.exe`, `.bat` and `.cmd` files and scripts with a `#!` line such as Perl or Python, each in its own job object with a restricted token
 - Local development sites: every folder in the projects folder becomes `http://folder.test/`
 - HTTP/2, HTTP/3 (QUIC), TLS 1.3, Brotli, LSCache and the WebAdmin console
+- Free HTTPS certificates from Let's Encrypt, requested and renewed automatically by a built-in ACME client, see [docs/ACME.md](docs/ACME.md)
 - `.htaccess` files work as in Apache: rewrite rules, access rules (`Require`, `Order`, `Allow`, `Deny`), passwords, `<Files>` sections, `Options Indexes` and `php_flag engine off`, applied within a second when a file changes
 - Bot protection: reCAPTCHA or hCaptcha challenges and request, bandwidth and connection limits per client IP, see [docs/PROTECTION.md](docs/PROTECTION.md)
 - LiteSpeed Cache for WordPress works out of the box: install and activate the plugin, no server configuration needed. Pages are purged automatically when content changes.
@@ -132,6 +133,7 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed --install-service` / `--uninstall-service` | Register or remove the Windows service |
 | `openlitespeed --set-php <folder>` | Use another PHP version |
 | `openlitespeed --import-apache [httpd.conf] [--dry-run]` / `--import-apache --remove` | Import the Apache sites / remove the imported sites |
+| `openlitespeed --acme-install [--email <address>]` | Turn on automatic Let's Encrypt certificates |
 | `openlitespeed --dev-sites <folder> [tld]` | Create a site for every subfolder of a folder |
 | `openlitespeed --dev-hosts` / `--dev-hosts-clear` | Add or remove the site names in the hosts file |
 | `openlitespeed --admin-password admin\conf\htpasswd <password>` | Set the WebAdmin password |
