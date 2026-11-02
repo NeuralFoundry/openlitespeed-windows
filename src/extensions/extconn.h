@@ -101,7 +101,7 @@ public:
     int  onError();
     int  onEventDone(short event);
     int  onInitConnected();
-    void onSecTimer();
+    virtual void onSecTimer();
 
     void keepAliveOff();
     int  markToClose();

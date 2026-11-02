@@ -51,6 +51,7 @@ PHP runs in separate processes, so PHP work always uses every CPU, whatever the 
 - **FastCGI**: `php-cgi.exe` from any PHP build, listening on a Unix socket per worker.
 - `openlitespeed --set-php <dir>` detects the PHP version and build type, copies the matching `lsphp.exe` into the PHP directory, starts it once with `-v` to prove it loads, and falls back to FastCGI if it does not.
 - PHP processes run with a restricted token that holds no privileges, inside a job object owned by their worker.
+- When a client disconnects, upstream OpenLiteSpeed stops the `lsphp` process that works on its request. Starting a process is expensive on Windows, so here the process finishes the request and is used again. It is still stopped when other requests are waiting for a PHP process or when it needs more than 10 seconds, or 300 seconds for requests marked `noabort` such as `wp-cron.php`.
 
 ### CGI
 

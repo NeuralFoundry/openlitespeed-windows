@@ -109,7 +109,7 @@ The PHP application over TLS, 10 second run, 128 keep-alive connections, PHP 8.4
 
 - Uncached WordPress is limited by PHP and MySQL work, so every server lands at about the same speed. A page cache changes that picture, see above.
 - nginx for Windows serves every connection from one worker process, and its documentation lists that as a known limitation. In these runs its throughput fell sharply at 512 connections and over HTTPS.
-- When a client disconnects in the middle of a request, OpenLiteSpeed stops the `lsphp.exe` process that is working on it and starts a new one. Starting a process costs much more on Windows than on Linux. FastCGI keeps `php-cgi.exe` running in that case. An earlier version of this stress test restarted the load generator every 10 seconds, which cut off hundreds of requests at once and made LSAPI look uneven.
+- When a client disconnects in the middle of a request, the version measured here stopped the `lsphp.exe` process that was working on it and started a new one, and starting a process costs much more on Windows than on Linux. FastCGI keeps `php-cgi.exe` running in that case. An earlier version of this stress test restarted the load generator every 10 seconds, which cut off hundreds of requests at once and made LSAPI look uneven. Later versions let `lsphp.exe` finish an aborted request and keep the process when no other request is waiting.
 - Apache keeps one thread per connection. With 1024 threads it used about 1.6 GB of memory in the stress test.
 - Earlier 5 second runs with PHP 8.2 to 8.5 gave the same order of servers.
 

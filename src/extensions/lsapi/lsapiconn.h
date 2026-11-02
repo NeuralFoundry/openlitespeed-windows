@@ -44,6 +44,9 @@ class LsapiConn: public ExtConn
     int                         m_iPacketHeaderLeft;
     long                        m_lReqBeginTime;
     long                        m_lReqSentTime;
+    int                         m_iDraining;
+    int                         m_iDrainLimit;
+    long                        m_lDrainStart;
 
     int                         m_respState;
     //short                       m_reqReceived;
@@ -67,6 +70,10 @@ class LsapiConn: public ExtConn
     int     processRespHeader();
     int     readStderrStream();
     int     readNotifyStream();
+#ifdef _WIN32
+    int     drain();
+    int     endDrain(int failed);
+#endif
 
 protected:
     virtual int doRead();
@@ -77,6 +84,9 @@ protected:
     virtual void init(int fd, Multiplexer *pMplx);
     virtual int onTimer();
     virtual int connect(Multiplexer *pMplx);
+#ifdef _WIN32
+    virtual void onSecTimer();
+#endif
 
 
 public:

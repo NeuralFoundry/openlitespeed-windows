@@ -123,6 +123,7 @@ int LsapiConn::connect(Multiplexer *pMplx)
 
 int LsapiConn::close()
 {
+    m_iDraining = 0;
     ExtConn::close();
     if (m_pid > 0)
     {
@@ -216,6 +217,22 @@ void LsapiConn::abort()
     if (getState() == DISCONNECTED)
         return;
 
+#ifdef _WIN32
+    if (m_iDraining)
+        return;
+    int noAbort = getConnector() && getConnector()->isNoExtAppAbort();
+    if (getState() == PROCESSING && m_pid > 0 && !m_iTotalPending
+        && m_respState >= LSAPI_CONN_REQ_SENT && m_respState < LSAPI_CONN_END_RESP
+        && (noAbort || getWorker()->getQueuedReqs() == 0))
+    {
+        incReqProcessed();
+        m_iDraining = 1;
+        m_iDrainLimit = noAbort ? 300 : 10;
+        m_lDrainStart = DateTime::s_curTime;
+        LS_DBG_L(this, "[LSAPI] request aborted, keep reading the response to reuse the process");
+        return;
+    }
+#endif
     incReqProcessed();
     setState(ABORT);
     sendAbortReq();
@@ -238,6 +255,7 @@ void LsapiConn::reset()
     m_iovec.clear();
     m_iTotalPending = 0;
     m_respState     = LSAPI_CONN_IDLE;
+    m_iDraining     = 0;
     //m_reqReceived   = 0;
     //memset( &m_iTotalPending, 0,
     //        ((char *)(&m_pChunkIS + 1)) - (char *)&m_iTotalPending );
@@ -334,8 +352,17 @@ int LsapiConn::doRead()
             getConnector()->endResponse(0, 0);
         }
     }
+#ifdef _WIN32
+    else if (m_iDraining)
+    {
+        if (getConnector())
+            getConnector()->endResponse(0, 0);
+        return drain();
+    }
+#endif
     return ret;
 }
+
 
 
 const char *s_packetName[] =
@@ -403,6 +430,63 @@ inline int verifyPacketHeader(struct lsapi_packet_header *pHeader)
     }
     return packetLen;
 }
+
+
+#ifdef _WIN32
+int LsapiConn::drain()
+{
+    char buf[8192];
+    while (m_iDraining)
+    {
+        int ret;
+        if (m_iPacketHeaderLeft <= 0 && m_iPacketLeft <= 0)
+            m_iPacketHeaderLeft = LSAPI_PACKET_HEADER_LEN;
+        if (m_iPacketHeaderLeft > 0)
+        {
+            ret = read(((char *)&m_respHeader) + sizeof(m_respHeader) - m_iPacketHeaderLeft,
+                       m_iPacketHeaderLeft);
+            if (ret <= 0)
+                return ret == 0 ? 0 : endDrain(1);
+            m_iPacketHeaderLeft -= ret;
+            if (m_iPacketHeaderLeft > 0)
+                return 0;
+            m_iPacketLeft = verifyPacketHeader(&m_respHeader) - LSAPI_PACKET_HEADER_LEN;
+            if (m_iPacketLeft < 0)
+                return endDrain(1);
+            if (m_respHeader.m_type == LSAPI_RESP_END)
+                return endDrain(0);
+            if (m_respHeader.m_type == LSAPI_CONN_CLOSE)
+            {
+                markToClose();
+                return endDrain(0);
+            }
+            continue;
+        }
+        ret = read(buf, m_iPacketLeft < (int)sizeof(buf) ? m_iPacketLeft : (int)sizeof(buf));
+        if (ret <= 0)
+            return ret == 0 ? 0 : endDrain(1);
+        m_iPacketLeft -= ret;
+    }
+    return 0;
+}
+
+
+int LsapiConn::endDrain(int failed)
+{
+    LS_DBG_L(this, "[LSAPI] aborted request %s", failed ? "failed, close the connection"
+             : "finished, reuse the connection");
+    m_iDraining = 0;
+    m_iPacketLeft = 0;
+    m_iPacketHeaderLeft = LSAPI_PACKET_HEADER_LEN;
+    if (failed)
+        setState(ABORT);
+    if (getConnector())
+        return 0;
+    reset();
+    recycle();
+    return 0;
+}
+#endif
 
 
 void LsapiConn::setRespBuf(char *pStart)
@@ -608,7 +692,11 @@ int LsapiConn::processRespBuffed()
 int LsapiConn::processResp()
 {
     int ret;
+#ifdef _WIN32
+    while (getState() == PROCESSING && !m_iDraining)
+#else
     while (getState() == PROCESSING)
+#endif
     {
         if (m_iPacketHeaderLeft > 0)
         {
@@ -1159,6 +1247,10 @@ int LsapiConn::readStderrStream()
 int LsapiConn::doError(int err)
 {
     LS_DBG_L(this, "LsapiConn::doError()");
+#ifdef _WIN32
+    if (m_iDraining && !getConnector())
+        return endDrain(1);
+#endif
     if (getConnector())
     {
         int state = getConnector()->getState();
@@ -1215,11 +1307,38 @@ void LsapiConn::finishRecvBuf()
 void LsapiConn::cleanUp()
 {
     setConnector(NULL);
+#ifdef _WIN32
+    if (m_iDraining && getState() == PROCESSING && m_respState >= LSAPI_CONN_REQ_SENT)
+    {
+        continueRead();
+        return;
+    }
+    m_iDraining = 0;
+#endif
     reset();
     if (getState() == ABORT)
         close();
     recycle();
 }
+
+
+#ifdef _WIN32
+void LsapiConn::onSecTimer()
+{
+    if (m_iDraining && !getConnector())
+    {
+        if (DateTime::s_curTime - m_lDrainStart >= m_iDrainLimit
+            || (m_iDrainLimit <= 10 && getWorker()->getQueuedReqs() > 0))
+        {
+            LS_DBG_L(this, "[LSAPI] stop the aborted request, %s",
+                     getWorker()->getQueuedReqs() ? "requests are waiting" : "it runs too long");
+            endDrain(1);
+        }
+        return;
+    }
+    ExtConn::onSecTimer();
+}
+#endif
 
 
 int LsapiConn::onTimer()
