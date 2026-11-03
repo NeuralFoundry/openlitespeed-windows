@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenLiteSpeed</title>
+<style>
+:root {
+  --bg: #e7ebef;
+  --panel: #f8fafb;
+  --raise: #ffffff;
+  --ink: #132029;
+  --muted: #5b6a77;
+  --faint: #8b98a4;
+  --rule: #d3dae1;
+  --live: #0e7a4e;
+  --live-soft: #d9efe5;
+  --off: #9aa6b1;
+  --warn: #9a5400;
+  --warn-soft: #f6e8d6;
+  --danger: #b3261e;
+  --link: #1a5bb4;
+  --focus: #1a5bb4;
+  --shadow: 0 1px 0 rgba(19, 32, 41, .06), 0 1px 3px rgba(19, 32, 41, .08);
+  --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --code: "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #10161c;
+    --panel: #171f27;
+    --raise: #1d2730;
+    --ink: #e3e9ee;
+    --muted: #93a2af;
+    --faint: #6d7c89;
+    --rule: #28323c;
+    --live: #3cb27c;
+    --live-soft: #173528;
+    --off: #5d6b78;
+    --warn: #e0a252;
+    --warn-soft: #3a2a14;
+    --danger: #ff8a80;
+    --link: #79aef5;
+    --focus: #79aef5;
+    --shadow: 0 1px 0 rgba(0, 0, 0, .3);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 13.5px/1.45 var(--ui);
+  font-variant-numeric: tabular-nums;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 18px 24px 14px;
+}
+header h1 {
+  font: 600 21px/1.1 var(--display);
+  letter-spacing: -.01em;
+  margin: 0;
+}
+header .ver { color: var(--muted); }
+header .edition { color: var(--muted); padding-left: 12px; border-left: 1px solid var(--rule); }
+header nav { margin-left: auto; display: flex; gap: 6px; }
+
+.btn {
+  border: 1px solid var(--rule);
+  background: var(--raise);
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--faint); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--link); padding-inline: 6px; }
+.btn.quiet:hover { text-decoration: underline; }
+
+main {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 18px;
+  padding: 2px 24px 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+.rail { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
+
+.module {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 8px;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 13px 14px 12px;
+  box-shadow: var(--shadow);
+}
+.lamp {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--off);
+  justify-self: center;
+  transition: background .3s, box-shadow .3s;
+}
+.module.on .lamp { background: var(--live); box-shadow: 0 0 0 4px var(--live-soft), 0 0 12px var(--live); }
+.module.busy .lamp { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
+.module h2 { font: 600 15px/1.2 var(--display); margin: 0; }
+.module .state { color: var(--muted); font-size: 12.5px; }
+.ports { grid-column: 2 / 4; display: flex; gap: 18px; }
+.port { display: flex; flex-direction: column; }
+.port b { font: 600 22px/1 var(--display); letter-spacing: -.02em; }
+.port span { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.module .acts { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 6px; }
+.module .acts:empty { display: none; }
+.module .acts .btn { padding: 4px 10px; }
+
+.switch {
+  position: relative;
+  width: 46px; height: 26px;
+  border-radius: 13px;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  cursor: pointer;
+  padding: 0;
+  transition: background .2s, border-color .2s;
+}
+.switch::after {
+  content: "";
+  position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--raise);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  transition: transform .2s;
+}
+.switch[aria-checked="true"] { background: var(--live); border-color: var(--live); }
+.switch[aria-checked="true"]::after { transform: translateX(20px); }
+.switch:disabled { opacity: .5; cursor: default; }
+
+.settings { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 6px 14px; box-shadow: var(--shadow); }
+.row { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
+.row + .row { border-top: 1px solid var(--rule); }
+.row label { flex: 1; }
+.row select { width: 100%; min-width: 0; border: 1px solid var(--rule); background: var(--raise); border-radius: 6px; padding: 5px 6px; }
+.row.stack { flex-direction: column; align-items: stretch; gap: 6px; }
+
+.sites { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); }
+.sites-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 10px; }
+.sites-head h2 { font: 600 16px/1.2 var(--display); margin: 0 auto 0 0; }
+.list { overflow: auto; min-height: 0; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12.5px; padding: 6px 13px; border-bottom: 1px solid var(--rule); position: sticky; top: 0; background: var(--panel); }
+td { padding: 10px 13px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+td.name { font-weight: 600; }
+td.kind { color: var(--muted); white-space: nowrap; }
+td.name { white-space: nowrap; }
+.addr { font: 12.5px var(--code); color: var(--link); background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+.addr:hover { text-decoration: underline; }
+.online { display: flex; align-items: center; gap: 10px; }
+.public { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 4px; }
+.public .addr { overflow: hidden; text-overflow: ellipsis; max-width: 300px; white-space: nowrap; }
+.empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+.empty p { margin: 0 0 12px; }
+.note { color: var(--muted); font-size: 12.5px; }
+
+footer { display: flex; align-items: center; gap: 12px; padding: 8px 24px 12px; color: var(--muted); font-size: 12.5px; }
+#msg { flex: 1; min-height: 1.4em; }
+#msg.err { color: var(--danger); }
+
+dialog {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 20px 22px 18px;
+  width: 420px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .25);
+}
+dialog::backdrop { background: rgba(10, 16, 22, .35); }
+dialog h3 { font: 600 17px/1.2 var(--display); margin: 0 0 14px; }
+dialog p { margin: 0 0 12px; color: var(--muted); }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.field input[type=text], .field input[type=password], .field input[type=number] {
+  border: 1px solid var(--rule); background: var(--raise); border-radius: 6px; padding: 6px 8px;
+}
+.check { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.preview { font: 12.5px var(--code); color: var(--muted); min-height: 1.4em; margin: -4px 0 12px; }
+.preview.bad { font-family: var(--ui); color: var(--danger); }
+.dlg-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+pre.log { margin: 0; max-height: 52vh; overflow: auto; font: 12px/1.5 var(--code); white-space: pre-wrap; word-break: break-all; background: var(--raise); border: 1px solid var(--rule); border-radius: 8px; padding: 10px; }
+dialog.wide { width: min(860px, 90vw); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenLiteSpeed</h1>
+  <span class="ver" id="ver"></span>
+  <span class="edition" id="edition"></span>
+  <nav>
+    <button class="btn quiet" id="btn-webadmin">WebAdmin</button>
+    <button class="btn quiet" id="btn-folder">Projects folder</button>
+    <button class="btn quiet" id="btn-logs">Logs</button>
+  </nav>
+</header>
+
+<main>
+  <section class="rail" aria-label="Services">
+    <div class="module" id="m-web">
+      <span class="lamp" aria-hidden="true"></span>
+      <div><h2>Web server</h2><div class="state" id="web-state">Checking</div></div>
+      <button class="switch" role="switch" aria-checked="false" aria-label="Web server" id="web-switch"></button>
+      <div class="ports" id="web-ports"></div>
+      <div class="acts"><button class="btn" id="web-reload">Reload</button></div>
+    </div>
+
+    <div class="module" id="m-db" hidden>
+      <span class="lamp" aria-hidden="true"></span>
+      <div><h2>MariaDB</h2><div class="state" id="db-state">Checking</div></div>
+      <button class="switch" role="switch" aria-checked="false" aria-label="MariaDB" id="db-switch"></button>
+      <div class="ports" id="db-ports"></div>
+      <div class="acts" id="db-acts"></div>
+    </div>
+
+    <div class="module" id="m-tun" hidden>
+      <span class="lamp" aria-hidden="true"></span>
+      <div><h2>Cloudflare Tunnel</h2><div class="state" id="tun-state">Checking</div></div>
+      <span></span>
+      <div class="acts" id="tun-acts"></div>
+    </div>
+
+    <div class="settings">
+      <div class="row stack"><label for="php">PHP</label><select id="php"></select></div>
+      <div class="row"><label id="https-label">Trusted HTTPS</label><button class="switch" role="switch" aria-checked="false" aria-labelledby="https-label" id="https-switch"></button></div>
+    </div>
+  </section>
+
+  <section class="sites" aria-labelledby="sites-title">
+    <div class="sites-head">
+      <h2 id="sites-title">Sites</h2>
+      <button class="btn" id="btn-proxy">New proxy site</button>
+      <button class="btn primary" id="btn-site">New site</button>
+    </div>
+    <div class="list" id="list"></div>
+  </section>
+</main>
+
+<footer><span id="msg" role="status" aria-live="polite"></span><span id="folder-path"></span></footer>
+
+<dialog id="dlg-site">
+  <h3>New site</h3>
+  <div class="field"><label for="site-name">Site name</label><input type="text" id="site-name" maxlength="63" autocomplete="off" spellcheck="false"></div>
+  <div class="preview" id="site-preview"></div>
+  <label class="check"><input type="checkbox" id="site-wp"> Install WordPress</label>
+  <div class="dlg-acts"><button class="btn" data-close>Cancel</button><button class="btn primary" id="site-ok" disabled>Create</button></div>
+</dialog>
+
+<dialog id="dlg-proxy">
+  <h3>New proxy site</h3>
+  <div class="field"><label for="proxy-name">Site name</label><input type="text" id="proxy-name" maxlength="63" autocomplete="off" spellcheck="false"></div>
+  <div class="field"><label for="proxy-port">Port of the app on this computer</label><input type="number" id="proxy-port" min="1" max="65535"></div>
+  <div class="preview" id="proxy-preview"></div>
+  <div class="dlg-acts"><button class="btn" data-close>Cancel</button><button class="btn primary" id="proxy-ok" disabled>Create</button></div>
+</dialog>
+
+<dialog id="dlg-share">
+  <h3>Share <span id="share-site"></span> online</h3>
+  <p>Cloudflare gives the site a public https address. Anyone with the link can open it until you stop sharing.</p>
+  <div class="dlg-acts"><button class="btn" data-close>Cancel</button><button class="btn primary" id="share-ok">Share online</button></div>
+</dialog>
+
+<dialog id="dlg-token">
+  <h3>Your domain</h3>
+  <p>Create a tunnel in Cloudflare Zero Trust, point its public hostname at <span class="addr" id="token-origin"></span> with the site name as HTTP host header, and paste the tunnel token here. It is stored encrypted for your Windows account.</p>
+  <div class="field"><label for="token">Tunnel token</label><input type="password" id="token" autocomplete="off" spellcheck="false"></div>
+  <div class="dlg-acts"><button class="btn" data-close>Cancel</button><button class="btn primary" id="token-ok">Save and start</button></div>
+</dialog>
+
+<dialog id="dlg-logs" class="wide">
+  <h3>Error log</h3>
+  <pre class="log" id="log"></pre>
+  <div class="dlg-acts"><button class="btn" id="log-refresh">Refresh</button><button class="btn primary" data-close>Close</button></div>
+</dialog>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const wv = window.chrome && window.chrome.webview;
+  let state = null, busy = 0, nextId = 1;
+  const pending = new Map();
+
+  function call(action, params = {}) {
+    if (!wv) return Promise.reject(new Error("not running in the panel"));
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      wv.postMessage(JSON.stringify(Object.assign({ id, action }, params)));
+    });
+  }
+  if (wv) wv.addEventListener("message", e => {
+    const m = e.data;
+    if (!m || typeof m !== "object") return;
+    if (m.event === "refresh") { refresh(); return; }
+    const p = pending.get(m.id);
+    if (!p) return;
+    pending.delete(m.id);
+    if (m.ok) p.resolve(m.data); else p.reject(new Error(m.error || "Something went wrong."));
+  });
+
+  function say(text, err) {
+    const el = $("msg");
+    el.textContent = text || "";
+    el.className = err ? "err" : "";
+  }
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function button(text, cls, fn, disabled) {
+    const b = el("button", "btn" + (cls ? " " + cls : ""), text);
+    b.addEventListener("click", fn);
+    if (disabled) b.disabled = true;
+    return b;
+  }
+  function port(value, label) {
+    const p = el("div", "port");
+    p.append(el("b", "", String(value)), el("span", "", label));
+    return p;
+  }
+  function siteUrl(domain) {
+    const s = state.server;
+    if (s.https > 0) return "https://" + domain + (s.https === 443 ? "" : ":" + s.https) + "/";
+    return "http://" + domain + (s.http === 80 ? "" : ":" + s.http) + "/";
+  }
+  const nameOk = n => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(n) && n !== "localhost" && n !== "phpmyadmin";
+
+  async function act(label, action, params, after) {
+    busy++;
+    say(label + "...");
+    try {
+      const data = await call(action, params);
+      say(after ? after(data) : "");
+      return data;
+    } catch (e) {
+      say(e.message, true);
+      return null;
+    } finally {
+      busy--;
+      refresh();
+    }
+  }
+
+  function render() {
+    const s = state;
+    const full = s.edition === "full";
+    $("ver").textContent = s.version || "";
+    $("edition").textContent = full ? "Full stack" : "Web server";
+
+    const web = s.server.running;
+    $("m-web").className = "module" + (web ? " on" : "");
+    $("web-state").textContent = web ? (s.server.service ? "Running as a Windows service" : "Running") : "Stopped";
+    const ws = $("web-switch");
+    ws.setAttribute("aria-checked", web);
+    $("web-reload").disabled = !web;
+    const wp = $("web-ports");
+    wp.replaceChildren(port(s.server.http, "HTTP"));
+    if (s.server.https > 0) wp.append(port(s.server.https, "HTTPS"));
+    wp.append(port(s.server.admin, "WebAdmin"));
+
+    $("m-db").hidden = !full && !s.db.installed;
+    if (full || s.db.installed) {
+      const d = s.db, dm = $("m-db"), acts = $("db-acts"), ds = $("db-switch");
+      dm.className = "module" + (d.running ? " on" : "");
+      ds.hidden = !d.installed;
+      ds.setAttribute("aria-checked", d.running);
+      $("db-ports").replaceChildren(d.installed ? port(d.port, "Port on 127.0.0.1") : "");
+      $("db-state").textContent = d.installed ? (d.running ? "Running" : "Stopped") : "Not installed";
+      acts.replaceChildren();
+      if (d.installed) {
+        acts.append(button("phpMyAdmin", "", () => call("pma.open").catch(e => say(e.message, true)), !d.running || !web));
+        acts.append(button("Copy password", "", () => act("Copying", "db.copypw", {}, () => "The root password is on the clipboard. It is not kept in the clipboard history.")));
+      } else {
+        acts.append(button("Install MariaDB and phpMyAdmin", "primary", () =>
+          act("Downloading MariaDB and phpMyAdmin", "db.install", {}, () => "MariaDB is running. Use Copy password to sign in to phpMyAdmin as root.")));
+      }
+    }
+
+    if (full) {
+      const t = s.tunnel, tm = $("m-tun"), ta = $("tun-acts");
+      tm.hidden = false;
+      const shared = s.sites.filter(x => x.tunnel).length;
+      tm.className = "module" + (shared || t.named ? " on" : "");
+      $("tun-state").textContent = t.named ? "Your domain is connected" : shared ? shared + (shared === 1 ? " site is online" : " sites are online") : "Nothing is shared";
+      ta.replaceChildren();
+      if (t.named) ta.append(button("Disconnect your domain", "", () => act("Disconnecting", "tunnel.runstop", {})));
+      else if (t.token) ta.append(button("Connect your domain", "", () => act("Connecting", "tunnel.run", {}, () => "Your domain is connected.")));
+      ta.append(button(t.token ? "Change token" : "Use your own domain", "", openToken));
+      if (t.token && !t.named) ta.append(button("Forget token", "quiet", () => act("Removing the token", "tunnel.clear", {})));
+    } else {
+      $("m-tun").hidden = true;
+    }
+
+    const hs = $("https-switch");
+    hs.setAttribute("aria-checked", s.server.https > 0);
+
+    renderSites(full);
+    $("folder-path").textContent = s.www || "";
+  }
+
+  function renderSites(full) {
+    const list = $("list"), sites = state.sites;
+    if (!sites.length) {
+      const e = el("div", "empty");
+      e.append(el("p", "", "Every folder in your projects folder becomes a site."));
+      e.append(button("Create a site", "primary", openSite));
+      list.replaceChildren(e);
+      return;
+    }
+    const table = el("table"), head = el("tr");
+    ["Site", "Kind", "Address"].concat(full ? ["Online"] : []).concat([""]).forEach(h => head.append(el("th", "", h)));
+    const thead = el("thead"); thead.append(head);
+    const tbody = el("tbody");
+    for (const site of sites) {
+      const tr = el("tr");
+      tr.append(el("td", "name", site.domain));
+      const kind = site.type === "wordpress" ? "WordPress" : site.type === "proxy" ? "App, port " + site.port : site.type === "tool" ? "Local only" : "Folder";
+      tr.append(el("td", "kind", kind));
+      const addrTd = el("td"), url = siteUrl(site.domain), a = el("button", "addr", url);
+      a.addEventListener("click", () => call("open", { url }).catch(e => say(e.message, true)));
+      addrTd.append(a);
+      if (full && site.tunnel && site.tunnelUrl) {
+        const pub = el("div", "public"), pa = el("button", "addr", site.tunnelUrl);
+        pa.title = site.tunnelUrl;
+        pa.addEventListener("click", () => call("open", { url: site.tunnelUrl }).catch(e => say(e.message, true)));
+        pub.append(pa, button("Copy", "quiet", () => act("Copying", "copy", { text: site.tunnelUrl }, () => "Link copied.")));
+        addrTd.append(pub);
+      }
+      tr.append(addrTd);
+      if (full) {
+        const on = el("td");
+        if (site.type !== "tool") {
+          const wrap = el("div", "online"), sw = el("button", "switch");
+          sw.setAttribute("role", "switch");
+          sw.setAttribute("aria-checked", !!site.tunnel);
+          sw.setAttribute("aria-label", "Share " + site.domain + " online");
+          sw.disabled = !state.server.running;
+          sw.addEventListener("click", () => site.tunnel
+            ? act("Stopping", "tunnel.stop", { name: site.name }, () => site.domain + " is no longer online.")
+            : openShare(site));
+          wrap.append(sw);
+          if (site.tunnel && !site.tunnelUrl) wrap.append(el("span", "note", "Starting"));
+          on.append(wrap);
+        }
+        tr.append(on);
+      }
+      const end = el("td");
+      if (site.type === "proxy") end.append(button("Remove", "quiet", () => {
+        if (confirm("Remove the proxy site " + site.domain + "? The app itself is not touched."))
+          act("Removing", "proxy.remove", { name: site.name }, () => site.domain + " was removed.");
+      }));
+      tr.append(end);
+      tbody.append(tr);
+    }
+    table.append(thead, tbody);
+    list.replaceChildren(table);
+  }
+
+  async function refresh() {
+    if (!wv) return;
+    try {
+      state = await call("status");
+      render();
+    } catch (e) {
+      say(e.message, true);
+    }
+  }
+
+  function wireDialog(d) {
+    d.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => d.close()));
+  }
+  document.querySelectorAll("dialog").forEach(wireDialog);
+
+  function openSite() {
+    $("site-name").value = "";
+    $("site-wp").checked = false;
+    checkSite();
+    $("dlg-site").showModal();
+  }
+  function checkSite() {
+    const n = $("site-name").value.trim(), p = $("site-preview");
+    const taken = state && state.sites.some(s => s.name === n);
+    const ok = nameOk(n) && !taken;
+    p.className = "preview" + (n && !ok ? " bad" : "");
+    p.textContent = !n ? "" : taken ? "A site with this name already exists" : ok ? siteUrl(n + "." + state.tld) : "Use lowercase letters, digits and '-'";
+    $("site-ok").disabled = !ok;
+  }
+  $("site-name").addEventListener("input", checkSite);
+  $("site-ok").addEventListener("click", () => {
+    const name = $("site-name").value.trim(), wp = $("site-wp").checked;
+    $("dlg-site").close();
+    act(wp ? "Creating " + name + " and downloading WordPress" : "Creating " + name, "site.new", { name, wp },
+      () => wp ? name + "." + state.tld + " is ready. Finish the WordPress setup in the browser." : name + "." + state.tld + " is ready.");
+  });
+
+  function openProxy() {
+    $("proxy-name").value = "";
+    $("proxy-port").value = "";
+    checkProxy();
+    $("dlg-proxy").showModal();
+  }
+  function checkProxy() {
+    const n = $("proxy-name").value.trim(), port = parseInt($("proxy-port").value, 10), p = $("proxy-preview");
+    const taken = state && state.sites.some(s => s.name === n);
+    const own = state && (port === state.server.http || port === state.server.https || port === state.server.admin);
+    const ok = nameOk(n) && !taken && port > 0 && port < 65536 && !own;
+    p.className = "preview" + ((n && !nameOk(n)) || taken || own ? " bad" : "");
+    p.textContent = taken ? "A site with this name already exists" : n && !nameOk(n) ? "Use lowercase letters, digits and '-'"
+      : own ? "That port is OpenLiteSpeed itself" : ok ? siteUrl(n + "." + state.tld) + "  ->  127.0.0.1:" + port : "";
+    $("proxy-ok").disabled = !ok;
+  }
+  $("proxy-name").addEventListener("input", checkProxy);
+  $("proxy-port").addEventListener("input", checkProxy);
+  $("proxy-ok").addEventListener("click", () => {
+    const name = $("proxy-name").value.trim(), port = parseInt($("proxy-port").value, 10);
+    $("dlg-proxy").close();
+    act("Creating " + name, "proxy.new", { name, port }, () => name + "." + state.tld + " now shows the app on port " + port + ".");
+  });
+
+  let shareSite = null;
+  function openShare(site) {
+    shareSite = site;
+    $("share-site").textContent = site.domain;
+    $("dlg-share").showModal();
+  }
+  $("share-ok").addEventListener("click", () => {
+    const site = shareSite;
+    $("dlg-share").close();
+    act("Putting " + site.domain + " online", "tunnel.start", { name: site.name }, url => site.domain + " is online at " + url);
+  });
+
+  function openToken() {
+    $("token").value = "";
+    $("token-origin").textContent = "http://localhost" + (state.server.http === 80 ? "" : ":" + state.server.http);
+    $("dlg-token").showModal();
+  }
+  $("token-ok").addEventListener("click", async () => {
+    const token = $("token").value.trim();
+    $("token").value = "";
+    $("dlg-token").close();
+    if (await act("Saving the token", "tunnel.token", { token }) !== null)
+      act("Connecting", "tunnel.run", {}, () => "Your domain is connected.");
+  });
+
+  $("btn-site").addEventListener("click", openSite);
+  $("btn-proxy").addEventListener("click", openProxy);
+  $("web-switch").addEventListener("click", () => {
+    const on = state.server.running;
+    act(on ? "Stopping the web server" : "Starting the web server", on ? "server.stop" : "server.start", {});
+  });
+  $("web-reload").addEventListener("click", () => act("Reloading", "server.reload", {}, () => "The configuration was reloaded."));
+  $("db-switch").addEventListener("click", () => {
+    const on = state.db.running;
+    act(on ? "Stopping MariaDB" : "Starting MariaDB", on ? "db.stop" : "db.start", {});
+  });
+  $("https-switch").addEventListener("click", () => {
+    const on = state.server.https > 0;
+    if (!on && !confirm("Windows will ask you to trust a certificate authority made on this computer. It can only sign certificates for .test, .localhost and .internal sites and for this computer's own address.\n\nTurn on trusted HTTPS?")) return;
+    act(on ? "Turning off trusted HTTPS" : "Turning on trusted HTTPS", "https", { on: !on }, () => on ? "Trusted HTTPS is off." : "Trusted HTTPS is on.");
+  });
+  $("php").addEventListener("change", e => {
+    const i = parseInt(e.target.value, 10);
+    act("Switching PHP", "php.set", { index: i }, () => "PHP was switched.");
+  });
+  $("btn-webadmin").addEventListener("click", () => call("open", { url: "https://localhost:" + state.server.admin + "/" }).catch(e => say(e.message, true)));
+  $("btn-folder").addEventListener("click", () => call("folder", { which: "www" }).catch(e => say(e.message, true)));
+  async function loadLog() {
+    try { $("log").textContent = (await call("log")) || "The log is empty."; }
+    catch (e) { $("log").textContent = e.message; }
+  }
+  $("btn-logs").addEventListener("click", () => { loadLog(); $("dlg-logs").showModal(); });
+  $("log-refresh").addEventListener("click", loadLog);
+
+  async function loadPhp() {
+    try {
+      const list = await call("php.list"), sel = $("php");
+      sel.replaceChildren();
+      list.forEach((p, i) => {
+        const o = el("option", "", p.label);
+        o.value = String(i);
+        o.title = p.dir;
+        if (p.current) o.selected = true;
+        sel.append(o);
+      });
+      if (!list.length) sel.append(el("option", "", "No PHP found"));
+    } catch (e) { say(e.message, true); }
+  }
+
+  if (window.__preview) {
+    state = window.__preview;
+    render();
+    const sel = $("php");
+    (state.phpList || []).forEach(p => { const o = el("option", "", p.label); o.selected = !!p.current; sel.append(o); });
+  } else if (wv) {
+    refresh().then(loadPhp);
+    setInterval(() => { if (!busy && !document.querySelector("dialog[open]")) refresh(); }, 3000);
+  } else {
+    say("Open this page from the OpenLiteSpeed panel.", true);
+  }
+})();
+</script>
+</body>
+</html>

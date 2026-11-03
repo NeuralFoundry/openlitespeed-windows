@@ -8,6 +8,8 @@ param(
     [string]$Tld = 'test',
     [ValidateSet('auto', 'standalone', 'laragon', 'xampp')]
     [string]$Mode = 'auto',
+    [ValidateSet('server', 'full')]
+    [string]$Edition = 'server',
     [switch]$Service,
     [switch]$Tray,
     [switch]$PhpOnly,
@@ -343,12 +345,25 @@ if ($LASTEXITCODE -ne 0) { throw 'setting the admin password failed' }
 
 $withRoot = $Mode -ne 'standalone'
 $trayIni = Join-Path $Root 'conf\olstray.ini'
-Set-Content $trayIni "[sites]`r`nwww=$Www`r`ntld=$Tld`r`nroot=$([int]$withRoot)`r`nstack=$Mode`r`n" -Encoding unicode
+Set-Content $trayIni "[sites]`r`nwww=$Www`r`ntld=$Tld`r`nroot=$([int]$withRoot)`r`nstack=$Mode`r`n[tray]`r`nedition=$Edition`r`n" -Encoding unicode
 if ($withRoot) { & $Exe --dev-sites $Www $Tld --root | Out-Null } else { & $Exe --dev-sites $Www $Tld | Out-Null }
 $hostsOk = $false
 if ($isAdmin) {
     & $Exe --dev-hosts | Out-Null
     $hostsOk = ($LASTEXITCODE -eq 0)
+}
+if ($Edition -eq 'full') {
+    Say 'Downloading MariaDB and phpMyAdmin...'
+    & $Exe --db install
+    if ($LASTEXITCODE -ne 0) { Say 'MariaDB was not installed. Install it later from the dashboard.' }
+    elseif ($isAdmin) { & $Exe --db stop | Out-Null }
+    Say 'Downloading Cloudflare Tunnel...'
+    & $Exe --tunnel install | Out-Null
+    if ($LASTEXITCODE -ne 0) { Say 'Cloudflare Tunnel was not downloaded. It is downloaded again when you share a site.' }
+    if ($isAdmin) {
+        & $Exe --dev-hosts | Out-Null
+        $hostsOk = ($LASTEXITCODE -eq 0)
+    }
 }
 
 if ($Mode -eq 'laragon') {
@@ -383,4 +398,5 @@ Say "Website:  http://localhost$portPart/"
 Say "Projects: $Www  (each folder -> http://<folder>.$Tld$portPart/)"
 if (-not $hostsOk) { Say "          hosts file not updated: use the tray menu Sites > Refresh sites (asks for admin rights)" }
 if ($PhpPath) { Say "WebAdmin: https://localhost:$AdminPort/  user: admin" }
+if ($Edition -eq 'full') { Say "Dashboard: $(Join-Path $Root 'bin\olspanel.exe')" }
 if ($generated) { Say "Admin password: $AdminPassword  (change it with: bin\openlitespeed.exe --admin-password admin\conf\htpasswd NEWPASS)" }

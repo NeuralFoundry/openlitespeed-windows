@@ -64,6 +64,7 @@
 #define ID_DB_PMA 122
 #define ID_DB_COPY 123
 #define ID_NEWPROXY 124
+#define ID_PANEL 125
 #define ID_PROXY_BASE 3000
 #define MAX_PROXIES 64
 #define IDD_NEWPROXY 102
@@ -1501,13 +1502,27 @@ static void newsite_done(newsite_t *ns)
     free(ns);
 }
 
+static int full_edition(void)
+{
+    wchar_t ed[16];
+    GetPrivateProfileStringW(L"tray", L"edition", L"server", ed, 16, g_ini);
+    return wcscmp(ed, L"full") == 0;
+}
+
+static void open_panel(void)
+{
+    wchar_t exe[MAX_PATH];
+    swprintf(exe, MAX_PATH, L"%s\\bin\\olspanel.exe", g_root);
+    ShellExecuteW(NULL, L"open", exe, NULL, g_root, SW_SHOWNORMAL);
+}
+
 static void show_menu(void)
 {
     HMENU m = CreatePopupMenu(), php = CreatePopupMenu(), sites = CreatePopupMenu(), logs = CreatePopupMenu(),
           db = CreatePopupMenu();
     wchar_t cur[MAX_PATH], label[MAX_PATH + 32];
     POINT pt;
-    int i, cmd;
+    int i, cmd, full = full_edition();
     update_status();
     find_php();
     load_sites();
@@ -1517,6 +1532,12 @@ static void show_menu(void)
     {
         swprintf(label, MAX_PATH + 32, L"Update available: %s", g_latest[0] == L'v' ? g_latest + 1 : g_latest);
         AppendMenuW(m, MF_STRING, ID_UPDATE, label);
+    }
+    if (full)
+    {
+        AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(m, MF_STRING, ID_PANEL, L"Open dashboard");
+        SetMenuDefaultItem(m, ID_PANEL, FALSE);
     }
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING | (g_running ? MF_GRAYED : 0), ID_START, L"Start");
@@ -1558,7 +1579,12 @@ static void show_menu(void)
     if (!phpd_count)
         AppendMenuW(php, MF_STRING | MF_GRAYED, 0, L"No PHP found");
     AppendMenuW(m, MF_POPUP, (UINT_PTR)php, L"PHP");
-    if (db_installed())
+    if (!full && !db_installed())
+    {
+        DestroyMenu(db);
+        db = NULL;
+    }
+    else if (db_installed())
     {
         int run = db_running();
         if (run)
@@ -1575,7 +1601,8 @@ static void show_menu(void)
     else
         AppendMenuW(db, MF_STRING | (g_dbbusy ? MF_GRAYED : 0), ID_DB_INSTALL,
                     g_dbbusy ? L"Installing..." : L"Install MariaDB and phpMyAdmin...");
-    AppendMenuW(m, MF_POPUP, (UINT_PTR)db, L"Database");
+    if (db)
+        AppendMenuW(m, MF_POPUP, (UINT_PTR)db, L"Database");
     AppendMenuW(logs, MF_STRING, ID_ERRLOG, L"Error log");
     AppendMenuW(logs, MF_STRING, ID_ACCLOG, L"Access log");
     AppendMenuW(m, MF_POPUP, (UINT_PTR)logs, L"Logs");
@@ -1654,6 +1681,8 @@ static void on_command(int id)
         open_pma();
     else if (id == ID_DB_COPY)
         db_copy_password();
+    else if (id == ID_PANEL)
+        open_panel();
     else if (id == ID_REFRESH)
         refresh_sites(0);
     else if (id == ID_WWW)
@@ -1697,7 +1726,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_LBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU)
             show_menu();
         else if (LOWORD(lp) == WM_LBUTTONDBLCLK)
-            on_command(ID_SITE);
+            on_command(full_edition() ? ID_PANEL : ID_SITE);
         else if (LOWORD(lp) == NIN_BALLOONUSERCLICK && g_update_balloon)
             on_command(ID_UPDATE);
         return 0;

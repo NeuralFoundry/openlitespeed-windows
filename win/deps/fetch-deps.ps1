@@ -45,4 +45,17 @@ foreach ($p in $pins) {
         if ($LASTEXITCODE -ne 0) { throw "submodules failed: $($p.Dir)" }
     }
 }
+$wv = @{ Version = '1.0.4258.31'; Sha256 = '56F7F4B8BF9AEE4B8EFEFBBDD4F67D5F74EBD1B100ED0806DA71BF76AF481AA9' }
+$wvDir = Join-Path $Deps 'webview2'
+if (-not (Test-Path (Join-Path $wvDir 'build\native\include\WebView2.h'))) {
+    $pkg = Join-Path $Deps "webview2.$($wv.Version).zip"
+    Write-Host "fetching webview2 $($wv.Version)"
+    Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$($wv.Version)/microsoft.web.webview2.$($wv.Version).nupkg" -OutFile $pkg -UseBasicParsing
+    if ((Get-FileHash $pkg -Algorithm SHA256).Hash -ne $wv.Sha256) {
+        Remove-Item $pkg -Force
+        throw 'webview2 package failed the checksum check'
+    }
+    Expand-Archive $pkg -DestinationPath $wvDir -Force
+    Remove-Item $pkg -Force
+}
 Write-Host "dependency sources ready in $Deps"

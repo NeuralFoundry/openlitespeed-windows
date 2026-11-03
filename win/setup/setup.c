@@ -32,7 +32,7 @@
 #define MAGIC         "OLSPAYLD"
 
 enum { ID_MODE = 100, ID_DIR, ID_DIR_BR, ID_PHP, ID_PHP_BR, ID_WWW, ID_WWW_BR, ID_PORT, ID_APORT,
-       ID_SERVICE, ID_TRAY, ID_INSTALL, ID_CANCEL, ID_LOG, ID_STATUS, ID_OPEN_SITE, ID_OPEN_ADMIN };
+       ID_SERVICE, ID_TRAY, ID_ED_SERVER, ID_ED_FULL, ID_INSTALL, ID_CANCEL, ID_LOG, ID_STATUS, ID_OPEN_SITE, ID_OPEN_ADMIN };
 
 #define WM_DONE (WM_APP + 1)
 #define WM_LOG  (WM_APP + 2)
@@ -56,7 +56,7 @@ static int g_dpi = 96;
 static unsigned char *g_payload;
 static size_t g_plen;
 static wchar_t g_dir[MAX_PATH], g_phpdir[MAX_PATH], g_www[MAX_PATH], g_port[16], g_aport[16];
-static int g_mode, g_service, g_tray, g_upgrade, g_ok;
+static int g_mode, g_service, g_tray, g_upgrade, g_ok, g_full = -1;
 static wchar_t g_password[64];
 
 static void buf_add(buf_t *b, const void *d, size_t n)
@@ -531,12 +531,22 @@ static int conf_port(const wchar_t *file)
     return port;
 }
 
+static int existing_full(const wchar_t *dir)
+{
+    wchar_t ini[MAX_PATH], ed[16];
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", dir);
+    GetPrivateProfileStringW(L"tray", L"edition", L"server", ed, 16, ini);
+    return wcscmp(ed, L"full") == 0;
+}
+
 static void apply_mode_defaults(void)
 {
     int m = (int)SendMessageW(item(ID_MODE), CB_GETCURSEL, 0, 0);
     wchar_t dir[MAX_PATH], www[MAX_PATH], f[MAX_PATH], num[16];
     int sel = mode_defaults(m, dir, www);
-    int up = m == existing_mode(), port;
+    int up = m == existing_mode(), port, full = up ? existing_full(g_existing) : 1;
+    SendMessageW(item(ID_ED_FULL), BM_SETCHECK, full ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(item(ID_ED_SERVER), BM_SETCHECK, full ? BST_UNCHECKED : BST_CHECKED, 0);
     SetWindowTextW(item(ID_DIR), dir);
     SetWindowTextW(item(ID_WWW), www);
     select_php_item(sel);
@@ -730,12 +740,12 @@ static void reg_set(HKEY k, const wchar_t *name, const wchar_t *val)
     RegSetValueExW(k, name, 0, REG_SZ, (const BYTE *)val, (DWORD)((wcslen(val) + 1) * sizeof(wchar_t)));
 }
 
-static void stop_tray(const wchar_t *dir)
+static void stop_app(const wchar_t *dir, const wchar_t *exe, const wchar_t *cls, UINT msg, WPARAM wp)
 {
     wchar_t want[MAX_PATH], path[MAX_PATH];
     HWND t = NULL;
-    swprintf(want, MAX_PATH, L"%s\\bin\\olstray.exe", dir);
-    while ((t = FindWindowExW(NULL, t, L"OpenLiteSpeedTray", NULL)) != NULL)
+    swprintf(want, MAX_PATH, L"%s\\bin\\%s", dir, exe);
+    while ((t = FindWindowExW(NULL, t, cls, NULL)) != NULL)
     {
         DWORD pid = 0, n = MAX_PATH;
         HANDLE h;
@@ -744,13 +754,19 @@ static void stop_tray(const wchar_t *dir)
             continue;
         if (QueryFullProcessImageNameW(h, 0, path, &n) && _wcsicmp(path, want) == 0)
         {
-            PostMessageW(t, WM_COMMAND, 111, 0);
+            PostMessageW(t, msg, wp, 0);
             WaitForSingleObject(h, 5000);
             CloseHandle(h);
             return;
         }
         CloseHandle(h);
     }
+}
+
+static void stop_tray(const wchar_t *dir)
+{
+    stop_app(dir, L"olspanel.exe", L"OpenLiteSpeedPanel", WM_CLOSE, 0);
+    stop_app(dir, L"olstray.exe", L"OpenLiteSpeedTray", WM_COMMAND, 111);
 }
 
 static DWORD run_tool(const wchar_t *dir, const wchar_t *args)
@@ -832,6 +848,30 @@ static DWORD WINAPI install_thread(void *arg)
             return 0;
         }
     }
+    if (g_full < 0)
+        g_full = g_upgrade && existing_full(g_dir);
+    swprintf(path, MAX_PATH, L"%s\\conf\\olstray.ini", g_dir);
+    WritePrivateProfileStringW(L"tray", L"edition", g_full ? L"full" : L"server", path);
+    if (g_full)
+    {
+        swprintf(path, MAX_PATH, L"%s\\data\\client.cnf", g_dir);
+        if (!exists(path))
+        {
+            log_line(L"Downloading MariaDB and phpMyAdmin...");
+            if (run_tool(g_dir, L"--db install") == 0)
+                run_tool(g_dir, L"--db stop");
+            else
+                log_line(L"MariaDB was not installed. Install it later from the dashboard.");
+        }
+        swprintf(path, MAX_PATH, L"%s\\bin\\cloudflared.exe", g_dir);
+        if (!exists(path))
+        {
+            log_line(L"Downloading Cloudflare Tunnel...");
+            if (run_tool(g_dir, L"--tunnel install") != 0)
+                log_line(L"Cloudflare Tunnel was not downloaded. It is downloaded again when you share a site.");
+        }
+        run_tool(g_dir, L"--dev-hosts");
+    }
     if (g_upgrade && g_service)
         run_tool(g_dir, L"-s start");
     img = own_image(&stub_len, NULL);
@@ -850,6 +890,14 @@ static DWORD WINAPI install_thread(void *arg)
         shortcut(path, cmd, NULL, cmd);
         swprintf(path, MAX_PATH, L"%s\\Uninstall OpenLiteSpeed.lnk", sm);
         shortcut(path, self, L"--uninstall", self);
+        swprintf(path, MAX_PATH, L"%s\\OpenLiteSpeed Dashboard.lnk", sm);
+        if (g_full)
+        {
+            swprintf(cmd, 4096, L"%s\\bin\\olspanel.exe", g_dir);
+            shortcut(path, cmd, NULL, cmd);
+        }
+        else
+            DeleteFileW(path);
     }
     if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, UNINSTALL_KEY, 0, NULL, 0, KEY_SET_VALUE, NULL, &k, NULL) == ERROR_SUCCESS)
     {
@@ -904,6 +952,7 @@ static void on_install(void)
     g_mode = (int)SendMessageW(item(ID_MODE), CB_GETCURSEL, 0, 0);
     g_service = SendMessageW(item(ID_SERVICE), BM_GETCHECK, 0, 0) == BST_CHECKED;
     g_tray = SendMessageW(item(ID_TRAY), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    g_full = SendMessageW(item(ID_ED_FULL), BM_GETCHECK, 0, 0) == BST_CHECKED;
     if (!g_dir[0] || g_dir[1] != L':' || (!g_phpdir[0] && !g_download[0]) || !g_www[0] || _wtoi(g_port) <= 0
         || _wtoi(g_aport) <= 0)
     {
@@ -940,6 +989,12 @@ static void finish_page(int ok)
         wchar_t tray[MAX_PATH];
         swprintf(tray, MAX_PATH, L"%s\\bin\\olstray.exe", g_dir);
         start_unelevated(tray);
+    }
+    if (g_full)
+    {
+        wchar_t panel[MAX_PATH];
+        swprintf(panel, MAX_PATH, L"%s\\bin\\olspanel.exe", g_dir);
+        start_unelevated(panel);
     }
     (void)port;
 }
@@ -1041,8 +1096,17 @@ static void build_ui(void)
     }
     SendMessageW(item(ID_MODE), CB_SETDROPPEDWIDTH, dpi(760), 0);
     y += 36;
+    ctl(L"STATIC", L"Edition", 0, 20, y + 3, 130, 20, 0);
+    ctl(L"BUTTON", L"Full stack: dashboard, MariaDB, phpMyAdmin, Cloudflare Tunnel",
+        BS_AUTORADIOBUTTON | WS_TABSTOP | WS_GROUP, 160, y, 380, 22, ID_ED_FULL);
+    y += 22;
+    ctl(L"STATIC", L"Downloads about 170 MB during setup", 0, 178, y, 362, 20, 0);
+    y += 24;
+    ctl(L"BUTTON", L"Web server only: OpenLiteSpeed, PHP and the tray icon", BS_AUTORADIOBUTTON, 160, y, 380, 22,
+        ID_ED_SERVER);
+    y += 34;
     ctl(L"STATIC", L"Install folder", 0, 20, y + 3, 130, 20, 0);
-    ctl(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, 160, y, 290, 24, ID_DIR);
+    ctl(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP | WS_GROUP, 160, y, 290, 24, ID_DIR);
     ctl(L"BUTTON", L"Browse...", WS_TABSTOP, 458, y, 82, 24, ID_DIR_BR);
     y += 36;
     ctl(L"STATIC", L"PHP", 0, 20, y + 3, 130, 20, 0);
@@ -1257,6 +1321,7 @@ static int uninstall(const wchar_t *dir)
     stop_tray(dir);
     run_tool(dir, L"-s stop");
     run_tool(dir, L"--db stop");
+    run_tool(dir, L"--tunnel stop --all");
     run_tool(dir, L"--uninstall-service");
     run_tool(dir, g_silent ? L"--dev-https off --no-sites --keep-store" : L"--dev-https off --no-sites");
     run_tool(dir, L"--dev-hosts-clear");
@@ -1380,6 +1445,15 @@ static int silent_install(int argc, LPWSTR *argv)
         wcsncpy(g_aport, v, 15);
     g_service = arg_flag(argc, argv, L"--service");
     g_tray = !arg_flag(argc, argv, L"--no-tray");
+    if ((v = arg_value(argc, argv, L"--edition")) != NULL)
+    {
+        if (wcscmp(v, L"full") != 0 && wcscmp(v, L"server") != 0)
+        {
+            log_line(L"Error: --edition takes server or full");
+            return 1;
+        }
+        g_full = wcscmp(v, L"full") == 0;
+    }
     if ((v = arg_value(argc, argv, L"--php")) != NULL)
         g_download[0] = 0;
     if (!g_phpdir[0] && !g_download[0])
@@ -1466,7 +1540,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show)
     r.left = 0;
     r.top = 0;
     r.right = dpi(560);
-    r.bottom = dpi(590);
+    r.bottom = dpi(670);
     AdjustWindowRectExForDpi(&r, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0, g_dpi);
     g_wnd = CreateWindowW(wc.lpszClassName, PRODUCT L" Setup", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                           CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);

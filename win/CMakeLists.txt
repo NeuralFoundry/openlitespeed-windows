@@ -158,6 +158,15 @@ add_executable(olstray WIN32 "${OLS_TOP}/win/tray/olstray.c" "${OLS_TOP}/win/tra
 target_include_directories(olstray PRIVATE "${OLS_TOP}/win/common")
 target_compile_definitions(olstray PRIVATE "OLS_RELEASE=\"${OLS_RELEASE}\"")
 target_link_libraries(olstray user32 gdi32 shell32 advapi32 ole32 version comdlg32 winhttp bcrypt)
+add_executable(olspanel WIN32 "${OLS_TOP}/win/panel/olspanel.cpp" "${OLS_TOP}/win/panel/panel_php.c"
+    "${OLS_TOP}/win/panel/olspanel.rc")
+target_include_directories(olspanel PRIVATE "${OLS_TOP}/win/common" "${OLS_TOP}/.deps/webview2/build/native/include")
+target_compile_definitions(olspanel PRIVATE "OLS_RELEASE=\"${OLS_RELEASE}\"")
+target_link_options(olspanel PRIVATE /MANIFEST:NO)
+target_link_libraries(olspanel "${OLS_TOP}/.deps/webview2/build/native/x64/WebView2LoaderStatic.lib"
+    user32 gdi32 shell32 advapi32 ole32 oleaut32 version dwmapi)
+set_property(SOURCE "${OLS_TOP}/win/panel/olspanel.rc" APPEND PROPERTY OBJECT_DEPENDS
+    "${OLS_TOP}/win/panel/panel.html" "${OLS_TOP}/win/panel/olspanel.manifest")
 add_executable(lsrecaptcha "${OLS_TOP}/win/recaptcha/lsrecaptcha.c")
 target_link_libraries(lsrecaptcha winhttp)
 add_executable(setup WIN32 "${OLS_TOP}/win/setup/setup.c" "${OLS_TOP}/win/setup/setup.rc")

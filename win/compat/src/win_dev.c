@@ -1021,6 +1021,14 @@ int ols_dev_hosts(int clear)
         }
     }
     out = replace_block(htext, tb, te, block);
+    if (out && !changed && strcmp(out, htext) == 0)
+    {
+        free(out);
+        free(htext);
+        free(block);
+        printf("hosts file is up to date\n");
+        return 0;
+    }
     free(htext);
     free(block);
 write:

@@ -15,6 +15,7 @@ foreach ($d in 'bin', 'conf\vhosts\Example', 'conf\cert', 'admin\conf', 'admin\t
 
 Copy-Item (Join-Path $Top 'build\openlitespeed.exe') (Join-Path $Out 'bin')
 Copy-Item (Join-Path $Top 'build\olstray.exe') (Join-Path $Out 'bin')
+Copy-Item (Join-Path $Top 'build\olspanel.exe') (Join-Path $Out 'bin')
 Copy-Item (Join-Path $Top 'build\lsrecaptcha.exe') (Join-Path $Out 'bin')
 Copy-Item (Join-Path $Dist 'lsrecaptcha\_recaptcha.shtml') (Join-Path $Out 'lsrecaptcha')
 Get-ChildItem (Join-Path $Top 'build') -Directory -Filter 'lsphp-*' | Where-Object { $_.Name -match '^lsphp-\d+\.\d+-n?ts$' } | ForEach-Object {

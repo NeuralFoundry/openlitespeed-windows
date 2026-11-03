@@ -1,0 +1,5 @@
+#include <winres.h>
+
+1 RT_MANIFEST "olspanel.manifest"
+1 ICON "../res/ols.ico"
+2 RCDATA "panel.html"
