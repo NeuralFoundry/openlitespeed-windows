@@ -31,10 +31,10 @@ powershell -ExecutionPolicy Bypass -File win\package.ps1
 
 | Step | Result |
 |---|---|
-| `fetch-deps.ps1` | BoringSSL, Brotli, Expat, PCRE2, zlib, udns, libbcrypt, libmaxminddb, the IP2Location C library, LuaJIT, ModSecurity, yajl, libxml2 and the OWASP Core Rule Set at pinned commits in `.deps\`. BoringSSL gets the OpenLiteSpeed TLS patch from `win\deps\patches\`. |
+| `fetch-deps.ps1` | BoringSSL, Brotli, Expat, PCRE2, zlib, udns, libbcrypt, libmaxminddb, the IP2Location C library, LuaJIT, ModSecurity, yajl, libxml2 and the OWASP Core Rule Set at pinned commits in `.deps\`. BoringSSL gets the OpenLiteSpeed TLS patch from `win\deps\patches\`. The Microsoft WebView2 SDK for the dashboard comes from NuGet, checked against a pinned SHA-256. |
 | `build-deps.cmd` | Static libraries in `.deps\prefix\` |
 | `prepare.cmd` | Links the QUIC and HPACK sources from the `lsquic` submodule into `src\` |
-| `build.cmd` | `build\openlitespeed.exe`, `olstray.exe`, `setup.exe` and `olspack.exe` |
+| `build.cmd` | `build\openlitespeed.exe`, `olstray.exe`, `olspanel.exe`, `setup.exe` and `olspack.exe` |
 | `fetch-php.ps1` | PHP development packs for PHP 8.2 to 8.5, checked against the SHA-256 sums published by windows.php.net, and the LiteSpeed SAPI sources from the matching php-src tags |
 | `build-all.ps1` | `build\lsphp-<version>-<ts\|nts>\lsphp.exe` for every PHP version and build type |
 | `package.ps1` | `build\OpenLiteSpeed-<version>-win64-setup.exe` and a zip of the same files |
@@ -68,6 +68,7 @@ C:\ols-dev\bin\openlitespeed.exe -d
 | `win\lsphp\` | Windows support for the PHP LiteSpeed SAPI and its build scripts |
 | `win\setup\` | `setup.exe` installer and `olspack.exe` packer |
 | `win\tray\` | Tray application |
+| `win\panel\` | Dashboard, a WebView2 window with the page in `panel.html` |
 | `win\common\` | PHP, Laragon and XAMPP detection shared by the installer and the tray |
 | `win\package\` | Default configuration and `install.ps1` |
 | `win\deps\` | Dependency fetch and build scripts |
