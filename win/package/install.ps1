@@ -354,9 +354,8 @@ if ($isAdmin) {
 }
 if ($Edition -eq 'full') {
     Say 'Downloading MariaDB and phpMyAdmin...'
-    & $Exe --db install
+    if ($isAdmin) { & $Exe --db fetch } else { & $Exe --db install }
     if ($LASTEXITCODE -ne 0) { Say 'MariaDB was not installed. Install it later from the dashboard.' }
-    elseif ($isAdmin) { & $Exe --db stop | Out-Null }
     Say 'Downloading Cloudflare Tunnel...'
     & $Exe --tunnel install | Out-Null
     if ($LASTEXITCODE -ne 0) { Say 'Cloudflare Tunnel was not downloaded. It is downloaded again when you share a site.' }

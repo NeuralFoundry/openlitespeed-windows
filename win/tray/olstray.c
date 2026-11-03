@@ -91,6 +91,7 @@ static wchar_t g_latest[64];
 static volatile LONG g_checking;
 static volatile LONG g_creating;
 static volatile LONG g_dbbusy;
+static int g_dbauto;
 static volatile LONG g_updating;
 static wchar_t g_proxies[MAX_PROXIES][64];
 static int g_nproxies;
@@ -990,6 +991,28 @@ static void db_install(void)
         InterlockedExchange(&g_dbbusy, 0);
 }
 
+static int db_fetched(void)
+{
+    wchar_t exe[MAX_PATH], cnf[MAX_PATH];
+    swprintf(exe, MAX_PATH, L"%s\\mariadb\\bin\\mariadbd.exe", g_root);
+    swprintf(cnf, MAX_PATH, L"%s\\data\\client.cnf", g_root);
+    return GetFileAttributesW(exe) != INVALID_FILE_ATTRIBUTES && GetFileAttributesW(cnf) == INVALID_FILE_ATTRIBUTES;
+}
+
+static void db_auto(void)
+{
+    HANDLE t;
+    if (g_dbbusy)
+        return;
+    g_dbauto = 1;
+    InterlockedExchange(&g_dbbusy, 1);
+    t = CreateThread(NULL, 0, db_thread, NULL, 0, NULL);
+    if (t)
+        CloseHandle(t);
+    else
+        InterlockedExchange(&g_dbbusy, 0);
+}
+
 static void open_pma(void)
 {
     wchar_t tld[32], host[64], url[256];
@@ -1003,7 +1026,15 @@ static void db_done(DWORD code, char *out)
 {
     wchar_t *text;
     DWORD r;
+    int quiet = g_dbauto;
+    g_dbauto = 0;
     InterlockedExchange(&g_dbbusy, 0);
+    if (code != 0 && quiet)
+    {
+        free(out);
+        notify(L"OpenLiteSpeed", L"MariaDB could not be set up. Use Database > Install MariaDB and phpMyAdmin.");
+        return;
+    }
     if (code != 0)
     {
         text = report_text(out ? out : "", L"");
@@ -1015,13 +1046,13 @@ static void db_done(DWORD code, char *out)
     }
     free(out);
     r = run_tool(L"--dev-hosts", 1);
-    if (r == 5)
+    if (r == 5 && !quiet)
         r = run_elevated(L"--dev-hosts");
     if (g_running > 0)
         run_tool(L"-s reload", 1);
     load_sites();
     notify(L"OpenLiteSpeed", L"MariaDB is running. Sign in to phpMyAdmin as root; Database > Copy root password.");
-    if (r == 0 && g_running > 0)
+    if (r == 0 && g_running > 0 && !quiet)
         open_pma();
 }
 
@@ -1808,6 +1839,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show)
         on_command(ID_START);
     if (db_installed() && !db_running())
         run_tool(L"--db start", 0);
+    else if (full_edition() && db_fetched())
+        db_auto();
     SetTimer(g_wnd, TIMER_STATUS, 2000, NULL);
     schedule_update();
     while (GetMessageW(&msg, NULL, 0, 0) > 0)

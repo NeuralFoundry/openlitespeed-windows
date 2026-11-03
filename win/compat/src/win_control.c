@@ -615,10 +615,13 @@ static void for_each_vhost_logs(const wchar_t *root, const wchar_t *sddl)
 static int apply_acls(const wchar_t *root, const wchar_t *sid)
 {
     wchar_t sddl[512], p[MAX_PATH];
+    const wchar_t *me = ols_user_sid();
     int i, rc = 0;
     if (sid)
         swprintf(sddl, 512, L"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;%s)", sid);
-    if (set_dacl(root, sid ? sddl : NULL, sid != NULL) != 0)
+    else if (me)
+        swprintf(sddl, 512, L"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;%s)", me);
+    if (set_dacl(root, sid || me ? sddl : NULL, sid || me) != 0)
         rc = -1;
     if (sid)
         swprintf(sddl, 512, L"D:AI(A;OICI;0x1301bf;;;%s)", sid);

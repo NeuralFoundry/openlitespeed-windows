@@ -15,6 +15,9 @@
 #include <shlobj.h>
 #include <shellapi.h>
 #include <compressapi.h>
+#include <winsvc.h>
+#include <sddl.h>
+#include <aclapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -281,6 +284,26 @@ static int is_user_file(const char *rel)
            || _strnicmp(rel, "Example\\", 8) == 0;
 }
 
+static int no_reparse(const wchar_t *dir, const wchar_t *full)
+{
+    wchar_t tmp[MAX_PATH];
+    size_t i, dl = wcslen(dir);
+    DWORD a;
+    wcsncpy(tmp, full, MAX_PATH - 1);
+    tmp[MAX_PATH - 1] = 0;
+    for (i = dl + 1; i < MAX_PATH && tmp[i]; ++i)
+        if (tmp[i] == L'\\')
+        {
+            tmp[i] = 0;
+            a = GetFileAttributesW(tmp);
+            tmp[i] = L'\\';
+            if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT))
+                return 0;
+        }
+    a = GetFileAttributesW(full);
+    return a == INVALID_FILE_ATTRIBUTES || !(a & FILE_ATTRIBUTE_REPARSE_POINT);
+}
+
 static int extract(const wchar_t *dir)
 {
     size_t pos = 0;
@@ -314,6 +337,9 @@ static int extract(const wchar_t *dir)
                 mkdirs(full);
                 *slash = L'\\';
             }
+            if (!no_reparse(dir, full))
+                return -1;
+            DeleteFileW(full);
             if (write_file(full, g_payload + pos, (size_t)sz) != 0)
                 return -1;
             ++n;
@@ -539,6 +565,15 @@ static int existing_full(const wchar_t *dir)
     return wcscmp(ed, L"full") == 0;
 }
 
+static void edition_state(void)
+{
+    int full = SendMessageW(item(ID_ED_FULL), BM_GETCHECK, 0, 0) == BST_CHECKED;
+    if (full)
+        SendMessageW(item(ID_SERVICE), BM_SETCHECK, BST_UNCHECKED, 0);
+    EnableWindow(item(ID_SERVICE), !full);
+    EnableWindow(item(ID_TRAY), SendMessageW(item(ID_SERVICE), BM_GETCHECK, 0, 0) != BST_CHECKED);
+}
+
 static void apply_mode_defaults(void)
 {
     int m = (int)SendMessageW(item(ID_MODE), CB_GETCURSEL, 0, 0);
@@ -562,6 +597,7 @@ static void apply_mode_defaults(void)
     EnableWindow(item(ID_APORT), !up);
     EnableWindow(item(ID_WWW), !up);
     EnableWindow(item(ID_WWW_BR), !up);
+    edition_state();
     SetWindowTextW(item(ID_INSTALL), up ? L"Upgrade" : L"Install");
     SetWindowTextW(item(ID_STATUS), up ? L"OpenLiteSpeed is already installed here. Upgrading keeps your settings." : L"");
 }
@@ -763,6 +799,123 @@ static void stop_app(const wchar_t *dir, const wchar_t *exe, const wchar_t *cls,
     }
 }
 
+static int service_exists(void)
+{
+    SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT), svc = NULL;
+    if (scm)
+    {
+        if ((svc = OpenServiceW(scm, L"OpenLiteSpeed", SERVICE_QUERY_STATUS)) != NULL)
+            CloseServiceHandle(svc);
+        CloseServiceHandle(scm);
+    }
+    return svc != NULL;
+}
+
+static int desktop_user_sid(wchar_t *out, size_t n)
+{
+    HWND shell = GetShellWindow();
+    DWORD pid = 0, len;
+    HANDLE p = NULL, tok = NULL;
+    BYTE buf[512];
+    wchar_t *str = NULL;
+    int rc = -1;
+    if (shell && GetWindowThreadProcessId(shell, &pid) && pid)
+        p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!OpenProcessToken(p ? p : GetCurrentProcess(), TOKEN_QUERY, &tok))
+        tok = NULL;
+    if (tok && GetTokenInformation(tok, TokenUser, buf, sizeof(buf), &len)
+        && ConvertSidToStringSidW(((TOKEN_USER *)buf)->User.Sid, &str) && wcslen(str) < n)
+    {
+        wcscpy(out, str);
+        rc = 0;
+    }
+    if (str)
+        LocalFree(str);
+    if (tok)
+        CloseHandle(tok);
+    if (p)
+        CloseHandle(p);
+    return rc;
+}
+
+static int dacl_protected(const wchar_t *path)
+{
+    PSECURITY_DESCRIPTOR sd = NULL;
+    SECURITY_DESCRIPTOR_CONTROL ctl = 0;
+    DWORD rev;
+    int r = 0;
+    if (GetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, NULL, NULL, NULL, NULL, &sd)
+        != ERROR_SUCCESS)
+        return 0;
+    if (GetSecurityDescriptorControl(sd, &ctl, &rev))
+        r = (ctl & SE_DACL_PROTECTED) != 0;
+    LocalFree(sd);
+    return r;
+}
+
+static int secure_root(const wchar_t *dir)
+{
+    wchar_t sid[192], sddl[400];
+    PSECURITY_DESCRIPTOR sd = NULL;
+    PACL dacl = NULL;
+    BOOL present = FALSE, def = FALSE;
+    DWORD r = 1;
+    if (dacl_protected(dir))
+        return 0;
+    if (desktop_user_sid(sid, 192) != 0)
+        return -1;
+    swprintf(sddl, 400, L"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;%s)", sid);
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, NULL)
+        && GetSecurityDescriptorDacl(sd, &present, &dacl, &def) && present)
+        r = SetNamedSecurityInfoW((LPWSTR)dir, SE_FILE_OBJECT,
+                                  DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, NULL, NULL, dacl,
+                                  NULL);
+    if (sd)
+        LocalFree(sd);
+    return r == ERROR_SUCCESS ? 0 : -1;
+}
+
+static void drop_dlls(const wchar_t *dir)
+{
+    wchar_t pat[MAX_PATH], p[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE f;
+    swprintf(pat, MAX_PATH, L"%s\\bin\\*.dll", dir);
+    if ((f = FindFirstFileW(pat, &fd)) == INVALID_HANDLE_VALUE)
+        return;
+    do
+    {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            continue;
+        swprintf(p, MAX_PATH, L"%s\\bin\\%s", dir, fd.cFileName);
+        SetFileAttributesW(p, FILE_ATTRIBUTE_NORMAL);
+        DeleteFileW(p);
+    }
+    while (FindNextFileW(f, &fd));
+    FindClose(f);
+}
+
+static void kill_mariadb(const wchar_t *dir)
+{
+    wchar_t pidf[MAX_PATH], want[MAX_PATH], img[MAX_PATH];
+    unsigned char *t;
+    size_t len;
+    DWORD pid, n = MAX_PATH;
+    HANDLE h;
+    swprintf(pidf, MAX_PATH, L"%s\\data\\mariadb.pid", dir);
+    swprintf(want, MAX_PATH, L"%s\\mariadb\\bin\\mariadbd.exe", dir);
+    if ((t = read_file(pidf, &len)) == NULL)
+        return;
+    pid = (DWORD)strtoul((const char *)t, NULL, 10);
+    free(t);
+    if (!pid || (h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid))
+                    == NULL)
+        return;
+    if (QueryFullProcessImageNameW(h, 0, img, &n) && _wcsicmp(img, want) == 0 && TerminateProcess(h, 1))
+        WaitForSingleObject(h, 10000);
+    CloseHandle(h);
+}
+
 static void stop_tray(const wchar_t *dir)
 {
     stop_app(dir, L"olspanel.exe", L"OpenLiteSpeedPanel", WM_CLOSE, 0);
@@ -787,6 +940,9 @@ static DWORD WINAPI install_thread(void *arg)
     unsigned char *img;
     (void)arg;
     mkdirs(g_dir);
+    if (!service_exists() && secure_root(g_dir) != 0)
+        log_line(L"Warning: could not limit the install folder to your account.");
+    drop_dlls(g_dir);
     swprintf(path, MAX_PATH, L"%s\\admin\\conf\\htpasswd", g_dir);
     g_upgrade = exists(path);
     if (g_upgrade)
@@ -850,6 +1006,11 @@ static DWORD WINAPI install_thread(void *arg)
     }
     if (g_full < 0)
         g_full = g_upgrade && existing_full(g_dir);
+    if (g_full && (g_service || service_exists()))
+    {
+        log_line(L"The full stack edition runs with the tray app, so this installation keeps the web server only edition.");
+        g_full = 0;
+    }
     swprintf(path, MAX_PATH, L"%s\\conf\\olstray.ini", g_dir);
     WritePrivateProfileStringW(L"tray", L"edition", g_full ? L"full" : L"server", path);
     if (g_full)
@@ -858,10 +1019,8 @@ static DWORD WINAPI install_thread(void *arg)
         if (!exists(path))
         {
             log_line(L"Downloading MariaDB and phpMyAdmin...");
-            if (run_tool(g_dir, L"--db install") == 0)
-                run_tool(g_dir, L"--db stop");
-            else
-                log_line(L"MariaDB was not installed. Install it later from the dashboard.");
+            if (run_tool(g_dir, L"--db fetch") != 0)
+                log_line(L"MariaDB was not downloaded. Install it later from the dashboard.");
         }
         swprintf(path, MAX_PATH, L"%s\\bin\\cloudflared.exe", g_dir);
         if (!exists(path))
@@ -1020,7 +1179,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             browse_folder(ID_WWW, L"Projects folder");
             break;
         case ID_SERVICE:
-            EnableWindow(item(ID_TRAY), SendMessageW(item(ID_SERVICE), BM_GETCHECK, 0, 0) != BST_CHECKED);
+        case ID_ED_FULL:
+        case ID_ED_SERVER:
+            edition_state();
             break;
         case ID_INSTALL:
             on_install();
@@ -1320,7 +1481,7 @@ static int uninstall(const wchar_t *dir)
         return 1;
     stop_tray(dir);
     run_tool(dir, L"-s stop");
-    run_tool(dir, L"--db stop");
+    kill_mariadb(dir);
     run_tool(dir, L"--tunnel stop --all");
     run_tool(dir, L"--uninstall-service");
     run_tool(dir, g_silent ? L"--dev-https off --no-sites --keep-store" : L"--dev-https off --no-sites");
@@ -1453,6 +1614,11 @@ static int silent_install(int argc, LPWSTR *argv)
             return 1;
         }
         g_full = wcscmp(v, L"full") == 0;
+        if (g_full && g_service)
+        {
+            log_line(L"Error: --service works with --edition server only");
+            return 1;
+        }
     }
     if ((v = arg_value(argc, argv, L"--php")) != NULL)
         g_download[0] = 0;

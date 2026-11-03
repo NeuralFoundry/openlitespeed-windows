@@ -173,7 +173,7 @@ add_executable(setup WIN32 "${OLS_TOP}/win/setup/setup.c" "${OLS_TOP}/win/setup/
 target_include_directories(setup PRIVATE "${OLS_TOP}/win/common")
 target_compile_definitions(setup PRIVATE "OLS_RELEASE=\"${OLS_RELEASE}\"")
 target_link_libraries(setup user32 gdi32 shell32 ole32 advapi32 comctl32 cabinet uuid ws2_32 version)
-target_link_options(setup PRIVATE /MANIFEST:NO)
+target_link_options(setup PRIVATE /MANIFEST:NO /DEPENDENTLOADFLAG:0x800)
 add_executable(olspack "${OLS_TOP}/win/setup/setup.c")
 target_compile_definitions(olspack PRIVATE OLS_PACK_TOOL)
 target_include_directories(olspack PRIVATE "${OLS_TOP}/win/common")

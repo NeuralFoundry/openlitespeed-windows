@@ -1607,11 +1607,17 @@ int HttpReq::processUnknownHeader(key_value_pair *pCurHeader,
             memset((char *)(name - 2), 0x20, 7 + pCurHeader->valLen + 4);//
         }
     }
-    else if ((pCurHeader->keyLen == 16
-                 && (strncasecmp(name, "CF-Connecting-IP", 16) == 0))
-             || (pCurHeader->keyLen == 9
-                 && (strncasecmp(name, "X-Real-IP", 9) == 0)))
+    else if (pCurHeader->keyLen == 16
+             && (strncasecmp(name, "CF-Connecting-IP", 16) == 0))
         m_iCfRealIpHeader = m_unknHeaders.getSize();
+    else if (pCurHeader->keyLen == 9
+             && (strncasecmp(name, "X-Real-IP", 9) == 0))
+    {
+        key_value_pair *pPrev = m_iCfRealIpHeader
+                                ? getUnknHeaderPair(m_iCfRealIpHeader - 1) : NULL;
+        if (!pPrev || pPrev->keyLen != 16)
+            m_iCfRealIpHeader = m_unknHeaders.getSize();
+    }
     else if (pCurHeader->keyLen == 17
                 && strncasecmp(name, "X-Forwarded-Proto", 17) == 0)
     {

@@ -64,10 +64,9 @@ static int run_wait(const wchar_t *exe, wchar_t *cmd, DWORD timeout)
     return (int)code;
 }
 
-static int sha256_file(const wchar_t *path, char hex[65], long long *size)
+static int sha256_handle(HANDLE h, char hex[65], long long *size)
 {
     static UCHAR buf[1 << 16];
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     BCRYPT_ALG_HANDLE alg = NULL;
     BCRYPT_HASH_HANDLE hh = NULL;
     UCHAR md[32];
@@ -93,19 +92,53 @@ static int sha256_file(const wchar_t *path, char hex[65], long long *size)
         BCryptDestroyHash(hh);
     if (alg)
         BCryptCloseAlgorithmProvider(alg, 0);
-    CloseHandle(h);
     return rc;
+}
+
+static HANDLE open_locked(const wchar_t *path)
+{
+    return CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                       FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+}
+
+static int verified(HANDLE h)
+{
+    char hex[65];
+    long long size = 0;
+    BY_HANDLE_FILE_INFORMATION fi;
+    return h != INVALID_HANDLE_VALUE && GetFileInformationByHandle(h, &fi)
+           && !(fi.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && SetFilePointer(h, 0, NULL, FILE_BEGIN) == 0
+           && sha256_handle(h, hex, &size) == 0 && size == CFD_SIZE && strcmp(hex, CFD_SHA256) == 0;
+}
+
+static HANDLE lock_exe(const tun_t *t)
+{
+    HANDLE h = open_locked(t->exe);
+    if (h != INVALID_HANDLE_VALUE && !verified(h))
+    {
+        CloseHandle(h);
+        h = INVALID_HANDLE_VALUE;
+    }
+    return h;
 }
 
 static int install(const tun_t *t)
 {
-    wchar_t sys[MAX_PATH], curl[MAX_PATH], tmp[MAX_PATH], cmd[MAX_PATH * 4];
-    char hex[65];
-    long long size = 0;
+    wchar_t sys[MAX_PATH], curl[MAX_PATH], tmp[MAX_PATH], cmd[MAX_PATH * 4], parent[MAX_PATH];
+    HANDLE h;
+    int ok;
     if (GetSystemDirectoryW(sys, MAX_PATH) == 0)
         return 1;
     swprintf(curl, MAX_PATH, L"%s\\curl.exe", sys);
-    swprintf(tmp, MAX_PATH, L"%s\\tmp\\cloudflared.download", t->root);
+    swprintf(parent, MAX_PATH, L"%s\\tmp", t->root);
+    CreateDirectoryW(parent, NULL);
+    swprintf(parent, MAX_PATH, L"%s\\tmp\\download", t->root);
+    if (ols_private_dir(parent) != 0)
+    {
+        fprintf(stderr, "cannot prepare a private folder: %ls\n", parent);
+        return 1;
+    }
+    swprintf(tmp, MAX_PATH, L"%s\\cloudflared.download", parent);
     DeleteFileW(tmp);
     swprintf(cmd, MAX_PATH * 4,
              L"\"%s\" -fsS --proto =https --tlsv1.2 --connect-timeout 20 --max-time 900 -L -o \"%s\" %s", curl, tmp,
@@ -115,30 +148,41 @@ static int install(const tun_t *t)
     if (run_wait(curl, cmd, 960000) != 0)
     {
         DeleteFileW(tmp);
+        RemoveDirectoryW(parent);
         fprintf(stderr, "could not download cloudflared\n");
         return 1;
     }
-    if (sha256_file(tmp, hex, &size) != 0 || size != CFD_SIZE || strcmp(hex, CFD_SHA256) != 0)
+    h = open_locked(tmp);
+    ok = verified(h);
+    if (h != INVALID_HANDLE_VALUE)
+        CloseHandle(h);
+    if (!ok)
     {
         DeleteFileW(tmp);
+        RemoveDirectoryW(parent);
         fprintf(stderr, "cloudflared failed the checksum check\n");
         return 1;
     }
     if (!MoveFileExW(tmp, t->exe, MOVEFILE_REPLACE_EXISTING))
     {
+        DWORD e = GetLastError();
         DeleteFileW(tmp);
+        RemoveDirectoryW(parent);
         fprintf(stderr, "cannot install %ls\n", t->exe);
-        return GetLastError() == ERROR_ACCESS_DENIED ? 5 : 1;
+        return e == ERROR_ACCESS_DENIED ? 5 : 1;
     }
+    RemoveDirectoryW(parent);
     printf("cloudflared %s installed\n", CFD_VERSION);
     return 0;
 }
 
 static int ready(const tun_t *t)
 {
-    char hex[65];
-    long long size = 0;
-    return exists(t->exe) && sha256_file(t->exe, hex, &size) == 0 && size == CFD_SIZE && strcmp(hex, CFD_SHA256) == 0;
+    HANDLE h = lock_exe(t);
+    if (h == INVALID_HANDLE_VALUE)
+        return 0;
+    CloseHandle(h);
+    return 1;
 }
 
 static int site_exists(const tun_t *t, const char *site)
@@ -276,9 +320,13 @@ static int spawn(const tun_t *t, const wchar_t *site, wchar_t *args, const char 
     wchar_t cmd[MAX_PATH * 4], pidf[MAX_PATH], logf[MAX_PATH], *env = NULL;
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
+    HANDLE lock;
     char buf[32];
     int n, ok;
-    CreateDirectoryW(t->dir, NULL);
+    swprintf(cmd, MAX_PATH * 4, L"%s\\tmp", t->root);
+    CreateDirectoryW(cmd, NULL);
+    if (ols_private_dir(t->dir) != 0)
+        return -1;
     state_path(t, site, L"log", logf);
     DeleteFileW(logf);
     swprintf(cmd, MAX_PATH * 4, L"\"%s\" tunnel --no-autoupdate --logfile \"%s\" %s", t->exe, logf, args);
@@ -307,9 +355,13 @@ static int spawn(const tun_t *t, const wchar_t *site, wchar_t *args, const char 
     }
     memset(&si, 0, sizeof(si));
     si.cb = sizeof(si);
-    ok = CreateProcessW(t->exe, cmd, NULL, NULL, FALSE,
-                        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | (env ? CREATE_UNICODE_ENVIRONMENT : 0), env, NULL,
-                        &si, &pi);
+    lock = lock_exe(t);
+    ok = lock != INVALID_HANDLE_VALUE
+         && CreateProcessW(t->exe, cmd, NULL, NULL, FALSE,
+                           CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | (env ? CREATE_UNICODE_ENVIRONMENT : 0), env,
+                           NULL, &si, &pi);
+    if (lock != INVALID_HANDLE_VALUE)
+        CloseHandle(lock);
     if (env)
     {
         SecureZeroMemory(env, (wcslen(env) + 1) * sizeof(wchar_t));
@@ -351,7 +403,7 @@ static int start_quick(const tun_t *t, const char *site)
     wchar_t w[64], args[512], tld[32], urlf[MAX_PATH], logf[MAX_PATH];
     char url[160], *log = NULL;
     size_t n;
-    int i, r;
+    int i, r, app;
     if (!name_ok(site) || !site_exists(t, site) || MultiByteToWideChar(CP_UTF8, 0, site, -1, w, 64) <= 0)
     {
         fprintf(stderr, "there is no site named %s that can be shared\n", site);
@@ -370,12 +422,21 @@ static int start_quick(const tun_t *t, const char *site)
     }
     if (!ready(t) && (r = install(t)) != 0)
         return r;
-    if ((r = trust_loopback(t)) < 0)
-        fprintf(stderr, "could not check the server access control\n");
-    else if (r == 1)
-        ols_win_control("reload");
-    GetPrivateProfileStringW(L"sites", L"tld", L"test", tld, 32, t->ini);
-    swprintf(args, 512, L"--url http://127.0.0.1:%d --http-host-header %s.%s", ols_default_port(t->root), w, tld);
+    app = GetPrivateProfileIntW(L"proxy", w, 0, t->ini);
+    if (app > 0 && app < 65536)
+        swprintf(args, 512, L"--url http://127.0.0.1:%d --http-host-header localhost", app);
+    else
+    {
+        if ((r = trust_loopback(t)) < 0 || r == 2)
+        {
+            fprintf(stderr, "the server access control could not be prepared, so visitors would look like this computer\n");
+            return 1;
+        }
+        if (r == 1)
+            ols_win_control("reload");
+        GetPrivateProfileStringW(L"sites", L"tld", L"test", tld, 32, t->ini);
+        swprintf(args, 512, L"--url http://127.0.0.1:%d --http-host-header %s.%s", ols_default_port(t->root), w, tld);
+    }
     if (spawn(t, w, args, NULL) != 0)
     {
         fprintf(stderr, "cannot start cloudflared\n");
@@ -521,7 +582,14 @@ static int start_named(const tun_t *t)
         free(tok);
         return r;
     }
-    if (trust_loopback(t) == 1)
+    if ((r = trust_loopback(t)) < 0 || r == 2)
+    {
+        SecureZeroMemory(tok, strlen(tok));
+        free(tok);
+        fprintf(stderr, "the server access control could not be prepared, so visitors would look like this computer\n");
+        return 1;
+    }
+    if (r == 1)
         ols_win_control("reload");
     r = spawn(t, NAMED, args, tok);
     SecureZeroMemory(tok, strlen(tok));

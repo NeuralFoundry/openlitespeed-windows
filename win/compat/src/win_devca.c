@@ -116,7 +116,15 @@ int ols_write_wfile(const wchar_t *path, const void *data, size_t len, int priv)
         sa.lpSecurityDescriptor = sd;
         sa.bInheritHandle = FALSE;
     }
-    h = CreateFileW(path, GENERIC_WRITE, 0, priv ? &sa : NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (priv && !DeleteFileW(path) && GetLastError() != ERROR_FILE_NOT_FOUND)
+    {
+        e = GetLastError();
+        LocalFree(sd);
+        SetLastError(e);
+        return -1;
+    }
+    h = CreateFileW(path, GENERIC_WRITE, 0, priv ? &sa : NULL, priv ? CREATE_NEW : CREATE_ALWAYS,
+                    FILE_ATTRIBUTE_NORMAL | (priv ? FILE_FLAG_OPEN_REPARSE_POINT : 0), NULL);
     e = GetLastError();
     if (sd)
         LocalFree(sd);
@@ -323,6 +331,18 @@ static int save_pair(const wchar_t *crt, const wchar_t *key, X509 *x, EVP_PKEY *
     return rc;
 }
 
+static int ca_constrained(X509 *x)
+{
+    X509_EXTENSION *want = X509V3_EXT_nconf_nid(NULL, NULL, NID_name_constraints, CA_CONSTRAINTS), *have;
+    int i = X509_get_ext_by_NID(x, NID_name_constraints, -1), ok = 0;
+    if (want && i >= 0 && X509_get_ext_by_NID(x, NID_name_constraints, i) < 0 && (have = X509_get_ext(x, i)) != NULL)
+        ok = X509_EXTENSION_get_critical(have)
+             && ASN1_STRING_cmp(X509_EXTENSION_get_data(have), X509_EXTENSION_get_data(want)) == 0
+             && X509_get_pathlen(x) == 0;
+    X509_EXTENSION_free(want);
+    return ok;
+}
+
 static int ca_load(const wchar_t *root, devca_t *ca)
 {
     wchar_t dir[MAX_PATH], crt[MAX_PATH], key[MAX_PATH];
@@ -346,7 +366,7 @@ static int ca_load(const wchar_t *root, devca_t *ca)
         BIO_free(bio);
     }
     if (ca->cert && ca->key && X509_check_private_key(ca->cert, ca->key)
-        && X509_cmp_current_time(X509_get0_notAfter(ca->cert)) > 0)
+        && X509_cmp_current_time(X509_get0_notAfter(ca->cert)) > 0 && ca_constrained(ca->cert))
         rc = 0;
 done:
     if (b)

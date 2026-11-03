@@ -47,6 +47,11 @@ static const char s_proxy[] =
     "virtualHostConfig {\r\n"
     "  docRoot                $VH_ROOT/\r\n"
     "\r\n"
+    "  accessControl {\r\n"
+    "    allow                127.0.0.1, ::1\r\n"
+    "    deny                 ALL\r\n"
+    "  }\r\n"
+    "\r\n"
     "  extprocessor devproxy-%s {\r\n"
     "    type                 proxy\r\n"
     "    address              127.0.0.1:%d\r\n"
@@ -67,6 +72,11 @@ static const char s_proxy[] =
     "    address              127.0.0.1:%d\r\n"
     "  }\r\n"
     "}\r\n";
+
+static const char s_wp_guard[] =
+    "<FilesMatch \"^(install|setup-config)\\.php$\">\r\n"
+    "Require ip 127.0.0.1 ::1\r\n"
+    "</FilesMatch>\r\n";
 
 static const char s_tools[] =
     "allowSymbolLink          1\r\n"
@@ -730,6 +740,12 @@ static int install_wordpress(const wchar_t *dir)
         fprintf(stderr, "the WordPress archive was not what we expected\n");
         return 1;
     }
+    swprintf(chk, MAX_PATH, L"%s\\wp-admin\\.htaccess", dir);
+    if (write_file(chk, s_wp_guard, sizeof(s_wp_guard) - 1) != 0)
+    {
+        fprintf(stderr, "could not protect the WordPress installer\n");
+        return 1;
+    }
     printf("WordPress installed; open the site and finish the setup in the browser\n");
     return 0;
 }
@@ -946,9 +962,21 @@ static char *remove_legacy_hosts(char *t, int *changed)
     return t;
 }
 
+static int host_ok(const char *dom, const char *tld)
+{
+    size_t n = strlen(dom), t = strlen(tld);
+    char label[64];
+    if (!t || n <= t + 1 || n - t - 1 >= sizeof(label) || dom[n - t - 1] != '.' || strcmp(dom + n - t, tld) != 0)
+        return 0;
+    memcpy(label, dom, n - t - 1);
+    label[n - t - 1] = 0;
+    return valid_label(label);
+}
+
 int ols_dev_hosts(int clear)
 {
-    wchar_t root[MAX_PATH], conf[MAX_PATH], hosts[MAX_PATH];
+    wchar_t root[MAX_PATH], conf[MAX_PATH], hosts[MAX_PATH], ini[MAX_PATH], wtld[32];
+    char tld[32];
     char *text = NULL, *htext = NULL, *block = NULL, *out, rootfwd[MAX_PATH * 3], tb[MAX_PATH * 3 + 64],
         te[MAX_PATH * 3 + 64], *q;
     const char *p, *end;
@@ -964,6 +992,10 @@ int ols_dev_hosts(int clear)
     snprintf(tb, sizeof(tb), "%s [%s]", HOSTS_BEGIN, rootfwd);
     snprintf(te, sizeof(te), "%s [%s]", HOSTS_END, rootfwd);
     swprintf(conf, MAX_PATH, L"%s\\conf\\httpd_config.conf", root);
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    GetPrivateProfileStringW(L"sites", L"tld", L"test", wtld, 32, ini);
+    if (!clear && (WideCharToMultiByte(CP_UTF8, 0, wtld, -1, tld, sizeof(tld), NULL, NULL) <= 0 || !valid_label(tld)))
+        return 2;
     n = GetSystemDirectoryW(hosts, MAX_PATH);
     if (n == 0 || n > MAX_PATH - 32)
         return 1;
@@ -984,7 +1016,7 @@ int ols_dev_hosts(int clear)
         while (*p && *p != '\r' && *p != '\n' && *p != ' ' && i < sizeof(dom) - 1)
             dom[i++] = *p++;
         dom[i] = 0;
-        if (!i || strcmp(dom, "localhost") == 0)
+        if (!i || strcmp(dom, "localhost") == 0 || !host_ok(dom, tld))
             continue;
         snprintf(alias, sizeof(alias), "127.0.0.1 %s www.%s\r\n::1 %s www.%s\r\n", dom, dom, dom, dom);
         buf_str(&block, &blen, &bcap, alias);

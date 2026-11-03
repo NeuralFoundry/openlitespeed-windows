@@ -565,7 +565,7 @@ dialog.wide { width: min(860px, 90vw); }
 
   function openToken() {
     $("token").value = "";
-    $("token-origin").textContent = "http://localhost" + (state.server.http === 80 ? "" : ":" + state.server.http);
+    $("token-origin").textContent = "http://127.0.0.1" + (state.server.http === 80 ? "" : ":" + state.server.http);
     $("dlg-token").showModal();
   }
   $("token-ok").addEventListener("click", async () => {

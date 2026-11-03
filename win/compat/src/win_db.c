@@ -125,38 +125,33 @@ static int start_detached(const wchar_t *exe, wchar_t *cmd)
     return 0;
 }
 
-static int file_sha256(const wchar_t *path, char hex[65], long long *size)
+static int file_sha256(HANDLE h, char hex[65], long long *size)
 {
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     SHA256_CTX c;
     static unsigned char buf[1 << 16];
     unsigned char md[SHA256_DIGEST_LENGTH];
     DWORD got;
     LARGE_INTEGER sz;
     int i;
-    if (h == INVALID_HANDLE_VALUE)
+    if (h == INVALID_HANDLE_VALUE || !GetFileSizeEx(h, &sz))
         return -1;
-    if (!GetFileSizeEx(h, &sz))
-    {
-        CloseHandle(h);
-        return -1;
-    }
     *size = sz.QuadPart;
     SHA256_Init(&c);
     while (ReadFile(h, buf, sizeof(buf), &got, NULL) && got)
         SHA256_Update(&c, buf, got);
     SHA256_Final(md, &c);
-    CloseHandle(h);
     for (i = 0; i < SHA256_DIGEST_LENGTH; ++i)
         snprintf(hex + i * 2, 3, "%02x", md[i]);
     return 0;
 }
 
-static int fetch(const wchar_t *url, const wchar_t *zip, const char *sha, long long size, const char *what)
+static int fetch(const wchar_t *url, const wchar_t *zip, const char *sha, long long size, const char *what,
+                 HANDLE *lock)
 {
     wchar_t sys[MAX_PATH], exe[MAX_PATH], cmd[MAX_PATH * 4];
     char hex[65];
     long long got = 0;
+    *lock = INVALID_HANDLE_VALUE;
     if (GetSystemDirectoryW(sys, MAX_PATH) == 0)
         return 1;
     swprintf(exe, MAX_PATH, L"%s\\curl.exe", sys);
@@ -171,8 +166,13 @@ static int fetch(const wchar_t *url, const wchar_t *zip, const char *sha, long l
         DeleteFileW(zip);
         return 1;
     }
-    if (file_sha256(zip, hex, &got) != 0 || got != size || strcmp(hex, sha) != 0)
+    *lock = CreateFileW(zip, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                        FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (file_sha256(*lock, hex, &got) != 0 || got != size || strcmp(hex, sha) != 0)
     {
+        if (*lock != INVALID_HANDLE_VALUE)
+            CloseHandle(*lock);
+        *lock = INVALID_HANDLE_VALUE;
         fprintf(stderr, "%s failed the checksum check\n", what);
         DeleteFileW(zip);
         return 1;
@@ -190,8 +190,75 @@ static int unpack(const wchar_t *zip, const wchar_t *dir)
     CreateDirectoryW(dir, NULL);
     swprintf(cmd, MAX_PATH * 4, L"\"%s\" -xf \"%s\" -C \"%s\" --strip-components=1", exe, zip, dir);
     r = run_cmd(exe, cmd, NULL, 600000);
-    DeleteFileW(zip);
     return r == 0 ? 0 : 1;
+}
+
+static int get_package(const wchar_t *dl, const wchar_t *name, const wchar_t *url, const char *sha, long long size,
+                       const char *what, const wchar_t *dir)
+{
+    wchar_t zip[MAX_PATH];
+    HANDLE lock;
+    int r;
+    swprintf(zip, MAX_PATH, L"%s\\%s", dl, name);
+    DeleteFileW(zip);
+    if (fetch(url, zip, sha, size, what, &lock) != 0)
+        return 1;
+    r = unpack(zip, dir);
+    CloseHandle(lock);
+    DeleteFileW(zip);
+    if (r != 0)
+        fprintf(stderr, "could not unpack %s\n", what);
+    return r;
+}
+
+static int db_fetch(const dbp_t *p)
+{
+    wchar_t dir[MAX_PATH], dl[MAX_PATH], exe[MAX_PATH];
+    int r = 0;
+    swprintf(dir, MAX_PATH, L"%s\\tmp", p->root);
+    CreateDirectoryW(dir, NULL);
+    swprintf(dir, MAX_PATH, L"%s\\share", p->root);
+    CreateDirectoryW(dir, NULL);
+    swprintf(dl, MAX_PATH, L"%s\\tmp\\download", p->root);
+    if (ols_private_dir(dl) != 0)
+    {
+        fprintf(stderr, "cannot prepare a private download folder: %ls\n", dl);
+        return 1;
+    }
+    if (!tool(p, L"mariadbd.exe", exe)
+        && (get_package(dl, L"mariadb.zip", MDB_URL, MDB_SHA256, MDB_SIZE, "MariaDB " MDB_VERSION, p->base) != 0
+            || !tool(p, L"mariadbd.exe", exe)))
+        r = 1;
+    swprintf(dir, MAX_PATH, L"%s\\index.php", p->pma);
+    if (r == 0 && !wexists(dir)
+        && get_package(dl, L"phpmyadmin.zip", PMA_URL, PMA_SHA256, PMA_SIZE, "phpMyAdmin " PMA_VERSION, p->pma) != 0)
+        r = 1;
+    RemoveDirectoryW(dl);
+    return r;
+}
+
+static int kill_server(const dbp_t *p)
+{
+    wchar_t want[MAX_PATH], img[MAX_PATH];
+    char *t = NULL;
+    size_t n;
+    DWORD pid, len = MAX_PATH;
+    HANDLE h;
+    int r = -1;
+    if (ols_read_wfile(p->pid, &t, &n) != 0)
+        return -1;
+    pid = (DWORD)strtoul(t, NULL, 10);
+    free(t);
+    swprintf(want, MAX_PATH, L"%s\\mariadbd.exe", p->bin);
+    if (!pid || (h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid)) == NULL)
+        return -1;
+    if (QueryFullProcessImageNameW(h, 0, img, &len) && _wcsicmp(img, want) == 0 && TerminateProcess(h, 1))
+    {
+        WaitForSingleObject(h, 10000);
+        r = 0;
+    }
+    CloseHandle(h);
+    return r;
 }
 
 static void token(char *out, size_t n)
@@ -252,11 +319,12 @@ static int write_myini(const dbp_t *p, int port)
     char text[MAX_PATH * 12];
     int n = snprintf(text, sizeof(text),
                      "[mysqld]\r\nbasedir=%s\r\ndatadir=%s\r\nport=%d\r\nbind-address=127.0.0.1\r\n"
-                     "pid-file=%s\r\nlog-error=%s/logs/mariadb.err\r\ncharacter-set-server=utf8mb4\r\n"
+                     "pid-file=%s\r\nlog-error=%s/logs/mariadb.err\r\nsecure-file-priv=%s/data/files\r\n"
+                     "character-set-server=utf8mb4\r\n"
                      "collation-server=utf8mb4_unicode_ci\r\nmax_allowed_packet=64M\r\n"
                      "innodb_buffer_pool_size=128M\r\n\r\n[client]\r\nhost=127.0.0.1\r\nport=%d\r\n"
                      "default-character-set=utf8mb4\r\n",
-                     p->basef, p->datadirf, port, p->pidf, p->rootf, port);
+                     p->basef, p->datadirf, port, p->pidf, p->rootf, p->rootf, port);
     if (n <= 0 || (size_t)n >= sizeof(text))
         return -1;
     return ols_write_wfile(p->myini, text, (size_t)n, 0);
@@ -264,9 +332,22 @@ static int write_myini(const dbp_t *p, int port)
 
 static int start_server(const dbp_t *p, const wchar_t *init)
 {
-    wchar_t exe[MAX_PATH], cmd[MAX_PATH * 4];
+    wchar_t exe[MAX_PATH], cmd[MAX_PATH * 4], files[MAX_PATH];
+    char *ini = NULL;
+    size_t n;
     if (!tool(p, L"mariadbd.exe", exe))
         return -1;
+    swprintf(files, MAX_PATH, L"%s\\files", p->data);
+    CreateDirectoryW(files, NULL);
+    if (ols_read_wfile(p->myini, &ini, &n) != 0 || !strstr(ini, "secure-file-priv"))
+    {
+        if (write_myini(p, db_port(p)) != 0)
+        {
+            free(ini);
+            return -1;
+        }
+    }
+    free(ini);
     if (init)
         swprintf(cmd, MAX_PATH * 4, L"\"%s\" --defaults-file=\"%s\" --init-file=\"%s\"", exe, p->myini, init);
     else
@@ -310,7 +391,7 @@ static int write_pma(const dbp_t *p, int port)
 
 static int db_install(dbp_t *p)
 {
-    wchar_t zip[MAX_PATH], exe[MAX_PATH], cmd[MAX_PATH * 4], init[MAX_PATH], dir[MAX_PATH], val[16];
+    wchar_t exe[MAX_PATH], cmd[MAX_PATH * 4], init[MAX_PATH], dir[MAX_PATH], val[16];
     char pw[25], text[1024], cnf[512];
     int port, fresh, n, r;
     if (installed(p))
@@ -329,25 +410,10 @@ static int db_install(dbp_t *p)
     CreateDirectoryW(dir, NULL);
     swprintf(dir, MAX_PATH, L"%s\\share", p->root);
     CreateDirectoryW(dir, NULL);
-    if (!tool(p, L"mariadbd.exe", exe))
+    if (db_fetch(p) != 0)
     {
-        swprintf(zip, MAX_PATH, L"%s\\tmp\\mariadb.zip", p->root);
-        if (fetch(MDB_URL, zip, MDB_SHA256, MDB_SIZE, "MariaDB " MDB_VERSION) != 0 || unpack(zip, p->base) != 0
-            || !tool(p, L"mariadbd.exe", exe))
-        {
-            fprintf(stderr, "could not install MariaDB\n");
-            return 1;
-        }
-    }
-    swprintf(zip, MAX_PATH, L"%s\\index.php", p->pma);
-    if (!wexists(zip))
-    {
-        swprintf(zip, MAX_PATH, L"%s\\tmp\\phpmyadmin.zip", p->root);
-        if (fetch(PMA_URL, zip, PMA_SHA256, PMA_SIZE, "phpMyAdmin " PMA_VERSION) != 0 || unpack(zip, p->pma) != 0)
-        {
-            fprintf(stderr, "could not install phpMyAdmin\n");
-            return 1;
-        }
+        fprintf(stderr, "could not install MariaDB and phpMyAdmin\n");
+        return 1;
     }
     if (ols_private_dir(p->data) != 0)
     {
@@ -410,6 +476,7 @@ static int db_install(dbp_t *p)
         r = start_server(p, NULL);
     if (r != 0 || !alive(p))
     {
+        kill_server(p);
         fprintf(stderr, "MariaDB did not start; see logs\\mariadb.err\n");
         return 1;
     }
@@ -526,7 +593,32 @@ int ols_db_main(int argc, char **argv)
         return 2;
     }
     if (strcmp(act, "install") == 0)
-        return db_install(&p);
+    {
+        HANDLE m = CreateMutexW(NULL, FALSE, L"Local\\OpenLiteSpeedDbInstall");
+        DWORD w = m ? WaitForSingleObject(m, 1800000) : WAIT_FAILED;
+        int r = 1;
+        if (w == WAIT_OBJECT_0 || w == WAIT_ABANDONED)
+        {
+            r = db_install(&p);
+            ReleaseMutex(m);
+        }
+        else
+            fprintf(stderr, "another MariaDB installation is still running\n");
+        if (m)
+            CloseHandle(m);
+        return r;
+    }
+    if (strcmp(act, "fetch") == 0)
+    {
+        if (db_fetch(&p) != 0)
+        {
+            fprintf(stderr, "could not download MariaDB and phpMyAdmin\n");
+            return 1;
+        }
+        ols_dev_resync(p.root, p.tray);
+        printf("MariaDB %s and phpMyAdmin %s are downloaded\n", MDB_VERSION, PMA_VERSION);
+        return 0;
+    }
     if (!installed(&p))
     {
         if (strcmp(act, "status") == 0)
@@ -559,7 +651,7 @@ int ols_db_main(int argc, char **argv)
         printf("MariaDB %s, port %d, %s\n", MDB_VERSION, port, alive(&p) ? "running" : "stopped");
         return 0;
     }
-    fprintf(stderr, "usage: openlitespeed --db install | start | stop | status\n");
+    fprintf(stderr, "usage: openlitespeed --db install | fetch | start | stop | status\n");
     return 2;
 }
 

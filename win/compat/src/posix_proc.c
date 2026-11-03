@@ -88,6 +88,21 @@ void ols_reserve_low_handles(void)
         CloseHandle(h[i]);
 }
 
+static int token_elevated(void)
+{
+    HANDLE t;
+    TOKEN_ELEVATION e;
+    DWORD n;
+    int r = 0;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &t))
+    {
+        if (GetTokenInformation(t, TokenElevation, &e, sizeof(e), &n))
+            r = e.TokenIsElevated != 0;
+        CloseHandle(t);
+    }
+    return r;
+}
+
 static BOOL CALLBACK init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
 {
     wchar_t cwd[PATH_MAX], root[PATH_MAX];
@@ -96,7 +111,7 @@ static BOOL CALLBACK init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
     ols_reserve_low_handles();
     g_main_tid = GetCurrentThreadId();
     n = GetEnvironmentVariableW(L"OLS_ROOT", root, PATH_MAX);
-    if (n == 0 || n >= PATH_MAX)
+    if (n == 0 || n >= PATH_MAX || token_elevated())
     {
         wchar_t exe[PATH_MAX], *slash;
         DWORD el = GetModuleFileNameW(NULL, exe, PATH_MAX);
