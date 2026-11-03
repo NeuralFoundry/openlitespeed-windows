@@ -81,6 +81,18 @@ int main(int argc, char *argv[])
         }
         return ols_dev_sites(argv[2], tld, withRoot);
     }
+    if (argc >= 3 && strcmp(argv[1], "--new-site") == 0)
+    {
+        const char *tld = "test", *flavor = "blank";
+        for (int i = 3; i < argc; ++i)
+        {
+            if (strcmp(argv[i], "--wordpress") == 0)
+                flavor = "wordpress";
+            else
+                tld = argv[i];
+        }
+        return ols_new_site(argv[2], tld, flavor);
+    }
     if (argc >= 3 && strcmp(argv[1], "--set-php") == 0)
         return ols_set_php(argv[2]);
     if (argc >= 3 && strcmp(argv[1], "--lscgid") == 0)

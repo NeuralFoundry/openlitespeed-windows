@@ -482,6 +482,130 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
     return 0;
 }
 
+static int run_wait(wchar_t *cmd)
+{
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    DWORD code = 1;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    if (!CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
+        return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return (int)code;
+}
+
+static int install_wordpress(const wchar_t *dir)
+{
+    wchar_t sys[MAX_PATH], zip[MAX_PATH], chk[MAX_PATH], cmd[MAX_PATH * 4];
+    if (GetSystemDirectoryW(sys, MAX_PATH) == 0)
+        return 1;
+    swprintf(zip, MAX_PATH, L"%s\\.wp-download.zip", dir);
+    swprintf(cmd, MAX_PATH * 4,
+             L"\"%s\\curl.exe\" -fsS --proto =https --tlsv1.2 -L -o \"%s\" https://wordpress.org/latest.zip",
+             sys, zip);
+    printf("downloading WordPress...\n");
+    if (run_wait(cmd) != 0)
+    {
+        fprintf(stderr, "could not download WordPress\n");
+        DeleteFileW(zip);
+        return 1;
+    }
+    swprintf(cmd, MAX_PATH * 4, L"\"%s\\tar.exe\" -xf \"%s\" -C \"%s\" --strip-components=1", sys, zip, dir);
+    if (run_wait(cmd) != 0)
+    {
+        fprintf(stderr, "could not extract WordPress\n");
+        DeleteFileW(zip);
+        return 1;
+    }
+    DeleteFileW(zip);
+    swprintf(chk, MAX_PATH, L"%s\\wp-includes", dir);
+    if (!dir_exists(chk))
+    {
+        fprintf(stderr, "the WordPress archive was not what we expected\n");
+        return 1;
+    }
+    printf("WordPress installed; open the site and finish the setup in the browser\n");
+    return 0;
+}
+
+int ols_new_site(const char *name, const char *tld, const char *flavor)
+{
+    wchar_t root[MAX_PATH], ini[MAX_PATH], www[MAX_PATH], dir[MAX_PATH], idx[MAX_PATH], wname[128];
+    char wwwmb[MAX_PATH * 3], html[512];
+    int withRoot, rc, n, wp;
+    if (!name || !valid_label(name) || strcmp(name, "localhost") == 0)
+    {
+        fprintf(stderr, "invalid site name (use lowercase letters, digits and '-')\n");
+        return 2;
+    }
+    if (!tld || !*tld)
+        tld = "test";
+    if (!valid_label(tld))
+    {
+        fprintf(stderr, "invalid tld\n");
+        return 2;
+    }
+    if (root_dir(root, MAX_PATH) < 0)
+    {
+        fprintf(stderr, "OLS_ROOT is not set\n");
+        return 2;
+    }
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    GetPrivateProfileStringW(L"sites", L"www", L"", www, MAX_PATH, ini);
+    if (!www[0] || !dir_exists(www))
+    {
+        fprintf(stderr, "no web root is configured; set one from the tray first\n");
+        return 2;
+    }
+    if (MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 128) <= 0)
+        return 2;
+    swprintf(dir, MAX_PATH, L"%s\\%s", www, wname);
+    if (dir_exists(dir))
+    {
+        fprintf(stderr, "a folder named %s already exists\n", name);
+        return 1;
+    }
+    if (!CreateDirectoryW(dir, NULL))
+    {
+        fprintf(stderr, "cannot create %ls (error %lu)\n", dir, GetLastError());
+        return 1;
+    }
+    wp = flavor && strcmp(flavor, "wordpress") == 0;
+    if (wp)
+    {
+        if (install_wordpress(dir) != 0)
+        {
+            RemoveDirectoryW(dir);
+            return 1;
+        }
+    }
+    else
+    {
+        swprintf(idx, MAX_PATH, L"%s\\index.php", dir);
+        n = snprintf(html, sizeof(html),
+                     "<?php\r\nheader('Content-Type: text/html; charset=utf-8');\r\n"
+                     "echo '<!doctype html><title>%s.%s</title>"
+                     "<h1>%s</h1><p>OpenLiteSpeed is serving this site on PHP ' . PHP_VERSION . '.</p>';\r\n",
+                     name, tld, name);
+        if (n > 0 && (size_t)n < sizeof(html))
+            write_file(idx, html, (size_t)n);
+    }
+    if (WideCharToMultiByte(CP_UTF8, 0, www, -1, wwwmb, sizeof(wwwmb), NULL, NULL) <= 0)
+        return 1;
+    withRoot = GetPrivateProfileIntW(L"sites", L"root", 0, ini);
+    rc = ols_dev_sites(wwwmb, tld, withRoot);
+    if (rc == 0)
+    {
+        ols_dev_hosts(0);
+        printf("site %s.%s created at %ls\n", name, tld, dir);
+    }
+    return rc;
+}
+
 static char *remove_legacy_hosts(char *t, int *changed)
 {
     static const char *nl[2] = { "\r\n", "\n" };
