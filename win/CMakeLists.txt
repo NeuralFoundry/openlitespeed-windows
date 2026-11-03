@@ -78,6 +78,7 @@ add_library(olscompat STATIC
     "${COMPAT}/src/win_devca.c"
     "${COMPAT}/src/win_devstore.c"
     "${COMPAT}/src/win_db.c"
+    "${COMPAT}/src/win_update.c"
 )
 target_include_directories(olscompat PRIVATE "${OLS_TOP}/win/common")
 target_link_libraries(olscompat PUBLIC wepoll ws2_32 mswsock bcrypt ntdll advapi32 userenv iphlpapi synchronization dbghelp shell32 crypt32 version)
@@ -154,7 +155,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${OLS_TOP}/win/R
 add_executable(olstray WIN32 "${OLS_TOP}/win/tray/olstray.c" "${OLS_TOP}/win/tray/olstray.rc")
 target_include_directories(olstray PRIVATE "${OLS_TOP}/win/common")
 target_compile_definitions(olstray PRIVATE "OLS_RELEASE=\"${OLS_RELEASE}\"")
-target_link_libraries(olstray user32 gdi32 shell32 advapi32 ole32 version comdlg32 winhttp)
+target_link_libraries(olstray user32 gdi32 shell32 advapi32 ole32 version comdlg32 winhttp bcrypt)
 add_executable(lsrecaptcha "${OLS_TOP}/win/recaptcha/lsrecaptcha.c")
 target_link_libraries(lsrecaptcha winhttp)
 add_executable(setup WIN32 "${OLS_TOP}/win/setup/setup.c" "${OLS_TOP}/win/setup/setup.rc")

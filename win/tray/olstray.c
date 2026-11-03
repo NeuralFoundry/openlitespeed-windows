@@ -8,6 +8,7 @@
 #define _UNICODE
 #endif
 #include <windows.h>
+#include <bcrypt.h>
 #include <winhttp.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -25,6 +26,7 @@
 #define WM_UPDATE (WM_APP + 2)
 #define WM_NEWSITE (WM_APP + 3)
 #define WM_DBDONE (WM_APP + 4)
+#define WM_UPDDONE (WM_APP + 5)
 #define TIMER_STATUS 1
 #define TIMER_UPDATE 2
 #define WIDEN2(x) L##x
@@ -81,6 +83,15 @@ static wchar_t g_latest[64];
 static volatile LONG g_checking;
 static volatile LONG g_creating;
 static volatile LONG g_dbbusy;
+static volatile LONG g_updating;
+
+typedef struct
+{
+    wchar_t tag[64];
+    wchar_t dir[MAX_PATH];
+    DWORD code;
+    char *out;
+} upd_t;
 static int g_update_balloon;
 
 typedef struct
@@ -649,7 +660,7 @@ static void on_update(int manual, wchar_t *tag)
         GetPrivateProfileStringW(L"update", L"notified", L"", seen, 64, g_ini);
         if (manual || wcscmp(seen, tag) != 0)
         {
-            swprintf(buf, 192, L"OpenLiteSpeed %s is available. Click to open the download page.",
+            swprintf(buf, 192, L"OpenLiteSpeed %s is available. Click to update.",
                      tag[0] == L'v' ? tag + 1 : tag);
             notify(L"OpenLiteSpeed update", buf);
             g_update_balloon = 1;
@@ -998,6 +1009,178 @@ static void db_done(DWORD code, char *out)
         open_pma();
 }
 
+static DWORD WINAPI upd_thread(LPVOID arg)
+{
+    upd_t *u = (upd_t *)arg;
+    wchar_t args[MAX_PATH + 96];
+    swprintf(args, MAX_PATH + 96, L"--update %s \"%s\"", u->tag, u->dir);
+    u->code = run_capture(args, &u->out);
+    if (!PostMessageW(g_wnd, WM_UPDDONE, 0, (LPARAM)u))
+    {
+        free(u->out);
+        free(u);
+    }
+    return 0;
+}
+
+static void start_update(void)
+{
+    wchar_t msg[256], tmp[MAX_PATH];
+    unsigned char rnd[8];
+    upd_t *u;
+    HANDLE t;
+    if (g_updating || !g_latest[0])
+        return;
+    swprintf(msg, 256,
+             L"Download and install OpenLiteSpeed %s now?\n\nThe server restarts during the update. Your sites and "
+             L"settings are kept.",
+             g_latest[0] == L'v' ? g_latest + 1 : g_latest);
+    if (MessageBoxW(g_wnd, msg, L"OpenLiteSpeed update", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+    if ((u = (upd_t *)calloc(1, sizeof(*u))) == NULL)
+        return;
+    wcsncpy(u->tag, g_latest, 63);
+    if (!GetTempPathW(MAX_PATH, tmp) || BCryptGenRandom(NULL, rnd, sizeof(rnd), BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+    {
+        free(u);
+        return;
+    }
+    swprintf(u->dir, MAX_PATH, L"%sOpenLiteSpeed-update-%02x%02x%02x%02x%02x%02x%02x%02x", tmp, rnd[0], rnd[1], rnd[2],
+             rnd[3], rnd[4], rnd[5], rnd[6], rnd[7]);
+    InterlockedExchange(&g_updating, 1);
+    notify(L"OpenLiteSpeed", L"Downloading the update...");
+    t = CreateThread(NULL, 0, upd_thread, u, 0, NULL);
+    if (t)
+        CloseHandle(t);
+    else
+    {
+        InterlockedExchange(&g_updating, 0);
+        free(u);
+    }
+}
+
+static int hash_lock(const wchar_t *path, const char *want, HANDLE *out)
+{
+    static UCHAR buf[1 << 16];
+    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    BCRYPT_ALG_HANDLE alg = NULL;
+    BCRYPT_HASH_HANDLE hh = NULL;
+    UCHAR md[32];
+    DWORD got;
+    char hex[65];
+    int ok = 0, i;
+    if (h == INVALID_HANDLE_VALUE)
+        return -1;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, NULL, 0) == 0
+        && BCryptCreateHash(alg, &hh, NULL, 0, NULL, 0, 0) == 0)
+    {
+        while (ReadFile(h, buf, sizeof(buf), &got, NULL) && got)
+            BCryptHashData(hh, buf, got, 0);
+        if (BCryptFinishHash(hh, md, sizeof(md), 0) == 0)
+        {
+            for (i = 0; i < 32; ++i)
+                sprintf(hex + i * 2, "%02x", md[i]);
+            ok = strcmp(hex, want) == 0;
+        }
+    }
+    if (hh)
+        BCryptDestroyHash(hh);
+    if (alg)
+        BCryptCloseAlgorithmProvider(alg, 0);
+    if (!ok)
+    {
+        CloseHandle(h);
+        return -1;
+    }
+    *out = h;
+    return 0;
+}
+
+static int service_installed(void)
+{
+    SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT), svc = NULL;
+    if (scm)
+    {
+        svc = OpenServiceW(scm, L"OpenLiteSpeed", SERVICE_QUERY_STATUS);
+        if (svc)
+            CloseServiceHandle(svc);
+        CloseServiceHandle(scm);
+    }
+    return svc != NULL;
+}
+
+static void upd_done(upd_t *u)
+{
+    wchar_t path[MAX_PATH], args[MAX_PATH * 3], cur[MAX_PATH], stack[16], *text;
+    char hash[65], *p;
+    size_t n;
+    HANDLE lock = INVALID_HANDLE_VALUE;
+    SHELLEXECUTEINFOW sei;
+    InterlockedExchange(&g_updating, 0);
+    p = u->out ? strstr(u->out, "OK ") : NULL;
+    if (u->code != 0 || !p || strlen(p) < 69 || p[67] != ' ')
+    {
+        text = report_text(u->out ? u->out : "", L"\n\nOpen the download page instead?");
+        if (MessageBoxW(g_wnd, text ? text : L"The update could not be installed.", L"OpenLiteSpeed update",
+                        MB_YESNO | MB_ICONWARNING) == IDYES)
+        {
+            swprintf(path, MAX_PATH, L"%s%s", RELEASES_URL, u->tag);
+            open_url(path);
+        }
+        free(text);
+        free(u->out);
+        free(u);
+        return;
+    }
+    memcpy(hash, p + 3, 64);
+    hash[64] = 0;
+    p += 68;
+    n = strcspn(p, "\r\n");
+    p[n] = 0;
+    if (MultiByteToWideChar(CP_UTF8, 0, p, -1, path, MAX_PATH) <= 0 || hash_lock(path, hash, &lock) != 0)
+    {
+        MessageBoxW(g_wnd, L"The downloaded update did not pass the checks and was not installed.",
+                    L"OpenLiteSpeed update", MB_OK | MB_ICONWARNING);
+        free(u->out);
+        free(u);
+        return;
+    }
+    GetPrivateProfileStringW(L"sites", L"stack", L"standalone", stack, 16, g_ini);
+    if (wcscmp(stack, L"laragon") != 0 && wcscmp(stack, L"xampp") != 0)
+        wcscpy(stack, L"standalone");
+    swprintf(args, MAX_PATH * 3, L"--silent --dir \"%s\" --mode %s", g_root, stack);
+    current_php(cur, MAX_PATH);
+    if (cur[0] && !wcschr(cur, L'"'))
+    {
+        wcscat(args, L" --php \"");
+        wcscat(args, cur);
+        wcscat(args, L"\"");
+    }
+    if (service_installed())
+        wcscat(args, L" --service");
+    memset(&sei, 0, sizeof(sei));
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    sei.lpVerb = L"runas";
+    sei.lpFile = path;
+    sei.lpParameters = args;
+    sei.nShow = SW_SHOWNORMAL;
+    if (ShellExecuteExW(&sei))
+    {
+        if (sei.hProcess)
+        {
+            WaitForSingleObject(sei.hProcess, 2000);
+            CloseHandle(sei.hProcess);
+        }
+        notify(L"OpenLiteSpeed", L"Installing the update...");
+    }
+    else
+        notify(L"OpenLiteSpeed", L"The update was cancelled.");
+    CloseHandle(lock);
+    free(u->out);
+    free(u);
+}
+
 static int site_label_ok(const wchar_t *s)
 {
     size_t n = wcslen(s), i;
@@ -1309,10 +1492,7 @@ static void on_command(int id)
     else if (id == ID_AUTORUN)
         toggle_autorun();
     else if (id == ID_UPDATE && g_latest[0])
-    {
-        swprintf(buf, MAX_PATH, L"%s%s", RELEASES_URL, g_latest);
-        open_url(buf);
-    }
+        start_update();
     else if (id == ID_CHECK)
         check_updates(1);
     else if (id == ID_EXIT)
@@ -1346,6 +1526,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_DBDONE:
         db_done((DWORD)wp, (char *)lp);
+        return 0;
+    case WM_UPDDONE:
+        upd_done((upd_t *)lp);
         return 0;
     case WM_TIMER:
         if (wp == TIMER_UPDATE)

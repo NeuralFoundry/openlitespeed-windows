@@ -97,6 +97,10 @@ int main(int argc, char *argv[])
         return ols_dev_https(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--db") == 0)
         return ols_db_main(argc - 2, argv + 2);
+    if (argc >= 2
+        && (strcmp(argv[1], "--update") == 0 || strcmp(argv[1], "--release-key") == 0
+            || strcmp(argv[1], "--sign-release") == 0))
+        return ols_update_main(argc - 1, argv + 1);
     if (argc >= 3 && strcmp(argv[1], "--set-php") == 0)
         return ols_set_php(argv[2]);
     if (argc >= 3 && strcmp(argv[1], "--lscgid") == 0)

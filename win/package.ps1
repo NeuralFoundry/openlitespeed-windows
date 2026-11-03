@@ -74,5 +74,19 @@ foreach ($item in @(Get-Item -LiteralPath $Out) + @(Get-ChildItem -LiteralPath $
 }
 $za.Dispose()
 $zs.Dispose()
+
+$sums = Join-Path (Split-Path -Parent $Out) 'SHA256SUMS.txt'
+$lines = foreach ($f in $setup, $zip) { '{0}  {1}' -f (Get-FileHash $f -Algorithm SHA256).Hash.ToLower(), (Split-Path -Leaf $f) }
+[IO.File]::WriteAllText($sums, ($lines -join "`n") + "`n")
+Remove-Item "$sums.sig" -Force -ErrorAction SilentlyContinue
+$key =if ($env:OLS_RELEASE_KEY) { $env:OLS_RELEASE_KEY } else { Join-Path $env:USERPROFILE '.openlitespeed-release\release.key' }
+$tag = 'v' + (Get-Content (Join-Path $Top 'win\RELEASE') -Raw).Trim()
+if (Test-Path $key) {
+    & (Join-Path $Top 'build\openlitespeed.exe') --sign-release $key $tag $sums "$sums.sig"
+    if ($LASTEXITCODE -ne 0) { throw 'signing the release failed' }
+} else {
+    Write-Warning "no release key at $key, so the tray will not install this release by itself"
+}
 Write-Host "package: $Out"
 Write-Host "zip:     $zip ($([int]((Get-Item $zip).Length / 1MB)) MB)"
+Write-Host "sums:    $sums$(if (Test-Path "$sums.sig") { " (signed for $tag)" })"
