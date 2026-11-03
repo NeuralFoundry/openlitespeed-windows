@@ -94,6 +94,7 @@ int ols_write_wfile(const wchar_t *path, const void *data, size_t len, int priv)
 int ols_private_dir(const wchar_t *dir);
 int ols_port_listening(int port);
 int ols_dev_resync(const wchar_t *root, const wchar_t *ini);
+int ols_default_port(const wchar_t *root);
 int ols_db_wordpress(const wchar_t *root, const char *site, const wchar_t *dir);
 void ols_reserve_low_handles(void);
 int ols_accept_lock(SOCKET s);

@@ -818,7 +818,7 @@ int ols_new_site(const char *name, const char *tld, const char *flavor)
     return rc;
 }
 
-static int default_port(const wchar_t *root)
+int ols_default_port(const wchar_t *root)
 {
     wchar_t conf[MAX_PATH];
     char *text = NULL, *p, *q, *c = NULL;
@@ -876,7 +876,7 @@ int ols_proxy_main(int argc, char **argv)
             fprintf(stderr, "invalid port\n");
             return 2;
         }
-        if (port == default_port(root) || port == GetPrivateProfileIntW(L"sites", L"https", 0, ini))
+        if (port == ols_default_port(root) || port == GetPrivateProfileIntW(L"sites", L"https", 0, ini))
         {
             fprintf(stderr, "port %d is OpenLiteSpeed itself; use the port your app listens on\n", port);
             return 2;
