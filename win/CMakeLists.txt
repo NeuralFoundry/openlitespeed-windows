@@ -75,6 +75,8 @@ add_library(olscompat STATIC
     "${COMPAT}/src/win_tools.c"
     "${COMPAT}/src/win_acl.c"
     "${COMPAT}/src/win_dev.c"
+    "${COMPAT}/src/win_devca.c"
+    "${COMPAT}/src/win_devstore.c"
 )
 target_include_directories(olscompat PRIVATE "${OLS_TOP}/win/common")
 target_link_libraries(olscompat PUBLIC wepoll ws2_32 mswsock bcrypt ntdll advapi32 userenv iphlpapi synchronization dbghelp shell32 crypt32 version)

@@ -1257,6 +1257,7 @@ static int uninstall(const wchar_t *dir)
     stop_tray(dir);
     run_tool(dir, L"-s stop");
     run_tool(dir, L"--uninstall-service");
+    run_tool(dir, g_silent ? L"--dev-https off --no-sites --keep-store" : L"--dev-https off --no-sites");
     run_tool(dir, L"--dev-hosts-clear");
     remove_procfile_line(dir);
     remove_lsphp(dir);

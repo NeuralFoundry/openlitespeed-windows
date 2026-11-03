@@ -54,6 +54,7 @@
 #define ID_CHECK 115
 #define ID_IMPORT_NGINX 116
 #define ID_NEWSITE 117
+#define ID_HTTPS 118
 #define IDD_NEWSITE 101
 #define IDC_NS_NAME 1001
 #define IDC_NS_PREVIEW 1002
@@ -79,7 +80,6 @@ typedef struct
 {
     wchar_t name[64];
     int wp;
-    int port;
     DWORD code;
     char *out;
 } newsite_t;
@@ -748,6 +748,80 @@ static void choose_www(void)
     CoTaskMemFree(pidl);
 }
 
+static int https_port(void)
+{
+    return GetPrivateProfileIntW(L"sites", L"https", 0, g_ini);
+}
+
+static void site_url(wchar_t *buf, size_t n, const wchar_t *host)
+{
+    int https = https_port(), port;
+    if (https > 0)
+    {
+        if (https == 443)
+            swprintf(buf, n, L"https://%s/", host);
+        else
+            swprintf(buf, n, L"https://%s:%d/", host, https);
+        return;
+    }
+    port = http_port();
+    if (port == 80)
+        swprintf(buf, n, L"http://%s/", host);
+    else
+        swprintf(buf, n, L"http://%s:%d/", host, port);
+}
+
+static void toggle_https(void)
+{
+    int on = https_port() > 0, p;
+    const wchar_t *args = on ? L"--dev-https off" : L"--dev-https on";
+    char *out = NULL;
+    wchar_t *text, msg[128];
+    DWORD code;
+    if (!on
+        && MessageBoxW(g_wnd,
+                       L"Windows will ask you to trust a certificate authority made on this computer. "
+                       L"It can only sign certificates for .test, .localhost and .internal sites and for "
+                       L"this computer's own address.\n\nTurn on trusted HTTPS?",
+                       L"Trusted HTTPS", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+    AllowSetForegroundWindow(ASFW_ANY);
+    code = run_capture(args, &out);
+    if (code == 5)
+    {
+        free(out);
+        out = NULL;
+        code = (DWORD)run_elevated(args);
+    }
+    if (code == 3)
+    {
+        free(out);
+        notify(L"OpenLiteSpeed", L"Trusted HTTPS stays off.");
+        return;
+    }
+    if (code != 0)
+    {
+        text = report_text(out ? out : "", L"");
+        MessageBoxW(g_wnd, text && text[0] ? text : L"Trusted HTTPS could not be changed.", L"Trusted HTTPS",
+                    MB_OK | MB_ICONWARNING);
+        free(text);
+        free(out);
+        return;
+    }
+    free(out);
+    if (g_running > 0)
+        run_tool(L"-s reload", 1);
+    load_sites();
+    p = https_port();
+    if (on)
+        wcscpy(msg, L"Trusted HTTPS is off.");
+    else if (p == 443)
+        wcscpy(msg, L"Trusted HTTPS is on.");
+    else
+        swprintf(msg, 128, L"Trusted HTTPS is on, port %d.", p);
+    notify(L"OpenLiteSpeed", msg);
+}
+
 static int site_label_ok(const wchar_t *s)
 {
     size_t n = wcslen(s), i;
@@ -789,10 +863,12 @@ static INT_PTR CALLBACK newsite_proc(HWND d, UINT msg, WPARAM wp, LPARAM lp)
                 ok = 0;
                 wcscpy(prev, L"A folder with this name already exists");
             }
-            else if (!ns || ns->port == 80)
-                swprintf(prev, 160, L"http://%s.%s/", name, tld);
             else
-                swprintf(prev, 160, L"http://%s.%s:%d/", name, tld, ns->port);
+            {
+                wchar_t host[128];
+                swprintf(host, 128, L"%s.%s", name, tld);
+                site_url(prev, 160, host);
+            }
         }
         else if (name[0])
             wcscpy(prev, L"Use lowercase letters, digits and '-'");
@@ -840,7 +916,6 @@ static void new_site(void)
     ns = (newsite_t *)calloc(1, sizeof(*ns));
     if (!ns)
         return;
-    ns->port = http_port();
     if (DialogBoxParamW(g_inst, MAKEINTRESOURCEW(IDD_NEWSITE), g_wnd, newsite_proc, (LPARAM)ns) != IDOK)
     {
         free(ns);
@@ -860,9 +935,8 @@ static void new_site(void)
 
 static void newsite_done(newsite_t *ns)
 {
-    wchar_t tld[32], url[256], msg[256], *text;
+    wchar_t tld[32], url[256], msg[256], host[128], *text;
     DWORD r;
-    int port = ns->port;
     InterlockedExchange(&g_creating, 0);
     if (ns->code != 0)
     {
@@ -881,10 +955,8 @@ static void newsite_done(newsite_t *ns)
         run_tool(L"-s reload", 1);
     load_sites();
     GetPrivateProfileStringW(L"sites", L"tld", L"test", tld, 32, g_ini);
-    if (port == 80)
-        swprintf(url, 256, L"http://%s.%s/", ns->name, tld);
-    else
-        swprintf(url, 256, L"http://%s.%s:%d/", ns->name, tld, port);
+    swprintf(host, 128, L"%s.%s", ns->name, tld);
+    site_url(url, 256, host);
     if (r != 0)
         swprintf(msg, 256, L"%s.%s was created, but the hosts file was not updated.", ns->name, tld);
     else if (ns->wp)
@@ -929,6 +1001,7 @@ static void show_menu(void)
     AppendMenuW(sites, MF_STRING, ID_REFRESH, L"Refresh sites");
     AppendMenuW(sites, MF_STRING, ID_WWW, L"Open projects folder");
     AppendMenuW(sites, MF_STRING, ID_SETWWW, L"Change projects folder...");
+    AppendMenuW(sites, MF_STRING | (https_port() > 0 ? MF_CHECKED : 0), ID_HTTPS, L"Trusted HTTPS");
     AppendMenuW(sites, MF_SEPARATOR, 0, NULL);
     AppendMenuW(sites, MF_STRING, ID_IMPORT, L"Import Apache sites...");
     AppendMenuW(sites, MF_STRING, ID_IMPORT_NGINX, L"Import nginx sites...");
@@ -983,11 +1056,7 @@ static void on_command(int id)
     }
     else if (id >= ID_SITE_BASE && id < ID_SITE_BASE + g_nsites)
     {
-        int port = http_port();
-        if (port == 80)
-            swprintf(buf, MAX_PATH, L"http://%s/", g_sites[id - ID_SITE_BASE]);
-        else
-            swprintf(buf, MAX_PATH, L"http://%s:%d/", g_sites[id - ID_SITE_BASE], port);
+        site_url(buf, MAX_PATH, g_sites[id - ID_SITE_BASE]);
         open_url(buf);
     }
     else if (id >= ID_PHP_BASE && id < ID_PHP_BASE + phpd_count)
@@ -1007,6 +1076,8 @@ static void on_command(int id)
     }
     else if (id == ID_NEWSITE)
         new_site();
+    else if (id == ID_HTTPS)
+        toggle_https();
     else if (id == ID_REFRESH)
         refresh_sites(0);
     else if (id == ID_WWW)

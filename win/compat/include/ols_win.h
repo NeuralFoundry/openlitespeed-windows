@@ -1037,6 +1037,8 @@ void ols_set_main_thread(void);
 int ols_pid_is_ours(pid_t pid);
 int ols_dev_sites(const char *www, const char *tld, int with_root);
 int ols_new_site(const char *name, const char *tld, const char *flavor);
+int ols_dev_https(int argc, char **argv);
+int ols_devca_issue(const wchar_t *root, const char *tld, char **names, int count);
 int ols_dev_hosts(int clear);
 int ols_set_php(const char *dir);
 int ols_find_runtime(const char *exe, char *out, int outlen);

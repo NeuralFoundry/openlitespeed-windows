@@ -345,12 +345,13 @@ static char *build_template(const wchar_t *root, int with_aliases)
 
 int ols_dev_sites(const char *www, const char *tld, int with_root)
 {
-    wchar_t root[MAX_PATH], conf[MAX_PATH], tpl[MAX_PATH], wwww[MAX_PATH], pat[MAX_PATH], p[MAX_PATH];
-    char *text = NULL, *out, *block = NULL, name[256], wwwfwd[MAX_PATH * 3], line[1024];
-    size_t len, blen = 0, bcap = 0;
+    wchar_t root[MAX_PATH], conf[MAX_PATH], tpl[MAX_PATH], wwww[MAX_PATH], pat[MAX_PATH], p[MAX_PATH], ini[MAX_PATH];
+    char *text = NULL, *out, *block = NULL, *mem = NULL, name[256], wwwfwd[MAX_PATH * 3], line[1024];
+    char **names = NULL;
+    size_t len, blen = 0, bcap = 0, mlen = 0, mcap = 0;
     WIN32_FIND_DATAW fd;
     HANDLE f;
-    int count = 0;
+    int count = 0, nnames = 0, ncap = 0, https, ssl = 0;
     char *q;
     if (!tld || !*tld)
         tld = "test";
@@ -384,16 +385,13 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
         free(t);
     }
 
-    buf_str(&block, &blen, &bcap, DEV_BEGIN "\r\nvhTemplate devsites {\r\n"
-            "    templateFile             conf/templates/devsite.conf\r\n"
-            "    listeners                Default\r\n");
     if (with_root)
     {
         snprintf(line, sizeof(line),
                  "    member localhost {\r\n        vhDomain             localhost\r\n"
                  "        vhAliases            127.0.0.1, *\r\n        vhRoot               %s/\r\n    }\r\n",
                  wwwfwd);
-        buf_str(&block, &blen, &bcap, line);
+        buf_str(&mem, &mlen, &mcap, line);
         printf("http://localhost/  ->  %s/\n", wwwfwd);
     }
     swprintf(pat, MAX_PATH, L"%s\\*", wwww);
@@ -420,13 +418,63 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
                      "    member %s {\r\n        vhDomain             %s.%s\r\n"
                      "        vhAliases            www.%s.%s\r\n        vhRoot               %s/%s/%s\r\n    }\r\n",
                      name, name, tld, name, tld, wwwfwd, name, sub);
-            buf_str(&block, &blen, &bcap, line);
+            buf_str(&mem, &mlen, &mcap, line);
             printf("http://%s.%s/  ->  %s/%s/%s\n", name, tld, wwwfwd, name, sub);
+            if (nnames == ncap)
+            {
+                char **grown = (char **)realloc(names, (size_t)(ncap ? ncap * 2 : 32) * sizeof(char *));
+                if (grown)
+                {
+                    names = grown;
+                    ncap = ncap ? ncap * 2 : 32;
+                }
+            }
+            if (nnames < ncap && (names[nnames] = _strdup(name)) != NULL)
+                ++nnames;
             ++count;
         }
         while (FindNextFileW(f, &fd));
         FindClose(f);
     }
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    https = GetPrivateProfileIntW(L"sites", L"https", 0, ini);
+    if (https > 0 && https < 65536)
+    {
+        wchar_t lc[MAX_PATH], lk[MAX_PATH];
+        int r = ols_devca_issue(root, tld, names, nnames);
+        swprintf(lc, MAX_PATH, L"%s\\conf\\cert\\devsites.crt", root);
+        swprintf(lk, MAX_PATH, L"%s\\conf\\cert\\devsites.key", root);
+        if (r == 0)
+            ssl = 1;
+        else if (r == 3)
+            fprintf(stderr, "trusted HTTPS needs the .test, .localhost or .internal suffix, so it is not used\n");
+        else if (file_exists(lc) && file_exists(lk))
+        {
+            ssl = 1;
+            fprintf(stderr, "kept the previous HTTPS certificate; turn trusted HTTPS on again to renew it\n");
+        }
+        else
+            fprintf(stderr, "trusted HTTPS is on but no certificate could be made; turn it on again\n");
+    }
+    while (nnames > 0)
+        free(names[--nnames]);
+    free(names);
+    buf_str(&block, &blen, &bcap, DEV_BEGIN "\r\n");
+    if (ssl)
+    {
+        snprintf(line, sizeof(line),
+                 "listener DevSSL {\r\n    address                  *:%d\r\n    secure                   1\r\n"
+                 "    keyFile                  $SERVER_ROOT/conf/cert/devsites.key\r\n"
+                 "    certFile                 $SERVER_ROOT/conf/cert/devsites.crt\r\n}\r\n",
+                 https);
+        buf_str(&block, &blen, &bcap, line);
+    }
+    buf_str(&block, &blen, &bcap, "vhTemplate devsites {\r\n    templateFile             conf/templates/devsite.conf\r\n");
+    buf_str(&block, &blen, &bcap, ssl ? "    listeners                Default, DevSSL\r\n"
+                                      : "    listeners                Default\r\n");
+    if (mem)
+        buf_str(&block, &blen, &bcap, mem);
+    free(mem);
     buf_str(&block, &blen, &bcap, "}\r\n" DEV_END "\r\n");
     if (!block)
         return 1;
