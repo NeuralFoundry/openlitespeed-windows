@@ -106,15 +106,17 @@ static int token_elevated(void)
 static BOOL CALLBACK init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
 {
     wchar_t cwd[PATH_MAX], root[PATH_MAX];
-    int fds[2], i;
+    int fds[2], i, elev;
     DWORD n;
     ols_reserve_low_handles();
     g_main_tid = GetCurrentThreadId();
     n = GetEnvironmentVariableW(L"OLS_ROOT", root, PATH_MAX);
-    if (n == 0 || n >= PATH_MAX || token_elevated())
+    elev = token_elevated();
+    if (n == 0 || n >= PATH_MAX || elev)
     {
         wchar_t exe[PATH_MAX], *slash;
         DWORD el = GetModuleFileNameW(NULL, exe, PATH_MAX);
+        int found = 0;
         if (el > 0 && el < PATH_MAX && (slash = wcsrchr(exe, L'\\')) != NULL)
         {
             *slash = 0;
@@ -125,7 +127,14 @@ static BOOL CALLBACK init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
                 SetEnvironmentVariableW(L"OLS_ROOT", exe);
                 _wputenv_s(L"OLS_ROOT", exe);
                 n = GetEnvironmentVariableW(L"OLS_ROOT", root, PATH_MAX);
+                found = 1;
             }
+        }
+        if (!found && elev)
+        {
+            SetEnvironmentVariableW(L"OLS_ROOT", NULL);
+            _wputenv_s(L"OLS_ROOT", L"");
+            n = 0;
         }
     }
     ols_ensure_tmp_dirs();

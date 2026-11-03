@@ -1002,8 +1002,9 @@ static int db_fetched(void)
 static void db_auto(void)
 {
     HANDLE t;
-    if (g_dbbusy)
+    if (g_dbbusy || GetPrivateProfileIntW(L"db", L"auto", 1, g_ini) == 0)
         return;
+    WritePrivateProfileStringW(L"db", L"auto", L"0", g_ini);
     g_dbauto = 1;
     InterlockedExchange(&g_dbbusy, 1);
     t = CreateThread(NULL, 0, db_thread, NULL, 0, NULL);

@@ -621,7 +621,9 @@ static int apply_acls(const wchar_t *root, const wchar_t *sid)
         swprintf(sddl, 512, L"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;%s)", sid);
     else if (me)
         swprintf(sddl, 512, L"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;%s)", me);
-    if (set_dacl(root, sid || me ? sddl : NULL, sid || me) != 0)
+    if (!sid && !me)
+        return -1;
+    if (set_dacl(root, sddl, 1) != 0)
         rc = -1;
     if (sid)
         swprintf(sddl, 512, L"D:AI(A;OICI;0x1301bf;;;%s)", sid);

@@ -107,6 +107,23 @@ static int run_cmd(const wchar_t *exe, wchar_t *cmd, const char *input, DWORD ti
     return (int)code;
 }
 
+static HANDLE g_started;
+
+static int elevated(void)
+{
+    HANDLE t;
+    TOKEN_ELEVATION e;
+    DWORD n;
+    int r = 0;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &t))
+    {
+        if (GetTokenInformation(t, TokenElevation, &e, sizeof(e), &n))
+            r = e.TokenIsElevated != 0;
+        CloseHandle(t);
+    }
+    return r;
+}
+
 static int start_detached(const wchar_t *exe, wchar_t *cmd)
 {
     STARTUPINFOW si;
@@ -121,7 +138,9 @@ static int start_detached(const wchar_t *exe, wchar_t *cmd)
             return -1;
     }
     CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
+    if (g_started)
+        CloseHandle(g_started);
+    g_started = pi.hProcess;
     return 0;
 }
 
@@ -219,7 +238,7 @@ static int db_fetch(const dbp_t *p)
     CreateDirectoryW(dir, NULL);
     swprintf(dir, MAX_PATH, L"%s\\share", p->root);
     CreateDirectoryW(dir, NULL);
-    swprintf(dl, MAX_PATH, L"%s\\tmp\\download", p->root);
+    swprintf(dl, MAX_PATH, L"%s\\tmp\\dl-%08lx%08lx", p->root, GetCurrentProcessId(), GetTickCount());
     if (ols_private_dir(dl) != 0)
     {
         fprintf(stderr, "cannot prepare a private download folder: %ls\n", dl);
@@ -245,6 +264,14 @@ static int kill_server(const dbp_t *p)
     DWORD pid, len = MAX_PATH;
     HANDLE h;
     int r = -1;
+    if (g_started)
+    {
+        TerminateProcess(g_started, 1);
+        WaitForSingleObject(g_started, 10000);
+        CloseHandle(g_started);
+        g_started = NULL;
+        return 0;
+    }
     if (ols_read_wfile(p->pid, &t, &n) != 0)
         return -1;
     pid = (DWORD)strtoul(t, NULL, 10);
@@ -337,11 +364,37 @@ static int start_server(const dbp_t *p, const wchar_t *init)
     size_t n;
     if (!tool(p, L"mariadbd.exe", exe))
         return -1;
+    if (elevated())
+    {
+        fprintf(stderr, "MariaDB does not run as administrator; start it without administrator rights\n");
+        return -1;
+    }
     swprintf(files, MAX_PATH, L"%s\\files", p->data);
     CreateDirectoryW(files, NULL);
-    if (ols_read_wfile(p->myini, &ini, &n) != 0 || !strstr(ini, "secure-file-priv"))
+    if (ols_read_wfile(p->myini, &ini, &n) != 0)
     {
         if (write_myini(p, db_port(p)) != 0)
+            return -1;
+    }
+    else if (!strstr(ini, "secure-file-priv") && !strstr(ini, "secure_file_priv"))
+    {
+        char line[MAX_PATH * 3 + 32], *sec = strstr(ini, "[mysqld]"), *out;
+        size_t pre, ll;
+        int ok;
+        snprintf(line, sizeof(line), "\r\nsecure-file-priv=%s/data/files", p->rootf);
+        ll = strlen(line);
+        if (!sec || (out = (char *)malloc(n + ll + 1)) == NULL)
+        {
+            free(ini);
+            return -1;
+        }
+        pre = (size_t)(sec - ini) + 8;
+        memcpy(out, ini, pre);
+        memcpy(out + pre, line, ll);
+        memcpy(out + pre + ll, ini + pre, n - pre);
+        ok = ols_write_wfile(p->myini, out, n + ll, 0) == 0;
+        free(out);
+        if (!ok)
         {
             free(ini);
             return -1;
@@ -592,14 +645,29 @@ int ols_db_main(int argc, char **argv)
         fprintf(stderr, "OLS_ROOT is not set\n");
         return 2;
     }
-    if (strcmp(act, "install") == 0)
+    if (strcmp(act, "install") == 0 || strcmp(act, "fetch") == 0)
     {
-        HANDLE m = CreateMutexW(NULL, FALSE, L"Local\\OpenLiteSpeedDbInstall");
-        DWORD w = m ? WaitForSingleObject(m, 1800000) : WAIT_FAILED;
-        int r = 1;
+        HANDLE m;
+        DWORD w;
+        int r = 1, inst = strcmp(act, "install") == 0;
+        if (inst && elevated())
+        {
+            fprintf(stderr, "MariaDB does not run as administrator; install it without administrator rights\n");
+            return 5;
+        }
+        m = CreateMutexW(NULL, FALSE, L"Local\\OpenLiteSpeedDbInstall");
+        w = m ? WaitForSingleObject(m, 1800000) : WAIT_FAILED;
         if (w == WAIT_OBJECT_0 || w == WAIT_ABANDONED)
         {
-            r = db_install(&p);
+            if (inst)
+                r = db_install(&p);
+            else if ((r = db_fetch(&p)) != 0)
+                fprintf(stderr, "could not download MariaDB and phpMyAdmin\n");
+            else
+            {
+                ols_dev_resync(p.root, p.tray);
+                printf("MariaDB %s and phpMyAdmin %s are downloaded\n", MDB_VERSION, PMA_VERSION);
+            }
             ReleaseMutex(m);
         }
         else
@@ -607,17 +675,6 @@ int ols_db_main(int argc, char **argv)
         if (m)
             CloseHandle(m);
         return r;
-    }
-    if (strcmp(act, "fetch") == 0)
-    {
-        if (db_fetch(&p) != 0)
-        {
-            fprintf(stderr, "could not download MariaDB and phpMyAdmin\n");
-            return 1;
-        }
-        ols_dev_resync(p.root, p.tray);
-        printf("MariaDB %s and phpMyAdmin %s are downloaded\n", MDB_VERSION, PMA_VERSION);
-        return 0;
     }
     if (!installed(&p))
     {

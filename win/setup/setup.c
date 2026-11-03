@@ -18,6 +18,7 @@
 #include <winsvc.h>
 #include <sddl.h>
 #include <aclapi.h>
+#include <bcrypt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -284,24 +285,33 @@ static int is_user_file(const char *rel)
            || _strnicmp(rel, "Example\\", 8) == 0;
 }
 
+static int is_link(const wchar_t *path)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW(path, &fd);
+    if (f == INVALID_HANDLE_VALUE)
+        return 0;
+    FindClose(f);
+    return (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && IsReparseTagNameSurrogate(fd.dwReserved0);
+}
+
 static int no_reparse(const wchar_t *dir, const wchar_t *full)
 {
     wchar_t tmp[MAX_PATH];
     size_t i, dl = wcslen(dir);
-    DWORD a;
+    int link;
     wcsncpy(tmp, full, MAX_PATH - 1);
     tmp[MAX_PATH - 1] = 0;
     for (i = dl + 1; i < MAX_PATH && tmp[i]; ++i)
         if (tmp[i] == L'\\')
         {
             tmp[i] = 0;
-            a = GetFileAttributesW(tmp);
+            link = is_link(tmp);
             tmp[i] = L'\\';
-            if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT))
+            if (link)
                 return 0;
         }
-    a = GetFileAttributesW(full);
-    return a == INVALID_FILE_ATTRIBUTES || !(a & FILE_ATTRIBUTE_REPARSE_POINT);
+    return !is_link(full);
 }
 
 static int extract(const wchar_t *dir)
@@ -331,6 +341,8 @@ static int extract(const wchar_t *dir)
         swprintf(full, MAX_PATH, L"%s\\%s", dir, wname);
         if (!(g_upgrade && is_user_file(name) && GetFileAttributesW(full) != INVALID_FILE_ATTRIBUTES))
         {
+            if (!no_reparse(dir, full))
+                return -1;
             if ((slash = wcsrchr(full, L'\\')) != NULL)
             {
                 *slash = 0;
@@ -824,6 +836,7 @@ static int desktop_user_sid(wchar_t *out, size_t n)
     if (!OpenProcessToken(p ? p : GetCurrentProcess(), TOKEN_QUERY, &tok))
         tok = NULL;
     if (tok && GetTokenInformation(tok, TokenUser, buf, sizeof(buf), &len)
+        && !IsWellKnownSid(((TOKEN_USER *)buf)->User.Sid, WinLocalSystemSid)
         && ConvertSidToStringSidW(((TOKEN_USER *)buf)->User.Sid, &str) && wcslen(str) < n)
     {
         wcscpy(out, str);
@@ -838,41 +851,195 @@ static int desktop_user_sid(wchar_t *out, size_t n)
     return rc;
 }
 
-static int dacl_protected(const wchar_t *path)
+static int enable_priv(const wchar_t *name)
+{
+    HANDLE t;
+    TOKEN_PRIVILEGES tp;
+    int ok = 0;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &t))
+        return 0;
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    if (LookupPrivilegeValueW(NULL, name, &tp.Privileges[0].Luid))
+        ok = AdjustTokenPrivileges(t, FALSE, &tp, 0, NULL, NULL) && GetLastError() == ERROR_SUCCESS;
+    CloseHandle(t);
+    return ok;
+}
+
+static BYTE g_selfbuf[512];
+
+static int is_self(PSID s)
+{
+    HANDLE t;
+    DWORD n;
+    static int got = -1;
+    if (got < 0)
+    {
+        got = 0;
+        if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &t))
+        {
+            got = GetTokenInformation(t, TokenUser, g_selfbuf, sizeof(g_selfbuf), &n) ? 1 : 0;
+            CloseHandle(t);
+        }
+    }
+    return got == 1 && EqualSid(s, ((TOKEN_USER *)g_selfbuf)->User.Sid);
+}
+
+static int known_sid(PSID s, PSID me)
+{
+    return s && (EqualSid(s, me) || is_self(s) || IsWellKnownSid(s, WinBuiltinAdministratorsSid)
+                 || IsWellKnownSid(s, WinLocalSystemSid));
+}
+
+static int root_state(const wchar_t *dir, PSID me)
 {
     PSECURITY_DESCRIPTOR sd = NULL;
+    PSID owner = NULL;
+    PACL dacl = NULL;
     SECURITY_DESCRIPTOR_CONTROL ctl = 0;
-    DWORD rev;
+    ACL_SIZE_INFORMATION ai;
+    DWORD rev, i;
     int r = 0;
-    if (GetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, NULL, NULL, NULL, NULL, &sd)
-        != ERROR_SUCCESS)
+    if (GetNamedSecurityInfoW(dir, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, NULL,
+                              &dacl, NULL, &sd) != ERROR_SUCCESS)
         return 0;
-    if (GetSecurityDescriptorControl(sd, &ctl, &rev))
-        r = (ctl & SE_DACL_PROTECTED) != 0;
+    if (!known_sid(owner, me))
+        r = -1;
+    else if (GetSecurityDescriptorControl(sd, &ctl, &rev) && (ctl & SE_DACL_PROTECTED) && dacl
+             && GetAclInformation(dacl, &ai, sizeof(ai), AclSizeInformation))
+    {
+        r = 1;
+        for (i = 0; i < ai.AceCount && r == 1; ++i)
+        {
+            ACE_HEADER *ace;
+            if (!GetAce(dacl, i, (void **)&ace))
+                r = 0;
+            else if (ace->AceType == ACCESS_ALLOWED_ACE_TYPE
+                     && !known_sid((PSID)&((ACCESS_ALLOWED_ACE *)ace)->SidStart, me))
+                r = 0;
+        }
+    }
     LocalFree(sd);
     return r;
 }
 
+static void drop_links(const wchar_t *dir, int depth)
+{
+    wchar_t pat[MAX_PATH], p[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE f;
+    if (depth > 32 || swprintf(pat, MAX_PATH, L"%s\\*", dir) < 0)
+        return;
+    if ((f = FindFirstFileExW(pat, FindExInfoBasic, &fd, FindExSearchNameMatch, NULL, 0)) == INVALID_HANDLE_VALUE)
+        return;
+    do
+    {
+        if (fd.cFileName[0] == L'.' && (fd.cFileName[1] == 0 || (fd.cFileName[1] == L'.' && fd.cFileName[2] == 0)))
+            continue;
+        if (swprintf(p, MAX_PATH, L"%s\\%s", dir, fd.cFileName) < 0)
+            continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+        {
+            if (IsReparseTagNameSurrogate(fd.dwReserved0))
+            {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                    RemoveDirectoryW(p);
+                else
+                    DeleteFileW(p);
+            }
+        }
+        else if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            drop_links(p, depth + 1);
+    }
+    while (FindNextFileW(f, &fd));
+    FindClose(f);
+}
+
+static int reset_tree(const wchar_t *path, PSID admins, PACL empty, int depth)
+{
+    wchar_t pat[MAX_PATH], p[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE f;
+    DWORD a = GetFileAttributesW(path);
+    int rc = 0;
+    if (depth > 32 || a == INVALID_FILE_ATTRIBUTES || (a & FILE_ATTRIBUTE_REPARSE_POINT))
+        return depth > 32 ? -1 : 0;
+    if (SetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT,
+                              OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+                                  | UNPROTECTED_DACL_SECURITY_INFORMATION,
+                              admins, NULL, empty, NULL) != ERROR_SUCCESS)
+        rc = -1;
+    if (!(a & FILE_ATTRIBUTE_DIRECTORY) || swprintf(pat, MAX_PATH, L"%s\\*", path) < 0)
+        return rc;
+    if ((f = FindFirstFileExW(pat, FindExInfoBasic, &fd, FindExSearchNameMatch, NULL, 0)) == INVALID_HANDLE_VALUE)
+        return rc;
+    do
+    {
+        if ((fd.cFileName[0] == L'.' && (fd.cFileName[1] == 0 || (fd.cFileName[1] == L'.' && fd.cFileName[2] == 0)))
+            || (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+            continue;
+        if (swprintf(p, MAX_PATH, L"%s\\%s", path, fd.cFileName) < 0 || reset_tree(p, admins, empty, depth + 1) != 0)
+            rc = -1;
+    }
+    while (FindNextFileW(f, &fd));
+    FindClose(f);
+    return rc;
+}
+
+static const wchar_t *const s_prog_dirs[] = { L"bin", L"conf", L"admin", L"fcgi-bin", L"lsrecaptcha", L"share",
+                                              L"modsec", L"Example", L"mariadb", L"tmp", L"logs", L"cachedata",
+                                              L"cgid", L"autoupdate", NULL };
+
 static int secure_root(const wchar_t *dir)
 {
-    wchar_t sid[192], sddl[400];
+    wchar_t sids[192], sddl[400], p[MAX_PATH];
+    BYTE abuf[SECURITY_MAX_SID_SIZE], ebuf[sizeof(ACL)];
+    DWORD an = sizeof(abuf);
+    PSID me = NULL, admins = (PSID)abuf;
+    PACL empty = (PACL)ebuf, dacl = NULL;
     PSECURITY_DESCRIPTOR sd = NULL;
-    PACL dacl = NULL;
     BOOL present = FALSE, def = FALSE;
-    DWORD r = 1;
-    if (dacl_protected(dir))
-        return 0;
-    if (desktop_user_sid(sid, 192) != 0)
+    int st, i, rc = -1;
+    if (is_link(dir))
+        return -2;
+    if (desktop_user_sid(sids, 192) != 0 || !ConvertStringSidToSidW(sids, &me))
         return -1;
-    swprintf(sddl, 400, L"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;%s)", sid);
-    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, NULL)
+    if ((st = root_state(dir, me)) != 0)
+    {
+        LocalFree(me);
+        return st > 0 ? 0 : -2;
+    }
+    swprintf(sddl, 400, L"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;%s)", sids);
+    if (CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, admins, &an)
+        && InitializeAcl(empty, sizeof(ebuf), ACL_REVISION)
+        && ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, NULL)
         && GetSecurityDescriptorDacl(sd, &present, &dacl, &def) && present)
-        r = SetNamedSecurityInfoW((LPWSTR)dir, SE_FILE_OBJECT,
-                                  DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, NULL, NULL, dacl,
-                                  NULL);
+    {
+        enable_priv(SE_TAKE_OWNERSHIP_NAME);
+        enable_priv(SE_RESTORE_NAME);
+        for (i = 0; s_prog_dirs[i]; ++i)
+        {
+            swprintf(p, MAX_PATH, L"%s\\%s", dir, s_prog_dirs[i]);
+            if (is_link(p))
+                RemoveDirectoryW(p);
+            else
+                drop_links(p, 0);
+        }
+        rc = SetNamedSecurityInfoW((LPWSTR)dir, SE_FILE_OBJECT,
+                                   OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+                                       | PROTECTED_DACL_SECURITY_INFORMATION,
+                                   admins, NULL, dacl, NULL) == ERROR_SUCCESS ? 0 : -1;
+        for (i = 0; rc == 0 && s_prog_dirs[i]; ++i)
+        {
+            swprintf(p, MAX_PATH, L"%s\\%s", dir, s_prog_dirs[i]);
+            if (reset_tree(p, admins, empty, 0) != 0)
+                rc = -1;
+        }
+    }
     if (sd)
         LocalFree(sd);
-    return r == ERROR_SUCCESS ? 0 : -1;
+    LocalFree(me);
+    return rc;
 }
 
 static void drop_dlls(const wchar_t *dir)
@@ -934,14 +1101,23 @@ static void delete_tree(const wchar_t *dir, const wchar_t *keep, const wchar_t *
 static DWORD WINAPI install_thread(void *arg)
 {
     wchar_t cmd[4096], path[MAX_PATH], sm[MAX_PATH], self[MAX_PATH];
+    int r;
     static const wchar_t *modes[] = { L"standalone", L"laragon", L"xampp" };
     HKEY k;
     size_t stub_len;
     unsigned char *img;
     (void)arg;
     mkdirs(g_dir);
-    if (!service_exists() && secure_root(g_dir) != 0)
-        log_line(L"Warning: could not limit the install folder to your account.");
+    if (!service_exists() && (r = secure_root(g_dir)) != 0)
+    {
+        if (r == -2)
+        {
+            log_line(L"Error: the install folder belongs to another account or is a link. Choose another folder.");
+            PostMessageW(g_wnd, WM_DONE, 0, 0);
+            return 0;
+        }
+        log_line(L"Warning: could not limit the install folder to your account. Install the Windows service on shared computers.");
+    }
     drop_dlls(g_dir);
     swprintf(path, MAX_PATH, L"%s\\admin\\conf\\htpasswd", g_dir);
     g_upgrade = exists(path);
@@ -974,7 +1150,15 @@ static DWORD WINAPI install_thread(void *arg)
         }
     }
     {
-        wchar_t php_arg[MAX_PATH + 32], cur[MAX_PATH];
+        wchar_t php_arg[MAX_PATH + 32], cur[MAX_PATH], ps[MAX_PATH];
+        UINT sl = GetSystemDirectoryW(ps, MAX_PATH);
+        if (sl == 0 || sl > MAX_PATH - 48)
+        {
+            log_line(L"Error: the Windows folder was not found.");
+            PostMessageW(g_wnd, WM_DONE, 0, 0);
+            return 0;
+        }
+        wcscat(ps, L"\\WindowsPowerShell\\v1.0\\powershell.exe");
         if (unsafe_arg(g_www) || unsafe_arg(g_phpdir) || unsafe_arg(g_port) || unsafe_arg(g_aport))
         {
             log_line(L"Error: invalid characters in a setup value.");
@@ -982,20 +1166,25 @@ static DWORD WINAPI install_thread(void *arg)
             return 0;
         }
         if (g_upgrade && !g_download[0] && !g_phpdir[0] && conf_php_dir(g_dir, cur))
-            wcscpy(g_phpdir, cur);
+        {
+            int i;
+            for (i = 0; i < phpd_count; ++i)
+                if (_wcsicmp(phpd_list[i].dir, cur) == 0)
+                    wcscpy(g_phpdir, cur);
+        }
         if (g_download[0])
             swprintf(php_arg, MAX_PATH + 32, L"-DownloadPhp %s", g_download);
         else
             swprintf(php_arg, MAX_PATH + 32, L"-PhpPath \"%s\"", g_phpdir);
         if (g_upgrade)
             swprintf(cmd, 4096,
-                     L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%s\\install.ps1\" -Mode %s %s -PhpOnly",
-                     g_dir, modes[g_mode], php_arg);
+                     L"\"%s\" -NoProfile -ExecutionPolicy Bypass -File \"%s\\install.ps1\" -Mode %s %s -PhpOnly",
+                     ps, g_dir, modes[g_mode], php_arg);
         else
             swprintf(cmd, 4096,
-                     L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%s\\install.ps1\" -Mode %s "
+                     L"\"%s\" -NoProfile -ExecutionPolicy Bypass -File \"%s\\install.ps1\" -Mode %s "
                      L"%s -Www \"%s\" -HttpPort %s -AdminPort %s%s",
-                     g_dir, modes[g_mode], php_arg, g_www, g_port, g_aport, g_service ? L" -Service" : L"");
+                     ps, g_dir, modes[g_mode], php_arg, g_www, g_port, g_aport, g_service ? L" -Service" : L"");
         log_line(L"Configuring...");
         if ((g_download[0] || g_phpdir[0]) && run_capture(cmd, g_dir) != 0)
         {
@@ -1087,7 +1276,12 @@ static DWORD WINAPI install_thread(void *arg)
 
 static void start_unelevated(const wchar_t *exe)
 {
-    ShellExecuteW(NULL, L"open", L"explorer.exe", exe, NULL, SW_SHOWNORMAL);
+    wchar_t ex[MAX_PATH];
+    UINT n = GetWindowsDirectoryW(ex, MAX_PATH);
+    if (n == 0 || n > MAX_PATH - 16)
+        return;
+    wcscat(ex, L"\\explorer.exe");
+    ShellExecuteW(NULL, L"open", ex, exe, NULL, SW_SHOWNORMAL);
 }
 
 static void on_install(void)
@@ -1640,6 +1834,31 @@ static int silent_install(int argc, LPWSTR *argv)
     return g_ok ? 0 : 1;
 }
 
+static int copy_private(const wchar_t *self, wchar_t *out)
+{
+    wchar_t dir[MAX_PATH];
+    SECURITY_ATTRIBUTES sa;
+    PSECURITY_DESCRIPTOR sd = NULL;
+    unsigned char rnd[8];
+    DWORD n = GetTempPathW(MAX_PATH, dir);
+    int ok;
+    if (n == 0 || n > MAX_PATH - 48 || !ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                                           L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", SDDL_REVISION_1, &sd, NULL))
+        return 0;
+    BCryptGenRandom(NULL, rnd, sizeof(rnd), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    swprintf(dir + n, MAX_PATH - n, L"ols-uninstall-%02x%02x%02x%02x%02x%02x%02x%02x", rnd[0], rnd[1], rnd[2], rnd[3],
+             rnd[4], rnd[5], rnd[6], rnd[7]);
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = sd;
+    sa.bInheritHandle = FALSE;
+    ok = CreateDirectoryW(dir, &sa);
+    LocalFree(sd);
+    if (!ok)
+        return 0;
+    swprintf(out, MAX_PATH, L"%s\\uninstall.exe", dir);
+    return CopyFileW(self, out, TRUE);
+}
+
 #ifdef OLS_PACK_TOOL
 int wmain(int argc, wchar_t **argv)
 {
@@ -1660,6 +1879,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show)
     RECT r;
     (void)prev; (void)cmdline;
     g_inst = inst;
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     g_silent = arg_flag(argc, argv, L"--silent");
     if (argc >= 2 && wcscmp(argv[1], L"--uninstall") == 0)
@@ -1671,15 +1891,37 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show)
         wcscpy(dir, self);
         if ((s = wcsrchr(dir, L'\\')) != NULL)
             *s = 0;
-        GetTempPathW(MAX_PATH, tmp);
-        wcscat(tmp, L"ols-uninstall.exe");
-        if (CopyFileW(self, tmp, FALSE))
+        if (copy_private(self, tmp))
         {
             wchar_t args[MAX_PATH + 32];
+            SHELLEXECUTEINFOW sei;
+            HANDLE lock = CreateFileW(tmp, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
             swprintf(args, MAX_PATH + 32, L"--uninstall \"%s\"%s", dir, g_silent ? L" --silent" : L"");
-            MoveFileExW(tmp, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
-            ShellExecuteW(NULL, L"open", tmp, args, NULL, SW_SHOWNORMAL);
-            return 0;
+            memset(&sei, 0, sizeof(sei));
+            sei.cbSize = sizeof(sei);
+            sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+            sei.lpVerb = L"open";
+            sei.lpFile = tmp;
+            sei.lpParameters = args;
+            sei.nShow = SW_SHOWNORMAL;
+            if (lock != INVALID_HANDLE_VALUE && ShellExecuteExW(&sei))
+            {
+                if (sei.hProcess)
+                {
+                    WaitForInputIdle(sei.hProcess, 2000);
+                    CloseHandle(sei.hProcess);
+                }
+                CloseHandle(lock);
+                MoveFileExW(tmp, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
+                if ((s = wcsrchr(tmp, L'\\')) != NULL)
+                {
+                    *s = 0;
+                    MoveFileExW(tmp, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
+                }
+                return 0;
+            }
+            if (lock != INVALID_HANDLE_VALUE)
+                CloseHandle(lock);
         }
         return uninstall(dir);
     }

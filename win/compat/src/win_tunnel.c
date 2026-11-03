@@ -132,7 +132,7 @@ static int install(const tun_t *t)
     swprintf(curl, MAX_PATH, L"%s\\curl.exe", sys);
     swprintf(parent, MAX_PATH, L"%s\\tmp", t->root);
     CreateDirectoryW(parent, NULL);
-    swprintf(parent, MAX_PATH, L"%s\\tmp\\download", t->root);
+    swprintf(parent, MAX_PATH, L"%s\\tmp\\dl-%08lx%08lx", t->root, GetCurrentProcessId(), GetTickCount());
     if (ols_private_dir(parent) != 0)
     {
         fprintf(stderr, "cannot prepare a private folder: %ls\n", parent);
@@ -433,7 +433,10 @@ static int start_quick(const tun_t *t, const char *site)
             return 1;
         }
         if (r == 1)
+        {
             ols_win_control("reload");
+            Sleep(1500);
+        }
         GetPrivateProfileStringW(L"sites", L"tld", L"test", tld, 32, t->ini);
         swprintf(args, 512, L"--url http://127.0.0.1:%d --http-host-header %s.%s", ols_default_port(t->root), w, tld);
     }
@@ -590,7 +593,10 @@ static int start_named(const tun_t *t)
         return 1;
     }
     if (r == 1)
+    {
         ols_win_control("reload");
+        Sleep(1500);
+    }
     r = spawn(t, NAMED, args, tok);
     SecureZeroMemory(tok, strlen(tok));
     free(tok);

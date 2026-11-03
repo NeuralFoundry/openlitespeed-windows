@@ -726,6 +726,15 @@ static int install_wordpress(const wchar_t *dir)
         DeleteFileW(zip);
         return 1;
     }
+    swprintf(chk, MAX_PATH, L"%s\\wp-admin", dir);
+    CreateDirectoryW(chk, NULL);
+    swprintf(chk, MAX_PATH, L"%s\\wp-admin\\.htaccess", dir);
+    if (write_file(chk, s_wp_guard, sizeof(s_wp_guard) - 1) != 0)
+    {
+        fprintf(stderr, "could not protect the WordPress installer\n");
+        DeleteFileW(zip);
+        return 1;
+    }
     swprintf(cmd, MAX_PATH * 4, L"\"%s\\tar.exe\" -xf \"%s\" -C \"%s\" --strip-components=1", sys, zip, dir);
     if (run_wait(cmd) != 0)
     {
@@ -738,12 +747,6 @@ static int install_wordpress(const wchar_t *dir)
     if (!dir_exists(chk))
     {
         fprintf(stderr, "the WordPress archive was not what we expected\n");
-        return 1;
-    }
-    swprintf(chk, MAX_PATH, L"%s\\wp-admin\\.htaccess", dir);
-    if (write_file(chk, s_wp_guard, sizeof(s_wp_guard) - 1) != 0)
-    {
-        fprintf(stderr, "could not protect the WordPress installer\n");
         return 1;
     }
     printf("WordPress installed; open the site and finish the setup in the browser\n");
@@ -962,6 +965,16 @@ static char *remove_legacy_hosts(char *t, int *changed)
     return t;
 }
 
+static int hosts_tld(const char *tld)
+{
+    static const char *const ok[] = { "test", "localhost", "internal", "local", "lan", "example", "invalid", NULL };
+    int i;
+    for (i = 0; ok[i]; ++i)
+        if (strcmp(tld, ok[i]) == 0)
+            return 1;
+    return 0;
+}
+
 static int host_ok(const char *dom, const char *tld)
 {
     size_t n = strlen(dom), t = strlen(tld);
@@ -994,8 +1007,11 @@ int ols_dev_hosts(int clear)
     swprintf(conf, MAX_PATH, L"%s\\conf\\httpd_config.conf", root);
     swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
     GetPrivateProfileStringW(L"sites", L"tld", L"test", wtld, 32, ini);
-    if (!clear && (WideCharToMultiByte(CP_UTF8, 0, wtld, -1, tld, sizeof(tld), NULL, NULL) <= 0 || !valid_label(tld)))
+    if (!clear && (WideCharToMultiByte(CP_UTF8, 0, wtld, -1, tld, sizeof(tld), NULL, NULL) <= 0 || !hosts_tld(tld)))
+    {
+        fprintf(stderr, "site names go into the hosts file only with the .test, .localhost, .internal, .local or .lan suffix\n");
         return 2;
+    }
     n = GetSystemDirectoryW(hosts, MAX_PATH);
     if (n == 0 || n > MAX_PATH - 32)
         return 1;

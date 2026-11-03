@@ -164,7 +164,7 @@ For your own domain, create a tunnel in Cloudflare Zero Trust, point its public 
   <img src="docs/panel-token-light.png" width="420" alt="Dialog to connect your own domain with a Cloudflare tunnel token">
 </picture>
 
-Only sites from the projects folder and proxy sites can go online. Sharing a proxy site connects the tunnel straight to its app. phpMyAdmin and WebAdmin answer this computer only, and a tunnel does not start unless the server can tell its visitors apart from this computer.
+Only sites from the projects folder and proxy sites can go online. Sharing a proxy site connects the tunnel straight to its app; with your own domain, point that hostname at the app's port as well. phpMyAdmin and WebAdmin answer this computer only, and a tunnel does not start unless the server can tell its visitors apart from this computer.
 
 ## Databases
 

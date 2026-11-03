@@ -147,6 +147,22 @@ function Enable-Extensions([string]$dir) {
     Set-Content $ini $text -Encoding ascii
 }
 
+function New-PrivateTemp {
+    $base = if ($isAdmin) { Join-Path $env:SystemRoot 'Temp' } else { $env:TEMP }
+    $dir = Join-Path $base ('ols-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory $dir | Out-Null
+    if ($isAdmin) {
+        $acl = New-Object Security.AccessControl.DirectorySecurity
+        $acl.SetAccessRuleProtection($true, $false)
+        foreach ($sid in 'S-1-5-32-544', 'S-1-5-18') {
+            $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+                (New-Object Security.Principal.SecurityIdentifier $sid), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+        }
+        Set-Acl -LiteralPath $dir -AclObject $acl
+    }
+    return $dir
+}
+
 function Install-Php([string]$branch) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $base = 'https://windows.php.net/downloads/releases'
@@ -157,17 +173,21 @@ function Install-Php([string]$branch) {
     $entry = $info.$key.zip
     $dest = Join-Path $Root "php\$($info.version)"
     if (-not (Test-Path (Join-Path $dest 'php-cgi.exe'))) {
-        $zip = Join-Path $env:TEMP $entry.path
+        $tmp = New-PrivateTemp
+        $zip = Join-Path $tmp 'php.zip'
         Say "Downloading PHP $($info.version)..."
-        curl.exe -sfL -o $zip "$base/$($entry.path)"
+        & (Join-Path $env:SystemRoot 'System32\curl.exe') -sfL --proto =https -o $zip "$base/$($entry.path)"
         if ($LASTEXITCODE -ne 0) { Invoke-WebRequest "$base/$($entry.path)" -OutFile $zip -UseBasicParsing }
-        if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $entry.sha256.ToUpper()) {
-            Remove-Item $zip -Force
-            throw 'downloaded PHP failed the checksum check'
+        $fs = [IO.File]::Open($zip, 'Open', 'Read', 'Read')
+        try {
+            $hash = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($fs) | ForEach-Object { $_.ToString('X2') })
+            if ($hash -ne $entry.sha256.ToUpper()) { throw 'downloaded PHP failed the checksum check' }
+            New-Item -ItemType Directory -Force $dest | Out-Null
+            Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
+        } finally {
+            $fs.Dispose()
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
-        New-Item -ItemType Directory -Force $dest | Out-Null
-        Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
-        Remove-Item $zip -Force
     }
     Enable-Extensions $dest
     return $dest
@@ -192,16 +212,21 @@ function Ensure-VcRuntime([string]$php) {
     }
     if (-not $isAdmin) { throw 'PHP needs the Microsoft Visual C++ runtime; run the installer as Administrator' }
     Say 'Installing the Microsoft Visual C++ runtime...'
-    $vc = Join-Path $env:TEMP 'vc_redist.x64.exe'
+    $tmp = New-PrivateTemp
+    $vc = Join-Path $tmp 'vc_redist.x64.exe'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $vc -UseBasicParsing
-    $sig = Get-AuthenticodeSignature $vc
-    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notlike '*Microsoft Corporation*') {
-        Remove-Item $vc -Force
-        throw 'the Visual C++ runtime download is not signed by Microsoft'
+    $fs = [IO.File]::Open($vc, 'Open', 'Read', 'Read')
+    try {
+        $sig = Get-AuthenticodeSignature $vc
+        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notlike '*Microsoft Corporation*') {
+            throw 'the Visual C++ runtime download is not signed by Microsoft'
+        }
+        Start-Process $vc -ArgumentList '/install', '/quiet', '/norestart' -Wait
+    } finally {
+        $fs.Dispose()
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
-    Start-Process $vc -ArgumentList '/install', '/quiet', '/norestart' -Wait
-    Remove-Item $vc -Force
     $r = Test-PhpStarts $php
     if ($r.Code -ne 0) { throw "php-cgi.exe in $php still does not start: $($r.Text)" }
 }
@@ -381,7 +406,8 @@ if ($Service) {
 } elseif ($Tray) {
     $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
     Set-ItemProperty $run 'OpenLiteSpeed' "`"$(Join-Path $Root 'bin\olstray.exe')`""
-    Start-Process (Join-Path $Root 'bin\olstray.exe') -ArgumentList '--start'
+    if ($isAdmin) { Start-Process (Join-Path $env:SystemRoot 'explorer.exe') -ArgumentList "`"$(Join-Path $Root 'bin\olstray.exe')`"" }
+    else { Start-Process (Join-Path $Root 'bin\olstray.exe') -ArgumentList '--start' }
     Say 'Tray app started (OpenLiteSpeed icon next to the clock).'
 } else {
     Say "Start:  `"$Exe`" -s start"
