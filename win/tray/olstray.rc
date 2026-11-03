@@ -1,3 +1,16 @@
 #include <winres.h>
 
 1 ICON "../res/ols.ico"
+
+101 DIALOGEX 0, 0, 236, 100
+STYLE DS_MODALFRAME | DS_CENTER | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "New site"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    LTEXT           "Site name", -1, 10, 10, 216, 9
+    EDITTEXT        1001, 10, 21, 216, 14, ES_AUTOHSCROLL | ES_LOWERCASE
+    LTEXT           "", 1002, 10, 39, 216, 9
+    AUTOCHECKBOX    "Install WordPress", 1003, 10, 54, 216, 12
+    DEFPUSHBUTTON   "Create", IDOK, 122, 78, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 176, 78, 50, 14
+END

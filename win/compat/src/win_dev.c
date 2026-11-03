@@ -505,7 +505,8 @@ static int install_wordpress(const wchar_t *dir)
         return 1;
     swprintf(zip, MAX_PATH, L"%s\\.wp-download.zip", dir);
     swprintf(cmd, MAX_PATH * 4,
-             L"\"%s\\curl.exe\" -fsS --proto =https --tlsv1.2 -L -o \"%s\" https://wordpress.org/latest.zip",
+             L"\"%s\\curl.exe\" -fsS --proto =https --tlsv1.2 --connect-timeout 20 --max-time 900 -L -o \"%s\" "
+             L"https://wordpress.org/latest.zip",
              sys, zip);
     printf("downloading WordPress...\n");
     if (run_wait(cmd) != 0)
@@ -534,19 +535,13 @@ static int install_wordpress(const wchar_t *dir)
 
 int ols_new_site(const char *name, const char *tld, const char *flavor)
 {
-    wchar_t root[MAX_PATH], ini[MAX_PATH], www[MAX_PATH], dir[MAX_PATH], idx[MAX_PATH], wname[128];
-    char wwwmb[MAX_PATH * 3], html[512];
+    wchar_t root[MAX_PATH], ini[MAX_PATH], www[MAX_PATH], def[MAX_PATH], dir[MAX_PATH], idx[MAX_PATH], wname[128];
+    wchar_t wtld[32];
+    char wwwmb[MAX_PATH * 3], html[512], ctld[32];
     int withRoot, rc, n, wp;
     if (!name || !valid_label(name) || strcmp(name, "localhost") == 0)
     {
         fprintf(stderr, "invalid site name (use lowercase letters, digits and '-')\n");
-        return 2;
-    }
-    if (!tld || !*tld)
-        tld = "test";
-    if (!valid_label(tld))
-    {
-        fprintf(stderr, "invalid tld\n");
         return 2;
     }
     if (root_dir(root, MAX_PATH) < 0)
@@ -555,10 +550,24 @@ int ols_new_site(const char *name, const char *tld, const char *flavor)
         return 2;
     }
     swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
-    GetPrivateProfileStringW(L"sites", L"www", L"", www, MAX_PATH, ini);
-    if (!www[0] || !dir_exists(www))
+    GetPrivateProfileStringW(L"sites", L"tld", L"test", wtld, 32, ini);
+    if (WideCharToMultiByte(CP_UTF8, 0, wtld, -1, ctld, sizeof(ctld), NULL, NULL) <= 0 || !valid_label(ctld))
     {
-        fprintf(stderr, "no web root is configured; set one from the tray first\n");
+        fprintf(stderr, "the site suffix in olstray.ini is not valid\n");
+        return 2;
+    }
+    if (tld && *tld && strcmp(tld, ctld) != 0)
+    {
+        fprintf(stderr, "the projects folder uses .%s, not .%s\n", ctld, tld);
+        return 2;
+    }
+    tld = ctld;
+    swprintf(def, MAX_PATH, L"%s\\www", root);
+    GetPrivateProfileStringW(L"sites", L"www", def, www, MAX_PATH, ini);
+    CreateDirectoryW(www, NULL);
+    if (!dir_exists(www))
+    {
+        fprintf(stderr, "cannot use the projects folder %ls\n", www);
         return 2;
     }
     if (MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 128) <= 0)

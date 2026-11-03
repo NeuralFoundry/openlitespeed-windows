@@ -23,6 +23,7 @@
 
 #define WM_TRAY (WM_APP + 1)
 #define WM_UPDATE (WM_APP + 2)
+#define WM_NEWSITE (WM_APP + 3)
 #define TIMER_STATUS 1
 #define TIMER_UPDATE 2
 #define WIDEN2(x) L##x
@@ -52,6 +53,11 @@
 #define ID_UPDATE 114
 #define ID_CHECK 115
 #define ID_IMPORT_NGINX 116
+#define ID_NEWSITE 117
+#define IDD_NEWSITE 101
+#define IDC_NS_NAME 1001
+#define IDC_NS_PREVIEW 1002
+#define IDC_NS_WP 1003
 #define ID_PHP_BASE 1000
 #define ID_SITE_BASE 2000
 #define MAX_SITES 256
@@ -66,7 +72,17 @@ static wchar_t g_sites[MAX_SITES][128];
 static int g_nsites;
 static wchar_t g_latest[64];
 static volatile LONG g_checking;
+static volatile LONG g_creating;
 static int g_update_balloon;
+
+typedef struct
+{
+    wchar_t name[64];
+    int wp;
+    int port;
+    DWORD code;
+    char *out;
+} newsite_t;
 
 static HICON make_icon(COLORREF fill)
 {
@@ -732,6 +748,155 @@ static void choose_www(void)
     CoTaskMemFree(pidl);
 }
 
+static int site_label_ok(const wchar_t *s)
+{
+    size_t n = wcslen(s), i;
+    if (n == 0 || n > 63 || s[0] == L'-' || s[n - 1] == L'-' || wcscmp(s, L"localhost") == 0)
+        return 0;
+    for (i = 0; i < n; ++i)
+        if (!((s[i] >= L'a' && s[i] <= L'z') || (s[i] >= L'0' && s[i] <= L'9') || s[i] == L'-'))
+            return 0;
+    return 1;
+}
+
+static INT_PTR CALLBACK newsite_proc(HWND d, UINT msg, WPARAM wp, LPARAM lp)
+{
+    newsite_t *ns = (newsite_t *)GetWindowLongPtrW(d, DWLP_USER);
+    if (msg == WM_INITDIALOG)
+    {
+        SetWindowLongPtrW(d, DWLP_USER, lp);
+        SendDlgItemMessageW(d, IDC_NS_NAME, EM_LIMITTEXT, 63, 0);
+        EnableWindow(GetDlgItem(d, IDOK), FALSE);
+        SetForegroundWindow(d);
+        return TRUE;
+    }
+    if (msg != WM_COMMAND)
+        return FALSE;
+    if (LOWORD(wp) == IDC_NS_NAME && HIWORD(wp) == EN_CHANGE)
+    {
+        wchar_t name[64], tld[32], www[MAX_PATH], path[MAX_PATH], prev[160];
+        int ok;
+        GetDlgItemTextW(d, IDC_NS_NAME, name, 64);
+        GetPrivateProfileStringW(L"sites", L"tld", L"test", tld, 32, g_ini);
+        ok = site_label_ok(name);
+        prev[0] = 0;
+        if (ok)
+        {
+            www_dir(www, MAX_PATH);
+            swprintf(path, MAX_PATH, L"%s\\%s", www, name);
+            if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
+            {
+                ok = 0;
+                wcscpy(prev, L"A folder with this name already exists");
+            }
+            else if (!ns || ns->port == 80)
+                swprintf(prev, 160, L"http://%s.%s/", name, tld);
+            else
+                swprintf(prev, 160, L"http://%s.%s:%d/", name, tld, ns->port);
+        }
+        else if (name[0])
+            wcscpy(prev, L"Use lowercase letters, digits and '-'");
+        SetDlgItemTextW(d, IDC_NS_PREVIEW, prev);
+        EnableWindow(GetDlgItem(d, IDOK), ok);
+        return TRUE;
+    }
+    if (LOWORD(wp) == IDOK && ns)
+    {
+        GetDlgItemTextW(d, IDC_NS_NAME, ns->name, 64);
+        if (!site_label_ok(ns->name))
+            return TRUE;
+        ns->wp = IsDlgButtonChecked(d, IDC_NS_WP) == BST_CHECKED;
+        EndDialog(d, IDOK);
+        return TRUE;
+    }
+    if (LOWORD(wp) == IDCANCEL)
+    {
+        EndDialog(d, IDCANCEL);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static DWORD WINAPI newsite_thread(LPVOID arg)
+{
+    newsite_t *ns = (newsite_t *)arg;
+    wchar_t args[128];
+    swprintf(args, 128, L"--new-site %s%s", ns->name, ns->wp ? L" --wordpress" : L"");
+    ns->code = run_capture(args, &ns->out);
+    if (!PostMessageW(g_wnd, WM_NEWSITE, 0, (LPARAM)ns))
+    {
+        free(ns->out);
+        free(ns);
+    }
+    return 0;
+}
+
+static void new_site(void)
+{
+    newsite_t *ns;
+    HANDLE t;
+    if (g_creating)
+        return;
+    ns = (newsite_t *)calloc(1, sizeof(*ns));
+    if (!ns)
+        return;
+    ns->port = http_port();
+    if (DialogBoxParamW(g_inst, MAKEINTRESOURCEW(IDD_NEWSITE), g_wnd, newsite_proc, (LPARAM)ns) != IDOK)
+    {
+        free(ns);
+        return;
+    }
+    InterlockedExchange(&g_creating, 1);
+    notify(L"OpenLiteSpeed", ns->wp ? L"Creating the site and downloading WordPress..." : L"Creating the site...");
+    t = CreateThread(NULL, 0, newsite_thread, ns, 0, NULL);
+    if (t)
+        CloseHandle(t);
+    else
+    {
+        InterlockedExchange(&g_creating, 0);
+        free(ns);
+    }
+}
+
+static void newsite_done(newsite_t *ns)
+{
+    wchar_t tld[32], url[256], msg[256], *text;
+    DWORD r;
+    int port = ns->port;
+    InterlockedExchange(&g_creating, 0);
+    if (ns->code != 0)
+    {
+        text = report_text(ns->out ? ns->out : "", L"");
+        MessageBoxW(g_wnd, text ? text : L"The site could not be created.", L"New site", MB_OK | MB_ICONWARNING);
+        free(text);
+        free(ns->out);
+        free(ns);
+        return;
+    }
+    free(ns->out);
+    r = run_tool(L"--dev-hosts", 1);
+    if (r == 5)
+        r = run_elevated(L"--dev-hosts");
+    if (g_running > 0)
+        run_tool(L"-s reload", 1);
+    load_sites();
+    GetPrivateProfileStringW(L"sites", L"tld", L"test", tld, 32, g_ini);
+    if (port == 80)
+        swprintf(url, 256, L"http://%s.%s/", ns->name, tld);
+    else
+        swprintf(url, 256, L"http://%s.%s:%d/", ns->name, tld, port);
+    if (r != 0)
+        swprintf(msg, 256, L"%s.%s was created, but the hosts file was not updated.", ns->name, tld);
+    else if (ns->wp)
+        swprintf(msg, 256, L"%s.%s is ready. Finish the WordPress setup in the browser.", ns->name, tld);
+    else
+        swprintf(msg, 256, L"%s.%s is ready.", ns->name, tld);
+    notify(L"OpenLiteSpeed", msg);
+    if (r == 0 && g_running > 0)
+        open_url(url);
+    free(ns);
+}
+
 static void show_menu(void)
 {
     HMENU m = CreatePopupMenu(), php = CreatePopupMenu(), sites = CreatePopupMenu(), logs = CreatePopupMenu();
@@ -755,6 +920,8 @@ static void show_menu(void)
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, ID_SITE, L"Open website");
     AppendMenuW(m, MF_STRING, ID_ADMIN, L"Open WebAdmin");
+    AppendMenuW(sites, MF_STRING | (g_creating ? MF_GRAYED : 0), ID_NEWSITE, L"New site...");
+    AppendMenuW(sites, MF_SEPARATOR, 0, NULL);
     for (i = 0; i < g_nsites; ++i)
         AppendMenuW(sites, MF_STRING, ID_SITE_BASE + i, g_sites[i]);
     if (g_nsites)
@@ -838,6 +1005,8 @@ static void on_command(int id)
             notify(L"OpenLiteSpeed", buf);
         }
     }
+    else if (id == ID_NEWSITE)
+        new_site();
     else if (id == ID_REFRESH)
         refresh_sites(0);
     else if (id == ID_WWW)
@@ -893,6 +1062,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_UPDATE:
         on_update((int)wp, (wchar_t *)lp);
+        return 0;
+    case WM_NEWSITE:
+        newsite_done((newsite_t *)lp);
         return 0;
     case WM_TIMER:
         if (wp == TIMER_UPDATE)

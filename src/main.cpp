@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
     }
     if (argc >= 3 && strcmp(argv[1], "--new-site") == 0)
     {
-        const char *tld = "test", *flavor = "blank";
+        const char *tld = NULL, *flavor = "blank";
         for (int i = 3; i < argc; ++i)
         {
             if (strcmp(argv[i], "--wordpress") == 0)
