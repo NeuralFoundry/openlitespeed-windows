@@ -35,6 +35,34 @@ static const char s_template[] =
     "  }\r\n"
     "}\r\n";
 
+static const char s_tools[] =
+    "allowSymbolLink          1\r\n"
+    "enableScript             1\r\n"
+    "restrained               0\r\n"
+    "setUIDMode               0\r\n"
+    "vhRoot                   $SERVER_ROOT/share/$VH_NAME/\r\n"
+    "\r\n"
+    "virtualHostConfig {\r\n"
+    "  docRoot                $VH_ROOT/\r\n"
+    "  enableGzip             1\r\n"
+    "\r\n"
+    "  index {\r\n"
+    "    useServer            0\r\n"
+    "    autoIndex            0\r\n"
+    "    indexFiles           index.php\r\n"
+    "  }\r\n"
+    "\r\n"
+    "  accessControl {\r\n"
+    "    allow                127.0.0.1, ::1\r\n"
+    "    deny                 ALL\r\n"
+    "  }\r\n"
+    "\r\n"
+    "  context /setup/ {\r\n"
+    "    location             $VH_ROOT/setup/\r\n"
+    "    allowBrowse          0\r\n"
+    "  }\r\n"
+    "}\r\n";
+
 static int read_file(const wchar_t *path, char **out, size_t *len)
 {
     HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
@@ -351,7 +379,7 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
     size_t len, blen = 0, bcap = 0, mlen = 0, mcap = 0;
     WIN32_FIND_DATAW fd;
     HANDLE f;
-    int count = 0, nnames = 0, ncap = 0, https, ssl = 0;
+    int count = 0, nnames = 0, ncap = 0, https, ssl = 0, tools, i;
     char *q;
     if (!tld || !*tld)
         tld = "test";
@@ -436,6 +464,32 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
         while (FindNextFileW(f, &fd));
         FindClose(f);
     }
+    swprintf(p, MAX_PATH, L"%s\\share\\phpmyadmin\\index.php", root);
+    tools = file_exists(p);
+    for (i = 0; tools && i < nnames; ++i)
+        if (strcmp(names[i], "phpmyadmin") == 0)
+            tools = 0;
+    if (tools)
+    {
+        swprintf(tpl, MAX_PATH, L"%s\\conf\\templates\\devtools.conf", root);
+        if (write_file(tpl, s_tools, sizeof(s_tools) - 1) != 0)
+            tools = 0;
+        else
+        {
+            if (nnames == ncap)
+            {
+                char **grown = (char **)realloc(names, (size_t)(ncap ? ncap * 2 : 32) * sizeof(char *));
+                if (grown)
+                {
+                    names = grown;
+                    ncap = ncap ? ncap * 2 : 32;
+                }
+            }
+            if (nnames < ncap && (names[nnames] = _strdup("phpmyadmin")) != NULL)
+                ++nnames;
+            printf("http://phpmyadmin.%s/  ->  phpMyAdmin (this computer only)\n", tld);
+        }
+    }
     swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
     https = GetPrivateProfileIntW(L"sites", L"https", 0, ini);
     if (https > 0 && https < 65536)
@@ -475,7 +529,17 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
     if (mem)
         buf_str(&block, &blen, &bcap, mem);
     free(mem);
-    buf_str(&block, &blen, &bcap, "}\r\n" DEV_END "\r\n");
+    buf_str(&block, &blen, &bcap, "}\r\n");
+    if (tools)
+    {
+        snprintf(line, sizeof(line),
+                 "vhTemplate devtools {\r\n    templateFile             conf/templates/devtools.conf\r\n"
+                 "    listeners                Default%s\r\n    member phpmyadmin {\r\n"
+                 "        vhDomain             phpmyadmin.%s\r\n    }\r\n}\r\n",
+                 ssl ? ", DevSSL" : "", tld);
+        buf_str(&block, &blen, &bcap, line);
+    }
+    buf_str(&block, &blen, &bcap, DEV_END "\r\n");
     if (!block)
         return 1;
 
@@ -639,6 +703,8 @@ int ols_new_site(const char *name, const char *tld, const char *flavor)
             RemoveDirectoryW(dir);
             return 1;
         }
+        if (ols_db_wordpress(root, name, dir) == 1)
+            fprintf(stderr, "WordPress will ask for the database details in the browser\n");
     }
     else
     {

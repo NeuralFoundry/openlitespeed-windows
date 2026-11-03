@@ -24,6 +24,7 @@
 #define WM_TRAY (WM_APP + 1)
 #define WM_UPDATE (WM_APP + 2)
 #define WM_NEWSITE (WM_APP + 3)
+#define WM_DBDONE (WM_APP + 4)
 #define TIMER_STATUS 1
 #define TIMER_UPDATE 2
 #define WIDEN2(x) L##x
@@ -55,6 +56,11 @@
 #define ID_IMPORT_NGINX 116
 #define ID_NEWSITE 117
 #define ID_HTTPS 118
+#define ID_DB_INSTALL 119
+#define ID_DB_START 120
+#define ID_DB_STOP 121
+#define ID_DB_PMA 122
+#define ID_DB_COPY 123
 #define IDD_NEWSITE 101
 #define IDC_NS_NAME 1001
 #define IDC_NS_PREVIEW 1002
@@ -74,6 +80,7 @@ static int g_nsites;
 static wchar_t g_latest[64];
 static volatile LONG g_checking;
 static volatile LONG g_creating;
+static volatile LONG g_dbbusy;
 static int g_update_balloon;
 
 typedef struct
@@ -822,6 +829,175 @@ static void toggle_https(void)
     notify(L"OpenLiteSpeed", msg);
 }
 
+static int db_port(void)
+{
+    return GetPrivateProfileIntW(L"db", L"port", 0, g_ini);
+}
+
+static int db_installed(void)
+{
+    wchar_t exe[MAX_PATH], cnf[MAX_PATH];
+    swprintf(exe, MAX_PATH, L"%s\\mariadb\\bin\\mariadbd.exe", g_root);
+    swprintf(cnf, MAX_PATH, L"%s\\data\\client.cnf", g_root);
+    return db_port() > 0 && GetFileAttributesW(exe) != INVALID_FILE_ATTRIBUTES
+           && GetFileAttributesW(cnf) != INVALID_FILE_ATTRIBUTES;
+}
+
+static int db_running(void)
+{
+    wchar_t pidf[MAX_PATH], img[MAX_PATH];
+    DWORD pid, n = MAX_PATH;
+    HANDLE h;
+    char *t;
+    int ok = 0;
+    swprintf(pidf, MAX_PATH, L"%s\\data\\mariadb.pid", g_root);
+    if ((t = read_all(pidf)) == NULL)
+        return 0;
+    pid = (DWORD)strtoul(t, NULL, 10);
+    free(t);
+    if (!pid || (h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid)) == NULL)
+        return 0;
+    if (WaitForSingleObject(h, 0) == WAIT_TIMEOUT && QueryFullProcessImageNameW(h, 0, img, &n))
+    {
+        size_t l = wcslen(img);
+        ok = l >= 12 && _wcsicmp(img + l - 12, L"mariadbd.exe") == 0;
+    }
+    CloseHandle(h);
+    return ok;
+}
+
+static void clip_flag(UINT fmt)
+{
+    HGLOBAL z = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+    DWORD *d;
+    if (!z || !fmt)
+        return;
+    if ((d = (DWORD *)GlobalLock(z)) != NULL)
+    {
+        *d = 0;
+        GlobalUnlock(z);
+        if (SetClipboardData(fmt, z))
+            return;
+    }
+    GlobalFree(z);
+}
+
+static int copy_secret(const char *s)
+{
+    int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+    HGLOBAL g;
+    wchar_t *w;
+    if (n <= 0 || (g = GlobalAlloc(GMEM_MOVEABLE, (size_t)n * sizeof(wchar_t))) == NULL)
+        return -1;
+    if ((w = (wchar_t *)GlobalLock(g)) == NULL)
+    {
+        GlobalFree(g);
+        return -1;
+    }
+    MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n);
+    GlobalUnlock(g);
+    if (!OpenClipboard(g_wnd))
+    {
+        GlobalFree(g);
+        return -1;
+    }
+    EmptyClipboard();
+    if (!SetClipboardData(CF_UNICODETEXT, g))
+        GlobalFree(g);
+    clip_flag(RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing"));
+    clip_flag(RegisterClipboardFormatW(L"CanIncludeInClipboardHistory"));
+    clip_flag(RegisterClipboardFormatW(L"CanUploadToCloudClipboard"));
+    CloseClipboard();
+    return 0;
+}
+
+static void db_copy_password(void)
+{
+    wchar_t cnf[MAX_PATH];
+    char *t, *s;
+    size_t n;
+    swprintf(cnf, MAX_PATH, L"%s\\data\\client.cnf", g_root);
+    if ((t = read_all(cnf)) == NULL)
+    {
+        notify(L"OpenLiteSpeed", L"The database password file was not found.");
+        return;
+    }
+    n = strlen(t);
+    if ((s = strstr(t, "\npassword=")) != NULL)
+    {
+        s += 10;
+        s[strcspn(s, "\r\n")] = 0;
+        if (copy_secret(s) == 0)
+            notify(L"OpenLiteSpeed", L"The root password is on the clipboard. It is not kept in the clipboard history.");
+    }
+    SecureZeroMemory(t, n);
+    free(t);
+}
+
+static DWORD WINAPI db_thread(LPVOID arg)
+{
+    char *out = NULL;
+    DWORD code;
+    (void)arg;
+    code = run_capture(L"--db install", &out);
+    if (!PostMessageW(g_wnd, WM_DBDONE, code, (LPARAM)out))
+        free(out);
+    return 0;
+}
+
+static void db_install(void)
+{
+    HANDLE t;
+    if (g_dbbusy
+        || MessageBoxW(g_wnd,
+                       L"Download MariaDB 11.8.9 (97 MB) and phpMyAdmin 5.2.3 (16 MB) and run them on this computer?\n\n"
+                       L"MariaDB listens on 127.0.0.1 only and phpMyAdmin opens only from this computer.",
+                       L"Database", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+    InterlockedExchange(&g_dbbusy, 1);
+    notify(L"OpenLiteSpeed", L"Downloading MariaDB and phpMyAdmin...");
+    t = CreateThread(NULL, 0, db_thread, NULL, 0, NULL);
+    if (t)
+        CloseHandle(t);
+    else
+        InterlockedExchange(&g_dbbusy, 0);
+}
+
+static void open_pma(void)
+{
+    wchar_t tld[32], host[64], url[256];
+    GetPrivateProfileStringW(L"sites", L"tld", L"test", tld, 32, g_ini);
+    swprintf(host, 64, L"phpmyadmin.%s", tld);
+    site_url(url, 256, host);
+    open_url(url);
+}
+
+static void db_done(DWORD code, char *out)
+{
+    wchar_t *text;
+    DWORD r;
+    InterlockedExchange(&g_dbbusy, 0);
+    if (code != 0)
+    {
+        text = report_text(out ? out : "", L"");
+        MessageBoxW(g_wnd, text && text[0] ? text : L"The database could not be installed.", L"Database",
+                    MB_OK | MB_ICONWARNING);
+        free(text);
+        free(out);
+        return;
+    }
+    free(out);
+    r = run_tool(L"--dev-hosts", 1);
+    if (r == 5)
+        r = run_elevated(L"--dev-hosts");
+    if (g_running > 0)
+        run_tool(L"-s reload", 1);
+    load_sites();
+    notify(L"OpenLiteSpeed", L"MariaDB is running. Sign in to phpMyAdmin as root; Database > Copy root password.");
+    if (r == 0 && g_running > 0)
+        open_pma();
+}
+
 static int site_label_ok(const wchar_t *s)
 {
     size_t n = wcslen(s), i;
@@ -971,7 +1147,8 @@ static void newsite_done(newsite_t *ns)
 
 static void show_menu(void)
 {
-    HMENU m = CreatePopupMenu(), php = CreatePopupMenu(), sites = CreatePopupMenu(), logs = CreatePopupMenu();
+    HMENU m = CreatePopupMenu(), php = CreatePopupMenu(), sites = CreatePopupMenu(), logs = CreatePopupMenu(),
+          db = CreatePopupMenu();
     wchar_t cur[MAX_PATH], label[MAX_PATH + 32];
     POINT pt;
     int i, cmd;
@@ -1016,6 +1193,24 @@ static void show_menu(void)
     if (!phpd_count)
         AppendMenuW(php, MF_STRING | MF_GRAYED, 0, L"No PHP found");
     AppendMenuW(m, MF_POPUP, (UINT_PTR)php, L"PHP");
+    if (db_installed())
+    {
+        int run = db_running();
+        if (run)
+            swprintf(label, MAX_PATH + 32, L"MariaDB is running on port %d", db_port());
+        else
+            wcscpy(label, L"MariaDB is stopped");
+        AppendMenuW(db, MF_STRING | MF_GRAYED, 0, label);
+        AppendMenuW(db, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(db, MF_STRING | (run ? MF_GRAYED : 0), ID_DB_START, L"Start");
+        AppendMenuW(db, MF_STRING | (run ? 0 : MF_GRAYED), ID_DB_STOP, L"Stop");
+        AppendMenuW(db, MF_STRING, ID_DB_PMA, L"Open phpMyAdmin");
+        AppendMenuW(db, MF_STRING, ID_DB_COPY, L"Copy root password");
+    }
+    else
+        AppendMenuW(db, MF_STRING | (g_dbbusy ? MF_GRAYED : 0), ID_DB_INSTALL,
+                    g_dbbusy ? L"Installing..." : L"Install MariaDB and phpMyAdmin...");
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)db, L"Database");
     AppendMenuW(logs, MF_STRING, ID_ERRLOG, L"Error log");
     AppendMenuW(logs, MF_STRING, ID_ACCLOG, L"Access log");
     AppendMenuW(m, MF_POPUP, (UINT_PTR)logs, L"Logs");
@@ -1078,6 +1273,18 @@ static void on_command(int id)
         new_site();
     else if (id == ID_HTTPS)
         toggle_https();
+    else if (id == ID_DB_INSTALL)
+        db_install();
+    else if (id == ID_DB_START || id == ID_DB_STOP)
+    {
+        if (run_tool(id == ID_DB_START ? L"--db start" : L"--db stop", 1) != 0)
+            notify(L"OpenLiteSpeed", id == ID_DB_START ? L"MariaDB did not start. See logs\\mariadb.err."
+                                                       : L"MariaDB did not stop.");
+    }
+    else if (id == ID_DB_PMA)
+        open_pma();
+    else if (id == ID_DB_COPY)
+        db_copy_password();
     else if (id == ID_REFRESH)
         refresh_sites(0);
     else if (id == ID_WWW)
@@ -1136,6 +1343,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_NEWSITE:
         newsite_done((newsite_t *)lp);
+        return 0;
+    case WM_DBDONE:
+        db_done((DWORD)wp, (char *)lp);
         return 0;
     case WM_TIMER:
         if (wp == TIMER_UPDATE)
@@ -1198,6 +1408,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show)
     update_status();
     if (((cmdline && wcsstr(cmdline, L"--start")) || GetPrivateProfileIntW(L"tray", L"autostart", 1, g_ini)) && !g_running)
         on_command(ID_START);
+    if (db_installed() && !db_running())
+        run_tool(L"--db start", 0);
     SetTimer(g_wnd, TIMER_STATUS, 2000, NULL);
     schedule_update();
     while (GetMessageW(&msg, NULL, 0, 0) > 0)

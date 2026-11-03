@@ -95,6 +95,8 @@ int main(int argc, char *argv[])
     }
     if (argc >= 2 && strcmp(argv[1], "--dev-https") == 0)
         return ols_dev_https(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--db") == 0)
+        return ols_db_main(argc - 2, argv + 2);
     if (argc >= 3 && strcmp(argv[1], "--set-php") == 0)
         return ols_set_php(argv[2]);
     if (argc >= 3 && strcmp(argv[1], "--lscgid") == 0)

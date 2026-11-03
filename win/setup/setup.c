@@ -760,7 +760,7 @@ static DWORD run_tool(const wchar_t *dir, const wchar_t *args)
     return run_capture(cmd, dir);
 }
 
-static void delete_tree(const wchar_t *dir, const wchar_t *keep);
+static void delete_tree(const wchar_t *dir, const wchar_t *keep, const wchar_t *keep2);
 
 static DWORD WINAPI install_thread(void *arg)
 {
@@ -779,7 +779,7 @@ static DWORD WINAPI install_thread(void *arg)
         stop_tray(g_dir);
         run_tool(g_dir, L"-s stop");
         swprintf(path, MAX_PATH, L"%s\\modsec\\crs", g_dir);
-        delete_tree(path, NULL);
+        delete_tree(path, NULL, NULL);
         RemoveDirectoryW(path);
     }
     log_line(L"Copying files...");
@@ -1206,7 +1206,7 @@ static void remove_lsphp(const wchar_t *dir)
         DeleteFileW(target);
 }
 
-static void delete_tree(const wchar_t *dir, const wchar_t *keep)
+static void delete_tree(const wchar_t *dir, const wchar_t *keep, const wchar_t *keep2)
 {
     wchar_t pat[MAX_PATH], p[MAX_PATH];
     WIN32_FIND_DATAW fd;
@@ -1220,13 +1220,13 @@ static void delete_tree(const wchar_t *dir, const wchar_t *keep)
         if (fd.cFileName[0] == L'.' && (fd.cFileName[1] == 0 || (fd.cFileName[1] == L'.' && fd.cFileName[2] == 0)))
             continue;
         swprintf(p, MAX_PATH, L"%s\\%s", dir, fd.cFileName);
-        if (keep && _wcsicmp(p, keep) == 0)
+        if ((keep && _wcsicmp(p, keep) == 0) || (keep2 && _wcsicmp(p, keep2) == 0))
             continue;
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
             RemoveDirectoryW(p) || DeleteFileW(p);
         else if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         {
-            delete_tree(p, keep);
+            delete_tree(p, keep, keep2);
             RemoveDirectoryW(p);
         }
         else
@@ -1241,7 +1241,7 @@ static void delete_tree(const wchar_t *dir, const wchar_t *keep)
 
 static int uninstall(const wchar_t *dir)
 {
-    wchar_t sm[MAX_PATH], p[MAX_PATH];
+    wchar_t sm[MAX_PATH], p[MAX_PATH], data[MAX_PATH];
     HKEY k;
     swprintf(p, MAX_PATH, L"%s\\bin\\openlitespeed.exe", dir);
     if (!exists(p))
@@ -1251,11 +1251,12 @@ static int uninstall(const wchar_t *dir)
         return 1;
     }
     if (!g_silent
-        && MessageBoxW(NULL, L"Remove OpenLiteSpeed from this computer?\n\nYour projects folder is not touched.",
+        && MessageBoxW(NULL, L"Remove OpenLiteSpeed from this computer?\n\nYour projects folder and databases are not touched.",
                        PRODUCT, MB_YESNO | MB_ICONQUESTION) != IDYES)
         return 1;
     stop_tray(dir);
     run_tool(dir, L"-s stop");
+    run_tool(dir, L"--db stop");
     run_tool(dir, L"--uninstall-service");
     run_tool(dir, g_silent ? L"--dev-https off --no-sites --keep-store" : L"--dev-https off --no-sites");
     run_tool(dir, L"--dev-hosts-clear");
@@ -1270,12 +1271,13 @@ static int uninstall(const wchar_t *dir)
     start_menu_dir(sm);
     if (sm[0])
     {
-        delete_tree(sm, NULL);
+        delete_tree(sm, NULL, NULL);
         RemoveDirectoryW(sm);
     }
     RegDeleteKeyW(HKEY_LOCAL_MACHINE, UNINSTALL_KEY);
     swprintf(p, MAX_PATH, L"%s\\www", dir);
-    delete_tree(dir, exists(p) ? p : NULL);
+    swprintf(data, MAX_PATH, L"%s\\data", dir);
+    delete_tree(dir, exists(p) ? p : NULL, exists(data) ? data : NULL);
     if (!RemoveDirectoryW(dir))
     {
         wchar_t self[MAX_PATH];

@@ -78,7 +78,7 @@ static void sb_add(char **b, size_t *len, size_t *cap, const char *s)
     *len += n;
 }
 
-static int read_wfile(const wchar_t *path, char **out, size_t *len)
+int ols_read_wfile(const wchar_t *path, char **out, size_t *len)
 {
     HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     DWORD size, got = 0;
@@ -101,7 +101,7 @@ static int read_wfile(const wchar_t *path, char **out, size_t *len)
     return 0;
 }
 
-static int write_wfile(const wchar_t *path, const void *data, size_t len, int priv)
+int ols_write_wfile(const wchar_t *path, const void *data, size_t len, int priv)
 {
     SECURITY_ATTRIBUTES sa;
     PSECURITY_DESCRIPTOR sd = NULL;
@@ -135,7 +135,7 @@ static int write_wfile(const wchar_t *path, const void *data, size_t len, int pr
     return rc;
 }
 
-static int private_dir(const wchar_t *dir)
+int ols_private_dir(const wchar_t *dir)
 {
     SECURITY_ATTRIBUTES sa;
     PSECURITY_DESCRIPTOR sd = ols_private_sd(1);
@@ -311,8 +311,8 @@ static int save_pair(const wchar_t *crt, const wchar_t *key, X509 *x, EVP_PKEY *
     char *c = NULL, *p = NULL;
     size_t cl = 0, pl = 0;
     int rc = -1;
-    if (pem_cert(x, &c, &cl) == 0 && pem_key(k, &p, &pl) == 0 && write_wfile(key, p, pl, 1) == 0
-        && write_wfile(crt, c, cl, 0) == 0)
+    if (pem_cert(x, &c, &cl) == 0 && pem_key(k, &p, &pl) == 0 && ols_write_wfile(key, p, pl, 1) == 0
+        && ols_write_wfile(crt, c, cl, 0) == 0)
         rc = 0;
     if (p)
     {
@@ -333,7 +333,7 @@ static int ca_load(const wchar_t *root, devca_t *ca)
     ca->key = NULL;
     ca->cert = NULL;
     ca_paths(root, dir, crt, key);
-    if (read_wfile(crt, &a, &al) != 0 || read_wfile(key, &b, &bl) != 0)
+    if (ols_read_wfile(crt, &a, &al) != 0 || ols_read_wfile(key, &b, &bl) != 0)
         goto done;
     if ((bio = BIO_new_mem_buf(a, (ossl_ssize_t)al)) != NULL)
     {
@@ -438,7 +438,7 @@ int ols_devca_issue(const wchar_t *root, const char *tld, char **names, int coun
     return rc;
 }
 
-static int listening(int port)
+int ols_port_listening(int port)
 {
     DWORD size = 0, i;
     int found = 0;
@@ -468,7 +468,7 @@ static int http_port(const wchar_t *root)
     size_t len;
     int port = 80;
     swprintf(conf, MAX_PATH, L"%s\\conf\\httpd_config.conf", root);
-    if (read_wfile(conf, &t, &len) != 0)
+    if (ols_read_wfile(conf, &t, &len) != 0)
         return 80;
     if ((p = strstr(t, "listener Default")) != NULL && (p = strstr(p, "address")) != NULL)
     {
@@ -482,7 +482,7 @@ static int http_port(const wchar_t *root)
     return port > 0 && port < 65536 ? port : 80;
 }
 
-static int resync(const wchar_t *root, const wchar_t *ini)
+int ols_dev_resync(const wchar_t *root, const wchar_t *ini)
 {
     wchar_t www[MAX_PATH], def[MAX_PATH], tld[32];
     char wmb[MAX_PATH * 3], tmb[32];
@@ -519,7 +519,7 @@ static int https_on(const wchar_t *root, const wchar_t *ini, const char *portarg
             fprintf(stderr, "invalid HTTPS port\n");
             return 2;
         }
-        if (cur != port && listening(port))
+        if (cur != port && ols_port_listening(port))
         {
             fprintf(stderr, "port %d is already in use\n", port);
             return 2;
@@ -531,7 +531,7 @@ static int https_on(const wchar_t *root, const wchar_t *ini, const char *portarg
         int i;
         port = 0;
         for (i = 0; tries[i] && !port; ++i)
-            if (tries[i] != http && (tries[i] != 443 || http == 80) && (tries[i] == cur || !listening(tries[i])))
+            if (tries[i] != http && (tries[i] != 443 || http == 80) && (tries[i] == cur || !ols_port_listening(tries[i])))
                 port = tries[i];
         if (!port)
         {
@@ -542,7 +542,7 @@ static int https_on(const wchar_t *root, const wchar_t *ini, const char *portarg
     swprintf(cdir, MAX_PATH, L"%s\\conf\\cert", root);
     CreateDirectoryW(cdir, NULL);
     ca_paths(root, dir, crt, key);
-    if (private_dir(dir) != 0)
+    if (ols_private_dir(dir) != 0)
     {
         DWORD e = GetLastError();
         fprintf(stderr, "cannot prepare a private folder for the local CA: %ls\n", dir);
@@ -584,7 +584,7 @@ static int https_on(const wchar_t *root, const wchar_t *ini, const char *portarg
     swprintf(val, 16, L"%d", port);
     if (!WritePrivateProfileStringW(L"sites", L"https", val, ini))
         return GetLastError() == ERROR_ACCESS_DENIED ? 5 : 1;
-    if (resync(root, ini) != 0)
+    if (ols_dev_resync(root, ini) != 0)
         return 1;
     printf("trusted HTTPS is on, port %d\n", port);
     return 0;
@@ -598,13 +598,13 @@ static int https_off(const wchar_t *root, const wchar_t *ini, int sites, int sto
     int removed = 1;
     WritePrivateProfileStringW(L"sites", L"https", NULL, ini);
     if (sites)
-        resync(root, ini);
+        ols_dev_resync(root, ini);
     leaf_paths(root, lc, lk);
     DeleteFileW(lk);
     DeleteFileW(lc);
     ca_paths(root, dir, crt, key);
     DeleteFileW(key);
-    if (store && read_wfile(crt, &a, &al) == 0)
+    if (store && ols_read_wfile(crt, &a, &al) == 0)
     {
         BIO *bio = BIO_new_mem_buf(a, (ossl_ssize_t)al);
         X509 *x = bio ? PEM_read_bio_X509(bio, NULL, NULL, NULL) : NULL;
