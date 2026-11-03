@@ -63,6 +63,13 @@
 #define ID_DB_STOP 121
 #define ID_DB_PMA 122
 #define ID_DB_COPY 123
+#define ID_NEWPROXY 124
+#define ID_PROXY_BASE 3000
+#define MAX_PROXIES 64
+#define IDD_NEWPROXY 102
+#define IDC_PX_NAME 1011
+#define IDC_PX_PORT 1012
+#define IDC_PX_PREVIEW 1013
 #define IDD_NEWSITE 101
 #define IDC_NS_NAME 1001
 #define IDC_NS_PREVIEW 1002
@@ -84,6 +91,14 @@ static volatile LONG g_checking;
 static volatile LONG g_creating;
 static volatile LONG g_dbbusy;
 static volatile LONG g_updating;
+static wchar_t g_proxies[MAX_PROXIES][64];
+static int g_nproxies;
+
+typedef struct
+{
+    wchar_t name[64];
+    int port;
+} proxy_t;
 
 typedef struct
 {
@@ -1252,6 +1267,164 @@ static INT_PTR CALLBACK newsite_proc(HWND d, UINT msg, WPARAM wp, LPARAM lp)
     return FALSE;
 }
 
+static void load_proxies(void)
+{
+    wchar_t sect[8192], *e, *eq;
+    g_nproxies = 0;
+    if (GetPrivateProfileSectionW(L"proxy", sect, 8192, g_ini) > 0)
+        for (e = sect; *e && g_nproxies < MAX_PROXIES; e += wcslen(e) + 1)
+            if ((eq = wcschr(e, L'=')) != NULL && eq > e && eq - e < 64)
+            {
+                wcsncpy(g_proxies[g_nproxies], e, (size_t)(eq - e));
+                g_proxies[g_nproxies++][eq - e] = 0;
+            }
+}
+
+static int proxy_input(HWND d, proxy_t *out, wchar_t *prev, size_t plen)
+{
+    wchar_t name[64], port[8], tld[32], www[MAX_PATH], path[MAX_PATH], host[128], url[200];
+    int p, i;
+    GetDlgItemTextW(d, IDC_PX_NAME, name, 64);
+    GetDlgItemTextW(d, IDC_PX_PORT, port, 8);
+    p = _wtoi(port);
+    prev[0] = 0;
+    if (!name[0])
+        return 0;
+    if (!site_label_ok(name) || wcscmp(name, L"phpmyadmin") == 0)
+    {
+        wcsncpy(prev, L"Use lowercase letters, digits and '-'", plen);
+        return 0;
+    }
+    www_dir(www, MAX_PATH);
+    swprintf(path, MAX_PATH, L"%s\\%s", www, name);
+    load_proxies();
+    for (i = 0; i < g_nproxies; ++i)
+        if (wcscmp(g_proxies[i], name) == 0)
+            path[0] = 0;
+    if (!path[0] || GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
+    {
+        wcsncpy(prev, L"A site with this name already exists", plen);
+        return 0;
+    }
+    if (p <= 0 || p > 65535)
+        return 0;
+    if (p == http_port() || p == https_port())
+    {
+        wcsncpy(prev, L"That port is OpenLiteSpeed itself", plen);
+        return 0;
+    }
+    GetPrivateProfileStringW(L"sites", L"tld", L"test", tld, 32, g_ini);
+    swprintf(host, 128, L"%s.%s", name, tld);
+    site_url(url, 200, host);
+    swprintf(prev, plen, L"%s  ->  127.0.0.1:%d", url, p);
+    if (out)
+    {
+        wcscpy(out->name, name);
+        out->port = p;
+    }
+    return 1;
+}
+
+static INT_PTR CALLBACK proxy_proc(HWND d, UINT msg, WPARAM wp, LPARAM lp)
+{
+    proxy_t *px = (proxy_t *)GetWindowLongPtrW(d, DWLP_USER);
+    wchar_t prev[256];
+    if (msg == WM_INITDIALOG)
+    {
+        SetWindowLongPtrW(d, DWLP_USER, lp);
+        SendDlgItemMessageW(d, IDC_PX_NAME, EM_LIMITTEXT, 63, 0);
+        SendDlgItemMessageW(d, IDC_PX_PORT, EM_LIMITTEXT, 5, 0);
+        EnableWindow(GetDlgItem(d, IDOK), FALSE);
+        SetForegroundWindow(d);
+        return TRUE;
+    }
+    if (msg != WM_COMMAND)
+        return FALSE;
+    if ((LOWORD(wp) == IDC_PX_NAME || LOWORD(wp) == IDC_PX_PORT) && HIWORD(wp) == EN_CHANGE)
+    {
+        int ok = proxy_input(d, NULL, prev, 256);
+        SetDlgItemTextW(d, IDC_PX_PREVIEW, prev);
+        EnableWindow(GetDlgItem(d, IDOK), ok);
+        return TRUE;
+    }
+    if (LOWORD(wp) == IDOK && px)
+    {
+        if (proxy_input(d, px, prev, 256))
+            EndDialog(d, IDOK);
+        return TRUE;
+    }
+    if (LOWORD(wp) == IDCANCEL)
+    {
+        EndDialog(d, IDCANCEL);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void proxy_done(const wchar_t *name, int port, DWORD code, char *out)
+{
+    wchar_t tld[32], host[128], url[256], msg[256], *text;
+    DWORD r;
+    if (code != 0)
+    {
+        text = report_text(out ? out : "", L"");
+        MessageBoxW(g_wnd, text && text[0] ? text : L"The proxy site could not be changed.", L"Proxy site",
+                    MB_OK | MB_ICONWARNING);
+        free(text);
+        free(out);
+        return;
+    }
+    free(out);
+    r = run_tool(L"--dev-hosts", 1);
+    if (r == 5)
+        r = run_elevated(L"--dev-hosts");
+    if (g_running > 0)
+        run_tool(L"-s reload", 1);
+    load_sites();
+    GetPrivateProfileStringW(L"sites", L"tld", L"test", tld, 32, g_ini);
+    swprintf(host, 128, L"%s.%s", name, tld);
+    site_url(url, 256, host);
+    if (!port)
+        swprintf(msg, 256, L"%s was removed.", host);
+    else if (r != 0)
+        swprintf(msg, 256, L"%s was created, but the hosts file was not updated.", host);
+    else
+        swprintf(msg, 256, L"%s now shows the app on port %d.", host, port);
+    notify(L"OpenLiteSpeed", msg);
+    if (port && r == 0 && g_running > 0)
+        open_url(url);
+}
+
+static void new_proxy(void)
+{
+    proxy_t px;
+    wchar_t args[128];
+    char *out = NULL;
+    DWORD code;
+    memset(&px, 0, sizeof(px));
+    if (DialogBoxParamW(g_inst, MAKEINTRESOURCEW(IDD_NEWPROXY), g_wnd, proxy_proc, (LPARAM)&px) != IDOK)
+        return;
+    swprintf(args, 128, L"--proxy add %s %d", px.name, px.port);
+    code = run_capture(args, &out);
+    proxy_done(px.name, px.port, code, out);
+}
+
+static void remove_proxy(int i)
+{
+    wchar_t msg[160], args[128], name[64];
+    char *out = NULL;
+    DWORD code;
+    if (i < 0 || i >= g_nproxies)
+        return;
+    wcscpy(name, g_proxies[i]);
+    swprintf(msg, 160, L"Remove the proxy site %s? The app itself is not touched.", name);
+    if (MessageBoxW(g_wnd, msg, L"Proxy site", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+    swprintf(args, 128, L"--proxy remove %s", name);
+    code = run_capture(args, &out);
+    proxy_done(name, 0, code, out);
+}
+
 static DWORD WINAPI newsite_thread(LPVOID arg)
 {
     newsite_t *ns = (newsite_t *)arg;
@@ -1353,6 +1526,15 @@ static void show_menu(void)
     AppendMenuW(m, MF_STRING, ID_SITE, L"Open website");
     AppendMenuW(m, MF_STRING, ID_ADMIN, L"Open WebAdmin");
     AppendMenuW(sites, MF_STRING | (g_creating ? MF_GRAYED : 0), ID_NEWSITE, L"New site...");
+    AppendMenuW(sites, MF_STRING, ID_NEWPROXY, L"New proxy site...");
+    load_proxies();
+    if (g_nproxies)
+    {
+        HMENU px = CreatePopupMenu();
+        for (i = 0; i < g_nproxies; ++i)
+            AppendMenuW(px, MF_STRING, ID_PROXY_BASE + i, g_proxies[i]);
+        AppendMenuW(sites, MF_POPUP, (UINT_PTR)px, L"Remove proxy site");
+    }
     AppendMenuW(sites, MF_SEPARATOR, 0, NULL);
     for (i = 0; i < g_nsites; ++i)
         AppendMenuW(sites, MF_STRING, ID_SITE_BASE + i, g_sites[i]);
@@ -1454,6 +1636,10 @@ static void on_command(int id)
     }
     else if (id == ID_NEWSITE)
         new_site();
+    else if (id == ID_NEWPROXY)
+        new_proxy();
+    else if (id >= ID_PROXY_BASE && id < ID_PROXY_BASE + g_nproxies)
+        remove_proxy(id - ID_PROXY_BASE);
     else if (id == ID_HTTPS)
         toggle_https();
     else if (id == ID_DB_INSTALL)

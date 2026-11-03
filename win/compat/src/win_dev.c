@@ -35,6 +35,39 @@ static const char s_template[] =
     "  }\r\n"
     "}\r\n";
 
+#define MAX_PROXIES 64
+
+static const char s_proxy[] =
+    "allowSymbolLink          1\r\n"
+    "enableScript             0\r\n"
+    "restrained               1\r\n"
+    "setUIDMode               0\r\n"
+    "vhRoot                   $SERVER_ROOT/tmp/proxy/$VH_NAME/\r\n"
+    "\r\n"
+    "virtualHostConfig {\r\n"
+    "  docRoot                $VH_ROOT/\r\n"
+    "\r\n"
+    "  extprocessor devproxy-%s {\r\n"
+    "    type                 proxy\r\n"
+    "    address              127.0.0.1:%d\r\n"
+    "    maxConns             100\r\n"
+    "    pcKeepAliveTimeout   60\r\n"
+    "    initTimeout          60\r\n"
+    "    retryTimeout         0\r\n"
+    "    respBuffer           0\r\n"
+    "  }\r\n"
+    "\r\n"
+    "  context / {\r\n"
+    "    type                 proxy\r\n"
+    "    handler              devproxy-%s\r\n"
+    "    addDefaultCharset    off\r\n"
+    "  }\r\n"
+    "\r\n"
+    "  websocket / {\r\n"
+    "    address              127.0.0.1:%d\r\n"
+    "  }\r\n"
+    "}\r\n";
+
 static const char s_tools[] =
     "allowSymbolLink          1\r\n"
     "enableScript             1\r\n"
@@ -379,7 +412,8 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
     size_t len, blen = 0, bcap = 0, mlen = 0, mcap = 0;
     WIN32_FIND_DATAW fd;
     HANDLE f;
-    int count = 0, nnames = 0, ncap = 0, https, ssl = 0, tools, i;
+    int count = 0, nnames = 0, ncap = 0, https, ssl = 0, tools, i, np = 0, pports[MAX_PROXIES];
+    char pnames[MAX_PROXIES][64];
     char *q;
     if (!tld || !*tld)
         tld = "test";
@@ -491,6 +525,52 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
         }
     }
     swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    {
+        wchar_t sect[8192], *e;
+        char pn[64], body[2048];
+        int pp, j, clash;
+        if (GetPrivateProfileSectionW(L"proxy", sect, 8192, ini) > 0)
+            for (e = sect; *e && np < MAX_PROXIES; e += wcslen(e) + 1)
+            {
+                wchar_t *eq = wcschr(e, L'=');
+                if (!eq || eq - e >= 64)
+                    continue;
+                *eq = 0;
+                pp = _wtoi(eq + 1);
+                if (WideCharToMultiByte(CP_UTF8, 0, e, -1, pn, sizeof(pn), NULL, NULL) <= 0 || !valid_label(pn)
+                    || pp <= 0 || pp > 65535 || strcmp(pn, "localhost") == 0 || strcmp(pn, "phpmyadmin") == 0)
+                    continue;
+                for (j = 0, clash = 0; j < nnames && !clash; ++j)
+                    clash = strcmp(names[j], pn) == 0;
+                if (clash)
+                {
+                    printf("skipped proxy %s: a folder or tool has that name\n", pn);
+                    continue;
+                }
+                swprintf(tpl, MAX_PATH, L"%s\\tmp\\proxy", root);
+                CreateDirectoryW(tpl, NULL);
+                swprintf(tpl, MAX_PATH, L"%s\\tmp\\proxy\\%s", root, e);
+                CreateDirectoryW(tpl, NULL);
+                snprintf(body, sizeof(body), s_proxy, pn, pp, pn, pp);
+                swprintf(tpl, MAX_PATH, L"%s\\conf\\templates\\proxy-%s.conf", root, e);
+                if (write_file(tpl, body, strlen(body)) != 0)
+                    continue;
+                strcpy(pnames[np], pn);
+                pports[np++] = pp;
+                if (nnames == ncap)
+                {
+                    char **grown = (char **)realloc(names, (size_t)(ncap ? ncap * 2 : 32) * sizeof(char *));
+                    if (grown)
+                    {
+                        names = grown;
+                        ncap = ncap ? ncap * 2 : 32;
+                    }
+                }
+                if (nnames < ncap && (names[nnames] = _strdup(pn)) != NULL)
+                    ++nnames;
+                printf("http://%s.%s/  ->  127.0.0.1:%d\n", pn, tld, pp);
+            }
+    }
     https = GetPrivateProfileIntW(L"sites", L"https", 0, ini);
     if (https > 0 && https < 65536)
     {
@@ -537,6 +617,15 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
                  "    listeners                Default%s\r\n    member phpmyadmin {\r\n"
                  "        vhDomain             phpmyadmin.%s\r\n    }\r\n}\r\n",
                  ssl ? ", DevSSL" : "", tld);
+        buf_str(&block, &blen, &bcap, line);
+    }
+    for (i = 0; i < np; ++i)
+    {
+        snprintf(line, sizeof(line),
+                 "vhTemplate devproxy-%s {\r\n    templateFile             conf/templates/proxy-%s.conf\r\n"
+                 "    listeners                Default%s\r\n    member %s {\r\n"
+                 "        vhDomain             %s.%s\r\n        vhAliases            www.%s.%s\r\n    }\r\n}\r\n",
+                 pnames[i], pnames[i], ssl ? ", DevSSL" : "", pnames[i], pnames[i], tld, pnames[i], tld);
         buf_str(&block, &blen, &bcap, line);
     }
     buf_str(&block, &blen, &bcap, DEV_END "\r\n");
@@ -725,6 +814,109 @@ int ols_new_site(const char *name, const char *tld, const char *flavor)
     {
         ols_dev_hosts(0);
         printf("site %s.%s created at %ls\n", name, tld, dir);
+    }
+    return rc;
+}
+
+static int default_port(const wchar_t *root)
+{
+    wchar_t conf[MAX_PATH];
+    char *text = NULL, *p, *q, *c = NULL;
+    size_t len;
+    int port = 80;
+    swprintf(conf, MAX_PATH, L"%s\\conf\\httpd_config.conf", root);
+    if (read_file(conf, &text, &len) != 0 || !text)
+        return 80;
+    if ((p = strstr(text, "listener Default")) != NULL && (p = strstr(p, "address")) != NULL)
+    {
+        for (q = p; *q && *q != '\r' && *q != '\n'; ++q)
+            if (*q == ':')
+                c = q;
+        if (c)
+            port = atoi(c + 1);
+    }
+    free(text);
+    return port;
+}
+
+int ols_proxy_main(int argc, char **argv)
+{
+    wchar_t root[MAX_PATH], ini[MAX_PATH], wname[64], wport[16], def[MAX_PATH], www[MAX_PATH], dir[MAX_PATH];
+    const char *act = argc >= 1 ? argv[0] : "list";
+    int port = 0, rc;
+    if (root_dir(root, MAX_PATH) < 0)
+    {
+        fprintf(stderr, "OLS_ROOT is not set\n");
+        return 2;
+    }
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    if (strcmp(act, "list") == 0)
+    {
+        wchar_t sect[8192], *e;
+        if (GetPrivateProfileSectionW(L"proxy", sect, 8192, ini) > 0)
+            for (e = sect; *e; e += wcslen(e) + 1)
+                printf("%ls\n", e);
+        return 0;
+    }
+    if ((strcmp(act, "add") != 0 && strcmp(act, "remove") != 0) || argc < 2)
+    {
+        fprintf(stderr, "usage: openlitespeed --proxy add <name> <port> | remove <name> | list\n");
+        return 2;
+    }
+    if (!valid_label(argv[1]) || strcmp(argv[1], "localhost") == 0 || strcmp(argv[1], "phpmyadmin") == 0
+        || MultiByteToWideChar(CP_UTF8, 0, argv[1], -1, wname, 64) <= 0)
+    {
+        fprintf(stderr, "invalid site name (use lowercase letters, digits and '-')\n");
+        return 2;
+    }
+    if (strcmp(act, "add") == 0)
+    {
+        if (argc < 3 || (port = atoi(argv[2])) <= 0 || port > 65535)
+        {
+            fprintf(stderr, "invalid port\n");
+            return 2;
+        }
+        if (port == default_port(root) || port == GetPrivateProfileIntW(L"sites", L"https", 0, ini))
+        {
+            fprintf(stderr, "port %d is OpenLiteSpeed itself; use the port your app listens on\n", port);
+            return 2;
+        }
+        swprintf(def, MAX_PATH, L"%s\\www", root);
+        GetPrivateProfileStringW(L"sites", L"www", def, www, MAX_PATH, ini);
+        swprintf(dir, MAX_PATH, L"%s\\%s", www, wname);
+        if (dir_exists(dir))
+        {
+            fprintf(stderr, "the projects folder already has a site named %s\n", argv[1]);
+            return 1;
+        }
+        if (GetPrivateProfileIntW(L"proxy", wname, 0, ini) > 0)
+        {
+            fprintf(stderr, "a proxy site named %s already exists\n", argv[1]);
+            return 1;
+        }
+        swprintf(wport, 16, L"%d", port);
+        if (!WritePrivateProfileStringW(L"proxy", wname, wport, ini))
+            return GetLastError() == ERROR_ACCESS_DENIED ? 5 : 1;
+    }
+    else
+    {
+        if (GetPrivateProfileIntW(L"proxy", wname, 0, ini) <= 0)
+        {
+            fprintf(stderr, "no proxy site named %s\n", argv[1]);
+            return 1;
+        }
+        WritePrivateProfileStringW(L"proxy", wname, NULL, ini);
+        swprintf(dir, MAX_PATH, L"%s\\conf\\templates\\proxy-%s.conf", root, wname);
+        DeleteFileW(dir);
+    }
+    rc = ols_dev_resync(root, ini);
+    if (rc == 0)
+    {
+        ols_dev_hosts(0);
+        if (port)
+            printf("proxy site %s created for 127.0.0.1:%d\n", argv[1], port);
+        else
+            printf("proxy site %s removed\n", argv[1]);
     }
     return rc;
 }

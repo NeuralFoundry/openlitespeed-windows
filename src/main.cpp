@@ -97,6 +97,8 @@ int main(int argc, char *argv[])
         return ols_dev_https(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--db") == 0)
         return ols_db_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--proxy") == 0)
+        return ols_proxy_main(argc - 2, argv + 2);
     if (argc >= 2
         && (strcmp(argv[1], "--update") == 0 || strcmp(argv[1], "--release-key") == 0
             || strcmp(argv[1], "--sign-release") == 0))

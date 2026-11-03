@@ -14,3 +14,17 @@ BEGIN
     DEFPUSHBUTTON   "Create", IDOK, 122, 78, 50, 14
     PUSHBUTTON      "Cancel", IDCANCEL, 176, 78, 50, 14
 END
+
+102 DIALOGEX 0, 0, 236, 116
+STYLE DS_MODALFRAME | DS_CENTER | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "New proxy site"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    LTEXT           "Site name", -1, 10, 10, 216, 9
+    EDITTEXT        1011, 10, 21, 216, 14, ES_AUTOHSCROLL | ES_LOWERCASE
+    LTEXT           "Port of the app on this computer", -1, 10, 41, 216, 9
+    EDITTEXT        1012, 10, 52, 60, 14, ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "", 1013, 10, 72, 216, 9
+    DEFPUSHBUTTON   "Create", IDOK, 122, 94, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 176, 94, 50, 14
+END
