@@ -1042,6 +1042,7 @@ int ols_db_main(int argc, char **argv);
 int ols_update_main(int argc, char **argv);
 int ols_proxy_main(int argc, char **argv);
 int ols_tunnel_main(int argc, char **argv);
+int ols_status_main(int argc, char **argv);
 int ols_devca_issue(const wchar_t *root, const char *tld, char **names, int count);
 int ols_dev_hosts(int clear);
 int ols_set_php(const char *dir);

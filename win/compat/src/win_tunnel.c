@@ -648,3 +648,37 @@ int ols_tunnel_main(int argc, char **argv)
                     "token [clear] | run | run-stop\n");
     return 2;
 }
+
+int ols_tunnel_query(const char *site, char *url, size_t n)
+{
+    tun_t t;
+    wchar_t w[64], urlf[MAX_PATH];
+    char *s = NULL;
+    size_t len;
+    url[0] = 0;
+    if (tun_paths(&t) != 0 || MultiByteToWideChar(CP_UTF8, 0, site, -1, w, 64) <= 0 || !running_pid(&t, w))
+        return 0;
+    state_path(&t, w, L"url", urlf);
+    if (ols_read_wfile(urlf, &s, &len) == 0)
+    {
+        len = strcspn(s, "\r\n");
+        if (len < n)
+        {
+            memcpy(url, s, len);
+            url[len] = 0;
+        }
+        free(s);
+    }
+    return 1;
+}
+
+void ols_tunnel_summary(int *installed, int *token, int *named)
+{
+    tun_t t;
+    *installed = *token = *named = 0;
+    if (tun_paths(&t) != 0)
+        return;
+    *installed = exists(t.exe);
+    *token = exists(t.token);
+    *named = running_pid(&t, NAMED) != 0;
+}

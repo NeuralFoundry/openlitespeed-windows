@@ -562,3 +562,14 @@ int ols_db_main(int argc, char **argv)
     fprintf(stderr, "usage: openlitespeed --db install | start | stop | status\n");
     return 2;
 }
+
+void ols_db_summary(int *is_installed, int *running, int *port)
+{
+    dbp_t p;
+    *is_installed = *running = *port = 0;
+    if (db_paths(&p) != 0 || !installed(&p))
+        return;
+    *is_installed = 1;
+    *port = db_port(&p);
+    *running = ols_port_listening(*port);
+}

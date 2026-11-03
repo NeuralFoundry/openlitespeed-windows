@@ -101,6 +101,8 @@ int main(int argc, char *argv[])
         return ols_proxy_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--tunnel") == 0)
         return ols_tunnel_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--status") == 0)
+        return ols_status_main(argc - 2, argv + 2);
     if (argc >= 2
         && (strcmp(argv[1], "--update") == 0 || strcmp(argv[1], "--release-key") == 0
             || strcmp(argv[1], "--sign-release") == 0))

@@ -80,6 +80,7 @@ add_library(olscompat STATIC
     "${COMPAT}/src/win_db.c"
     "${COMPAT}/src/win_update.c"
     "${COMPAT}/src/win_tunnel.c"
+    "${COMPAT}/src/win_status.c"
 )
 target_include_directories(olscompat PRIVATE "${OLS_TOP}/win/common")
 target_link_libraries(olscompat PUBLIC wepoll ws2_32 mswsock bcrypt ntdll advapi32 userenv iphlpapi synchronization dbghelp shell32 crypt32 version)
