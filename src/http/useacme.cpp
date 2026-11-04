@@ -1437,6 +1437,9 @@ bool UseAcme::processDomains(char *configDir, const char *vhost, bool vhostOk,
                 LS_NOTICE("[ACME] Could not validate domain: %s a cert will not be generated.\n", domain);
             else
                 LS_NOTICE("[ACME] Could not validate domain: %s. None of the certs %s will be generated\n", domain, vhost);
+#ifdef _WIN32
+            UseAcmeMap::getInstance().keepDomain(acmeAliasMap && primary ? primary : domain);
+#endif
             failMap(&useAcme, &acmeCert, firstUseAcme, useAcmeMap);
             break;
         }
@@ -1991,6 +1994,13 @@ void UseAcmeMap::findDeleted()
             LS_DBG("[ACME]    IN QUEUE TO BE CREATED\n");
             continue;
         }
+#ifdef _WIN32
+        if (m_kept.find(domain) != m_kept.end())
+        {
+            LS_NOTICE("[ACME] Keeping the certificate for %s, its domain did not resolve\n", domain);
+            continue;
+        }
+#endif
         LS_DBG("[ACME]    NOT IN USE: DELETE!\n");
         // The child removes the directory once acme.sh is done with it;
         // removing it here races the revoke, which then finds no certificate.
@@ -2084,13 +2094,18 @@ void UseAcmeMap::renewCerts()
     time(&now);
     if (now - m_lastRenew < 86400)
         return;
+#ifndef _WIN32
     m_lastRenew = now;
+#endif
     LS_DBG("[ACME] UseAcmeMap::renewCerts(), I am %d\n", geteuid());
     if (AcmeCertMap::getInstance().isRunning(configDir))
     {
         LS_DBG("[ACME] Can't do cert renewal, running\n");
         return;
     }
+#ifdef _WIN32
+    m_lastRenew = now;
+#endif
     bool renewalQueued = false;
     for (UseAcmeMap::iterator it = begin(); it != end(); it = next(it))
     {

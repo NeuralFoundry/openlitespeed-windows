@@ -239,8 +239,14 @@ public:
                         char *domainDir, char *certDir);
     bool deleteDir(char *configDir, char *domainDir);
     void renewCerts();
+#ifdef _WIN32
+    void keepDomain(const char *domain) {   m_kept.addAlias(domain, domain);   }
+#endif
 private:
     time_t m_lastRenew;
+#ifdef _WIN32
+    AcmeAliasMap m_kept;
+#endif
 };
 LS_SINGLETON_DECL(UseAcmeMap);
 
