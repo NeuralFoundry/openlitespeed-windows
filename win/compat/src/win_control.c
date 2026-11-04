@@ -306,6 +306,64 @@ int ols_win_control(const char *cmd)
     return 3;
 }
 
+static int wait_new_pid(pid_t old)
+{
+    pid_t npid;
+    int i;
+    for (i = 0; i < 100; ++i)
+    {
+        Sleep(100);
+        npid = read_pid();
+        if (npid > 0 && npid != old && server_alive(npid))
+            return 0;
+    }
+    return -1;
+}
+
+int ols_win_reload_running(void)
+{
+    SERVICE_STATUS ss;
+    SC_HANDLE svc;
+    pid_t pid = read_pid();
+    int installed, up, ok;
+    DWORD err;
+    if ((svc = open_service(SERVICE_QUERY_STATUS | SERVICE_USER_DEFINED_CONTROL, &installed)) != NULL)
+    {
+        up = svc_state(svc, NULL) == SERVICE_RUNNING;
+        ok = up && ControlService(svc, OLS_CTRL_RELOAD, &ss);
+        err = GetLastError();
+        CloseServiceHandle(svc);
+        if (!up)
+            return 1;
+        if (!ok)
+        {
+            fprintf(stderr, "the web server could not be reloaded (error %lu)\n", err);
+            return -1;
+        }
+        wait_new_pid(pid);
+        return 0;
+    }
+    if (installed)
+    {
+        svc = open_service(SERVICE_QUERY_STATUS, &installed);
+        up = svc && svc_state(svc, NULL) == SERVICE_RUNNING;
+        if (svc)
+            CloseServiceHandle(svc);
+        if (!up)
+            return 1;
+        fprintf(stderr, "the OpenLiteSpeed service could not be reloaded; run openlitespeed -s reload as Administrator\n");
+        return -1;
+    }
+    if (!server_alive(pid))
+        return 1;
+    if (kill(pid, SIGUSR1) != 0 || wait_new_pid(pid) != 0)
+    {
+        fprintf(stderr, "the web server could not be reloaded\n");
+        return -1;
+    }
+    return 0;
+}
+
 static void svc_report(DWORD state, DWORD exitCode, DWORD wait)
 {
     static DWORD checkpoint = 1;

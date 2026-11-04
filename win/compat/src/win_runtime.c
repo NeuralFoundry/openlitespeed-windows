@@ -421,6 +421,7 @@ static void php_detect_all(const wchar_t *root)
         phpd_scan(extra, L"*", L"Custom", root);
     if (ols_php_current(root, cur) == 0)
         phpd_add(cur, L"Current", root);
+    qsort(phpd_list, phpd_count, sizeof(phpd_t), phpd_cmp);
 }
 
 int ols_php_known(const wchar_t *root, const wchar_t *dir, wchar_t *full)
@@ -483,6 +484,26 @@ static int doc_set(inidoc_t *d, int i, const char *s)
     free(d->line[i]);
     d->line[i] = c;
     return 0;
+}
+
+static void doc_remove(inidoc_t *d, int at, int count)
+{
+    int i;
+    for (i = 0; i < count; ++i)
+        free(d->line[at + i]);
+    memmove(d->line + at, d->line + at + count, (size_t)(d->n - at - count) * sizeof(char *));
+    d->n -= count;
+}
+
+static int doc_same(const inidoc_t *a, const inidoc_t *b)
+{
+    int i;
+    if (a->n != b->n)
+        return 0;
+    for (i = 0; i < a->n; ++i)
+        if (strcmp(a->line[i], b->line[i]) != 0)
+            return 0;
+    return 1;
 }
 
 static int doc_load(const wchar_t *path, inidoc_t *d)
@@ -700,7 +721,8 @@ static int php_ext_list(const wchar_t *root, const char *arg)
             mb[l - 4] = 0;
             for (i = 0; mb[i]; ++i)
                 mb[i] = (char)tolower((unsigned char)mb[i]);
-            if (!safe_name(mb, 40) || strcmp(mb, "dl_test") == 0 || strcmp(mb, "zend_test") == 0)
+            if (!safe_name(mb, 40) || strcmp(mb, "dl_test") == 0 || strcmp(mb, "zend_test") == 0
+                || strncmp(mb, "xdebug", 6) == 0)
                 continue;
             strcpy(names[n], mb);
             on[n++] = 0;
@@ -751,6 +773,11 @@ static int php_ext_set(const wchar_t *root, const char *arg, const char *name, i
     for (i = 0; name[i] && i < 47; ++i)
         lower[i] = (char)tolower((unsigned char)name[i]);
     lower[i] = 0;
+    if (strncmp(lower, "xdebug", 6) == 0)
+    {
+        fprintf(stderr, "use openlitespeed --php xdebug <folder> on|off for Xdebug\n");
+        return 2;
+    }
     MultiByteToWideChar(CP_UTF8, 0, lower, -1, wn, 64);
     swprintf(dll, MAX_PATH, L"%s\\ext\\php_%s.dll", dir, wn);
     if (!rt_exists(dll))
@@ -1166,6 +1193,562 @@ static int php_remove(const wchar_t *root, const char *arg)
         return 1;
     }
     printf("removed %ls\n", dir);
+    return 0;
+}
+
+#define XDEBUG_VERSION "3.5.3"
+#define XDEBUG_BASE L"https://xdebug.org/files/"
+#define XD_BEGIN "; openlitespeed xdebug begin"
+#define XD_END "; openlitespeed xdebug end"
+#define XD_MAX 16
+
+typedef struct
+{
+    int minor, ts;
+    const char *vs, *sha;
+    long long size;
+} xdbuild_t;
+
+static const xdbuild_t s_xdebug[] = {
+    { 2, 0, "vs16", "b449eda7eeefc80c651fac334582c5f0877cd72cfe55fc1c5f0f98bf6a4edb94", 330240 },
+    { 2, 1, "vs16", "56a62ebd342a143ced245f30de375f5b907ba50efaacf42801a5dd280006e127", 372736 },
+    { 3, 0, "vs16", "4c80487592484c36d21a7006a53738dfc07884fc6867720ddc5c11559371cdce", 330240 },
+    { 3, 1, "vs16", "c178f05068a6f0cef4a37eaca6003a56120004bf4ac20db6ff20f6f1ce0b439e", 372736 },
+    { 4, 0, "vs17", "a94d4fcfe4086a300b2decaf7c04e59f4981aa5e56992d48b55c5e49dfd9b9ee", 331776 },
+    { 4, 1, "vs17", "b9c79caec87f2b289df4b7bfa64b64f01c97956c9ac7ddb936302b79aec65cda", 375808 },
+    { 5, 0, "vs17", "0a0d52bf276dad7e5f90ac30a5110b3119d291b20c118be0cb7f5752064f1811", 331776 },
+    { 5, 1, "vs17", "c75623ba050ddef734ba28a957e92df9ce5b8dfdb1a0569e5071bd6b68a12292", 375808 },
+};
+
+static const char *const s_xd_keys[] = { "xdebug.mode=debug,develop", "xdebug.start_with_request=yes",
+                                         "xdebug.client_host=127.0.0.1", "xdebug.client_port=9003",
+                                         "xdebug.log_level=0", "xdebug.connect_timeout_ms=0", "opcache.jit=disable" };
+
+typedef struct
+{
+    wchar_t path[MAX_PATH];
+    char ver[32];
+} xdfile_t;
+
+static int ver_cmp(const char *a, const char *b)
+{
+    int i;
+    for (i = 0; i < 4; ++i)
+    {
+        long x = atol(a), y = atol(b);
+        if (x != y)
+            return x < y ? -1 : 1;
+        a = strchr(a, '.') ? strchr(a, '.') + 1 : "";
+        b = strchr(b, '.') ? strchr(b, '.') + 1 : "";
+    }
+    return 0;
+}
+
+static void xd_file_version(const wchar_t *path, char *ver, size_t n)
+{
+    const wchar_t *f = wcsrchr(path, L'\\');
+    int a, b, c;
+    size_t i = 0;
+    ver[0] = 0;
+    if (phpd_version(path, &a, &b, &c) == 0 && a > 0)
+    {
+        snprintf(ver, n, "%d.%d.%d", a, b, c);
+        return;
+    }
+    f = f ? f + 1 : path;
+    if (_wcsnicmp(f, L"php_xdebug-", 11) != 0)
+        return;
+    for (f += 11; i + 1 < n && ((*f >= L'0' && *f <= L'9') || *f == L'.'); ++f)
+        ver[i++] = (char)*f;
+    ver[i] = 0;
+}
+
+static int xd_name_fits(const wchar_t *name, int major, int minor, int ts)
+{
+    wchar_t low[MAX_PATH], want[16], *p;
+    size_t i;
+    for (i = 0; name[i] && i + 1 < MAX_PATH; ++i)
+        low[i] = towlower(name[i]);
+    low[i] = 0;
+    if (wcsncmp(low, L"php_xdebug-", 11) != 0 || (p = wcschr(low + 11, L'-')) == NULL)
+        return 1;
+    swprintf(want, 16, L"-%d.%d-", major, minor);
+    if (wcsncmp(p, want, wcslen(want)) != 0)
+        return 0;
+    if (wcsstr(p, L"-nts-"))
+        return !ts;
+    if (wcsstr(p, L"-ts-"))
+        return ts;
+    return 1;
+}
+
+static int xd_files(const wchar_t *dir, int major, int minor, int ts, xdfile_t *out, int max)
+{
+    wchar_t pat[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE f;
+    int n = 0, i, j;
+    swprintf(pat, MAX_PATH, L"%s\\ext\\php_xdebug*.dll", dir);
+    f = FindFirstFileW(pat, &fd);
+    if (f == INVALID_HANDLE_VALUE)
+        return 0;
+    do
+    {
+        if ((fd.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) || n >= max
+            || !xd_name_fits(fd.cFileName, major, minor, ts))
+            continue;
+        swprintf(out[n].path, MAX_PATH, L"%s\\ext\\%s", dir, fd.cFileName);
+        if (!phpd_is_x64(out[n].path))
+            continue;
+        xd_file_version(out[n].path, out[n].ver, sizeof(out[n].ver));
+        ++n;
+    }
+    while (FindNextFileW(f, &fd));
+    FindClose(f);
+    for (i = 1; i < n; ++i)
+        for (j = i; j > 0 && ver_cmp(out[j - 1].ver, out[j].ver) < 0; --j)
+        {
+            xdfile_t t = out[j];
+            out[j] = out[j - 1];
+            out[j - 1] = t;
+        }
+    return n;
+}
+
+static void xd_value(const char *v, char *out, size_t n)
+{
+    size_t i = 0;
+    int q = *v == '"';
+    if (q)
+        ++v;
+    while (*v && i + 1 < n && (q ? *v != '"' : *v != ';'))
+        out[i++] = *v++;
+    while (!q && i && (out[i - 1] == ' ' || out[i - 1] == '\t'))
+        --i;
+    out[i] = 0;
+}
+
+static int xd_line(const char *line, char *val, size_t n)
+{
+    const char *v, *b, *s;
+    char tmp[MAX_PATH * 3];
+    int c;
+    if ((!line_key(line, "zend_extension", &c, &v) && !line_key(line, "extension", &c, &v)) || c)
+        return 0;
+    xd_value(v, tmp, sizeof(tmp));
+    for (b = s = tmp; *s; ++s)
+        if (*s == '/' || *s == '\\')
+            b = s + 1;
+    if (_strnicmp(b, "php_", 4) == 0)
+        b += 4;
+    if (_strnicmp(b, "xdebug", 6) != 0)
+        return 0;
+    if (val)
+        snprintf(val, n, "%s", tmp);
+    return 1;
+}
+
+static void xd_resolve(const wchar_t *dir, const char *val, wchar_t *out)
+{
+    wchar_t w[MAX_PATH], *p;
+    out[0] = 0;
+    if (MultiByteToWideChar(CP_UTF8, 0, val, -1, w, MAX_PATH) <= 0 || !w[0])
+        return;
+    for (p = w; *p; ++p)
+        if (*p == L'/')
+            *p = L'\\';
+    if (w[1] == L':' || w[0] == L'\\')
+        wcscpy(out, w);
+    else
+    {
+        swprintf(out, MAX_PATH, L"%s\\ext\\%s", dir, w);
+        if (!rt_exists(out))
+            swprintf(out, MAX_PATH, L"%s\\ext\\php_%s.dll", dir, w);
+    }
+}
+
+static int xd_state(const wchar_t *dir, int major, int minor, int ts, char *ver, size_t n)
+{
+    wchar_t ini[MAX_PATH], dll[MAX_PATH];
+    xdfile_t f[XD_MAX];
+    inidoc_t d;
+    char val[MAX_PATH * 3];
+    int i, on = 0;
+    ver[0] = 0;
+    swprintf(ini, MAX_PATH, L"%s\\php.ini", dir);
+    if (doc_load(ini, &d) == 0)
+    {
+        for (i = 0; i < d.n && !on; ++i)
+            on = xd_line(d.line[i], val, sizeof(val));
+        doc_free(&d);
+    }
+    if (on)
+    {
+        xd_resolve(dir, val, dll);
+        if (dll[0] && rt_exists(dll))
+            xd_file_version(dll, ver, n);
+        return 2;
+    }
+    if (xd_files(dir, major, minor, ts, f, XD_MAX) > 0)
+    {
+        snprintf(ver, n, "%s", f[0].ver);
+        return 1;
+    }
+    return 0;
+}
+
+static int rt_capture(const wchar_t *exe, wchar_t *cmd, char *out, size_t n, DWORD timeout)
+{
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    HANDLE rd, wr, nul;
+    DWORD got, total = 0, code = 1;
+    int ok;
+    out[0] = 0;
+    if (!CreatePipe(&rd, &wr, &sa, 65536))
+        return -1;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = nul;
+    si.hStdOutput = wr;
+    si.hStdError = wr;
+    ok = CreateProcessW(exe, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    CloseHandle(wr);
+    if (nul != INVALID_HANDLE_VALUE)
+        CloseHandle(nul);
+    if (!ok)
+    {
+        CloseHandle(rd);
+        return -1;
+    }
+    CloseHandle(pi.hThread);
+    if (WaitForSingleObject(pi.hProcess, timeout) != WAIT_OBJECT_0)
+        TerminateProcess(pi.hProcess, 1);
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    while (total + 1 < n && ReadFile(rd, out + total, (DWORD)(n - 1 - total), &got, NULL) && got)
+        total += got;
+    CloseHandle(rd);
+    out[total] = 0;
+    return (int)code;
+}
+
+static int xd_probe(const wchar_t *dir, const wchar_t *dll, char *ver, size_t vn, char *why, size_t wn)
+{
+    wchar_t exe[MAX_PATH], cmd[MAX_PATH * 2 + 64];
+    char out[4096], *p, *e;
+    size_t i = 0;
+    ver[0] = why[0] = 0;
+    swprintf(exe, MAX_PATH, L"%s\\php-cgi.exe", dir);
+    swprintf(cmd, MAX_PATH * 2 + 64, L"\"%s\" -n -d \"zend_extension=%s\" -v", exe, dll);
+    if (rt_capture(exe, cmd, out, sizeof(out), 20000) < 0)
+    {
+        snprintf(why, wn, "php-cgi.exe did not start");
+        return -1;
+    }
+    if ((p = strstr(out, "with Xdebug v")) != NULL && !strstr(out, "Warning") && !strstr(out, "Failed loading"))
+    {
+        for (p += 13; i + 1 < vn && (isalnum((unsigned char)*p) || *p == '.'); ++p)
+            ver[i++] = *p;
+        ver[i] = 0;
+        return 0;
+    }
+    for (p = out; *p == '\r' || *p == '\n' || *p == ' '; ++p)
+        ;
+    if ((e = strpbrk(p, "\r\n")) != NULL)
+        *e = 0;
+    snprintf(why, wn, "%s", *p ? p : "it was not loaded");
+    return -1;
+}
+
+static const char *php_vs(const wchar_t *dir, int major, int ts)
+{
+    wchar_t dll[MAX_PATH];
+    IMAGE_DOS_HEADER dos;
+    IMAGE_NT_HEADERS64 nt;
+    HANDLE f;
+    DWORD got;
+    const char *vs = NULL;
+    swprintf(dll, MAX_PATH, L"%s\\php%d%s.dll", dir, major, ts ? L"ts" : L"");
+    f = CreateFileW(dll, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (f == INVALID_HANDLE_VALUE)
+        return NULL;
+    if (ReadFile(f, &dos, sizeof(dos), &got, NULL) && got == sizeof(dos) && dos.e_magic == IMAGE_DOS_SIGNATURE
+        && SetFilePointer(f, dos.e_lfanew, NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER
+        && ReadFile(f, &nt, sizeof(nt), &got, NULL) && got == sizeof(nt) && nt.Signature == IMAGE_NT_SIGNATURE
+        && nt.OptionalHeader.MajorLinkerVersion == 14)
+        vs = nt.OptionalHeader.MinorLinkerVersion >= 30 ? "vs17" : nt.OptionalHeader.MinorLinkerVersion >= 20 ? "vs16" : NULL;
+    CloseHandle(f);
+    return vs;
+}
+
+static const xdbuild_t *xd_build(int major, int minor, int ts, const char *vs)
+{
+    size_t i;
+    for (i = 0; major == 8 && i < sizeof(s_xdebug) / sizeof(s_xdebug[0]); ++i)
+        if (s_xdebug[i].minor == minor && s_xdebug[i].ts == ts && (!vs || strcmp(vs, s_xdebug[i].vs) == 0))
+            return &s_xdebug[i];
+    return NULL;
+}
+
+static int xd_fetch(const wchar_t *root, const wchar_t *dir, const xdbuild_t *b, wchar_t *dest)
+{
+    wchar_t dl[MAX_PATH], tmp[MAX_PATH], part[MAX_PATH], name[96], url[256];
+    HANDLE lock;
+    LARGE_INTEGER zero;
+    DWORD got = 0;
+    char *buf = NULL;
+    int r = 1;
+    swprintf(name, 96, L"php_xdebug-%S-8.%d-%s-%S-x86_64.dll", XDEBUG_VERSION, b->minor, b->ts ? L"ts" : L"nts", b->vs);
+    swprintf(dest, MAX_PATH, L"%s\\ext\\%s", dir, name);
+    swprintf(part, MAX_PATH, L"%s.part", dest);
+    swprintf(url, 256, L"%s%s", XDEBUG_BASE, name);
+    if (ols_temp_dir(root, dl) != 0)
+    {
+        fprintf(stderr, "cannot prepare a private download folder\n");
+        return 1;
+    }
+    swprintf(tmp, MAX_PATH, L"%s\\xdebug.dll", dl);
+    zero.QuadPart = 0;
+    if (ols_download(url, tmp, 8 << 20, NULL) != 0)
+        fprintf(stderr, "could not download Xdebug %s from xdebug.org\n", XDEBUG_VERSION);
+    else if ((lock = ols_open_verified(tmp, b->sha, b->size)) == INVALID_HANDLE_VALUE)
+        fprintf(stderr, "Xdebug %s failed the checksum check\n", XDEBUG_VERSION);
+    else
+    {
+        if ((buf = (char *)malloc((size_t)b->size)) == NULL || !SetFilePointerEx(lock, zero, NULL, FILE_BEGIN)
+            || !ReadFile(lock, buf, (DWORD)b->size, &got, NULL) || got != (DWORD)b->size)
+            fprintf(stderr, "cannot read the Xdebug download\n");
+        else if (ols_write_wfile(part, buf, (size_t)b->size, 0) != 0 || !MoveFileExW(part, dest, MOVEFILE_REPLACE_EXISTING))
+            fprintf(stderr, "cannot write %ls (error %lu)\n", dest, GetLastError());
+        else
+            r = 0;
+        CloseHandle(lock);
+        free(buf);
+    }
+    DeleteFileW(part);
+    DeleteFileW(tmp);
+    RemoveDirectoryW(dl);
+    return r;
+}
+
+static int xd_ini(const wchar_t *dir, const wchar_t *dll, int *changed)
+{
+    wchar_t ini[MAX_PATH];
+    inidoc_t d, o;
+    char fdll[MAX_PATH * 3], *line;
+    size_t k;
+    int i, j, r;
+    *changed = 0;
+    swprintf(ini, MAX_PATH, L"%s\\php.ini", dir);
+    if (!dll && !rt_exists(ini))
+        return 0;
+    if (dll && php_make_ini(dir) != 0)
+    {
+        fprintf(stderr, "cannot create php.ini\n");
+        return 1;
+    }
+    if (doc_load(ini, &d) != 0)
+    {
+        fprintf(stderr, "cannot read php.ini\n");
+        return 1;
+    }
+    if (doc_load(ini, &o) != 0)
+    {
+        doc_free(&d);
+        fprintf(stderr, "cannot read php.ini\n");
+        return 1;
+    }
+    for (i = 0; i < d.n; ++i)
+        if (strcmp(skip_sp(d.line[i]), XD_BEGIN) == 0)
+        {
+            for (j = i + 1; j < d.n && strcmp(skip_sp(d.line[j]), XD_END) != 0; ++j)
+                ;
+            doc_remove(&d, i, j < d.n ? j - i + 1 : 1);
+            --i;
+        }
+    for (i = 0; i < d.n; ++i)
+        if (xd_line(d.line[i], NULL, 0) && (line = (char *)malloc(strlen(d.line[i]) + 2)) != NULL)
+        {
+            sprintf(line, ";%s", skip_sp(d.line[i]));
+            doc_set(&d, i, line);
+            free(line);
+        }
+    if (dll)
+    {
+        rt_fwd(dll, fdll, sizeof(fdll));
+        if ((line = (char *)malloc(strlen(fdll) + 32)) != NULL)
+        {
+            doc_insert(&d, d.n, XD_BEGIN);
+            doc_insert(&d, d.n, "[xdebug]");
+            sprintf(line, "zend_extension=\"%s\"", fdll);
+            doc_insert(&d, d.n, line);
+            for (k = 0; k < sizeof(s_xd_keys) / sizeof(s_xd_keys[0]); ++k)
+                doc_insert(&d, d.n, s_xd_keys[k]);
+            doc_insert(&d, d.n, XD_END);
+            free(line);
+        }
+    }
+    *changed = !doc_same(&d, &o);
+    r = *changed ? doc_save(ini, &d) : 0;
+    doc_free(&d);
+    doc_free(&o);
+    if (r != 0)
+    {
+        fprintf(stderr, "cannot write php.ini\n");
+        return 1;
+    }
+    return 0;
+}
+
+static int php_xdebug(const wchar_t *root, const char *arg, const char *act)
+{
+    wchar_t dir[MAX_PATH], cgi[MAX_PATH], dll[MAX_PATH];
+    xdfile_t f[XD_MAX];
+    const xdbuild_t *b;
+    const char *vs;
+    char ver[32], why[256], pv[32];
+    int major, minor, patch, ts, n, i, changed, st, got = 0;
+    if (strcmp(act, "on") != 0 && strcmp(act, "off") != 0 && strcmp(act, "status") != 0)
+    {
+        fprintf(stderr, "usage: openlitespeed --php xdebug <dir> on|off|status\n");
+        return 2;
+    }
+    if (php_dir_arg(root, arg, dir) != 0)
+        return 2;
+    swprintf(cgi, MAX_PATH, L"%s\\php-cgi.exe", dir);
+    if (phpd_version(cgi, &major, &minor, &patch) != 0)
+    {
+        fprintf(stderr, "cannot read the version of %ls\n", cgi);
+        return 1;
+    }
+    snprintf(pv, sizeof(pv), "%d.%d.%d", major, minor, patch);
+    swprintf(dll, MAX_PATH, L"%s\\php%dts.dll", dir, major);
+    ts = rt_exists(dll);
+    if (strcmp(act, "status") == 0)
+    {
+        st = xd_state(dir, major, minor, ts, ver, sizeof(ver));
+        if (st == 0)
+            printf("missing\n");
+        else
+            printf("%s%s%s\n", st == 2 ? "on" : "off", ver[0] ? " " : "", ver);
+        return 0;
+    }
+    if (strcmp(act, "off") == 0)
+    {
+        if (xd_ini(dir, NULL, &changed) != 0)
+            return 1;
+        if (changed && ols_win_reload_running() < 0)
+            return 1;
+        printf("Xdebug off for PHP %s\n", pv);
+        return 0;
+    }
+    n = xd_files(dir, major, minor, ts, f, XD_MAX);
+    for (i = 0; i < n && !got; ++i)
+        if (xd_probe(dir, f[i].path, ver, sizeof(ver), why, sizeof(why)) == 0)
+        {
+            wcscpy(dll, f[i].path);
+            got = 1;
+        }
+    if (!got)
+    {
+        vs = php_vs(dir, major, ts);
+        if ((b = xd_build(major, minor, ts, vs)) == NULL)
+        {
+            fprintf(stderr, "there is no Xdebug %s build for PHP %d.%d %s%s%s; put a matching php_xdebug DLL into %ls\\ext\n",
+                    XDEBUG_VERSION, major, minor, ts ? "TS" : "NTS", vs ? " " : "", vs ? vs : "", dir);
+            return 2;
+        }
+        if (xd_fetch(root, dir, b, dll) != 0)
+            return 1;
+        if (xd_probe(dir, dll, ver, sizeof(ver), why, sizeof(why)) != 0)
+        {
+            DeleteFileW(dll);
+            fprintf(stderr, "Xdebug %s does not load in PHP %s: %s\n", XDEBUG_VERSION, pv, why);
+            return 1;
+        }
+    }
+    if (xd_ini(dir, dll, &changed) != 0)
+        return 1;
+    if (changed && ols_win_reload_running() < 0)
+        return 1;
+    printf("Xdebug %s on for PHP %s\n", ver, pv);
+    return 0;
+}
+
+typedef struct
+{
+    const wchar_t *ini;
+    int def, count[PHPD_MAX];
+} phpuse_t;
+
+static void php_count_site(void *ctx, const char *tmpl, const char *member, const char *domain)
+{
+    phpuse_t *u = (phpuse_t *)ctx;
+    wchar_t sp[MAX_PATH], full[MAX_PATH];
+    size_t n;
+    int i;
+    (void)domain;
+    if (strcmp(tmpl, "devsites") == 0)
+    {
+        if (u->def >= 0)
+            ++u->count[u->def];
+        return;
+    }
+    if (strncmp(tmpl, "devsites-", 9) != 0 || ols_site_php(u->ini, member, sp, MAX_PATH) != 0
+        || !GetFullPathNameW(sp, MAX_PATH, full, NULL))
+        return;
+    n = wcslen(full);
+    while (n > 3 && full[n - 1] == L'\\')
+        full[--n] = 0;
+    for (i = 0; i < phpd_count; ++i)
+        if (_wcsicmp(phpd_list[i].dir, full) == 0)
+        {
+            ++u->count[i];
+            break;
+        }
+}
+
+static int php_list(const wchar_t *root)
+{
+    wchar_t ini[MAX_PATH], cur[MAX_PATH];
+    phpuse_t u;
+    char ver[32], src[24];
+    int i, j, st;
+    if (ols_php_current(root, cur) != 0)
+        cur[0] = 0;
+    php_detect_all(root);
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    memset(&u, 0, sizeof(u));
+    u.ini = ini;
+    u.def = -1;
+    for (i = 0; i < phpd_count && cur[0]; ++i)
+        if (_wcsicmp(phpd_list[i].dir, cur) == 0)
+            u.def = i;
+    ols_dev_site_each(root, php_count_site, &u);
+    printf("[");
+    for (i = 0; i < phpd_count; ++i)
+    {
+        const phpd_t *p = &phpd_list[i];
+        for (j = 0; p->source[j] && j < (int)sizeof(src) - 1; ++j)
+            src[j] = (char)towlower(p->source[j]);
+        src[j] = 0;
+        st = xd_state(p->dir, p->major, p->minor, p->ts, ver, sizeof(ver));
+        printf("%s{\"dir\":", i ? "," : "");
+        ols_jwstr(p->dir);
+        printf(",\"version\":\"%d.%d.%d\",\"branch\":\"%d.%d\",\"default\":%s,\"sites\":%d,\"lsapi\":%s,\"ts\":%s,\"source\":",
+               p->major, p->minor, p->patch, p->major, p->minor, i == u.def ? "true" : "false", u.count[i],
+               p->lsapi ? "true" : "false", p->ts ? "true" : "false");
+        ols_jstr(src);
+        printf(",\"xdebug\":\"%s\",\"xdebugVersion\":", st == 2 ? "on" : st == 1 ? "off" : "missing");
+        ols_jstr(ver);
+        printf("}");
+    }
+    printf("]\n");
     return 0;
 }
 
@@ -1644,6 +2227,8 @@ int ols_php_main(int argc, char **argv)
         fprintf(stderr, "OLS_ROOT is not set\n");
         return 2;
     }
+    if (strcmp(act, "list") == 0)
+        return php_list(root);
     if (strcmp(act, "available") == 0)
         return php_available(root);
     if (strcmp(act, "install") == 0 && argc >= 2)
@@ -1665,8 +2250,11 @@ int ols_php_main(int argc, char **argv)
     }
     if (strcmp(act, "ini-set") == 0 && argc >= 4)
         return php_ini_set(root, argv[1], argv[2], argv[3]);
-    fprintf(stderr, "usage: openlitespeed --php available | install <8.x> [ts] | remove <dir> | ext <dir> |\n"
-                    "       ext-set <dir> <name> on|off | ini <dir> | ini-set <dir> <key> <value>\n");
+    if (strcmp(act, "xdebug") == 0 && argc >= 3)
+        return php_xdebug(root, argv[1], argv[2]);
+    fprintf(stderr, "usage: openlitespeed --php list | available | install <8.x> [ts] | remove <dir> | ext <dir> |\n"
+                    "       ext-set <dir> <name> on|off | ini <dir> | ini-set <dir> <key> <value> |\n"
+                    "       xdebug <dir> on|off|status\n");
     return 2;
 }
 

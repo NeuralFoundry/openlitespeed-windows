@@ -131,12 +131,10 @@ static void php_info(const wchar_t *root)
     printf("}");
 }
 
-static void sites(const wchar_t *root, const wchar_t *ini, const wchar_t *www)
+void ols_dev_site_each(const wchar_t *root, ols_site_fn fn, void *ctx)
 {
-    wchar_t conf[MAX_PATH], wn[64], f[MAX_PATH];
-    char *t = NULL, *p, *end, *line, *next, tmpl[96] = "", member[64] = "", url[160];
-    int first = 1;
-    printf("\"sites\":[");
+    wchar_t conf[MAX_PATH];
+    char *t = NULL, *p, *end, *line, *next, tmpl[96] = "", member[64] = "";
     swprintf(conf, MAX_PATH, L"%s\\conf\\httpd_config.conf", root);
     if (read_text(conf, &t) == 0 && (p = strstr(t, "# dev-sites begin")) != NULL
         && (end = strstr(p, "# dev-sites end")) != NULL)
@@ -156,66 +154,98 @@ static void sites(const wchar_t *root, const wchar_t *ini, const wchar_t *www)
                 strcpy(member, name);
             else if (member[0] && sscanf(line, "vhDomain %159s", dom) == 1)
             {
-                const char *type = "folder";
-                wchar_t sp[MAX_PATH] = L"";
-                int port = 0, tun, pkg = 0;
-                if (strcmp(member, "localhost") == 0)
-                {
-                    member[0] = 0;
-                    continue;
-                }
-                MultiByteToWideChar(CP_UTF8, 0, member, -1, wn, 64);
-                if (strcmp(tmpl, "devtools") == 0)
-                    type = "tool";
-                else if (strncmp(tmpl, "devproxy-", 9) == 0)
-                {
-                    type = "proxy";
-                    port = GetPrivateProfileIntW(L"proxy", wn, 0, ini);
-                }
-                else if (strncmp(tmpl, "devapp-", 7) == 0)
-                {
-                    wchar_t k[16];
-                    GetPrivateProfileStringW(L"apps", wn, L"node", k, 16, ini);
-                    type = _wcsicmp(k, L"python") == 0 ? "python" : "node";
-                }
-                else
-                {
-                    swprintf(f, MAX_PATH, L"%s\\%s\\wp-settings.php", www, wn);
-                    if (GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES)
-                        type = "wordpress";
-                    else
-                    {
-                        swprintf(f, MAX_PATH, L"%s\\%s\\artisan", www, wn);
-                        if (GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES)
-                            type = "laravel";
-                    }
-                    swprintf(f, MAX_PATH, L"%s\\%s\\package.json", www, wn);
-                    pkg = GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES;
-                    if (strncmp(tmpl, "devsites-", 9) == 0)
-                        ols_site_php(ini, member, sp, MAX_PATH);
-                }
-                tun = ols_tunnel_query(member, url, sizeof(url));
-                printf("%s{\"name\":", first ? "" : ",");
-                jstr(member);
-                printf(",\"domain\":");
-                jstr(dom);
-                printf(",\"type\":\"%s\",\"port\":%d,\"tunnel\":%s,\"tunnelUrl\":", type, port, tun ? "true" : "false");
-                jstr(url);
-                printf(",\"php\":");
-                jwstr(sp);
-                printf(",\"pkg\":%s}", pkg ? "true" : "false");
-                first = 0;
+                if (strcmp(member, "localhost") != 0)
+                    fn(ctx, tmpl, member, dom);
                 member[0] = 0;
             }
         }
     }
     free(t);
+}
+
+typedef struct
+{
+    const wchar_t *ini, *www;
+    int first;
+} siteout_t;
+
+static void site_json(void *ctx, const char *tmpl, const char *member, const char *dom)
+{
+    siteout_t *o = (siteout_t *)ctx;
+    wchar_t wn[64], f[MAX_PATH], dir[MAX_PATH] = L"", sp[MAX_PATH] = L"";
+    char url[160];
+    const char *type = "folder";
+    int port = 0, tun, pkg = 0;
+    size_t n;
+    MultiByteToWideChar(CP_UTF8, 0, member, -1, wn, 64);
+    if (strcmp(tmpl, "devtools") == 0)
+        type = "tool";
+    else if (strncmp(tmpl, "devproxy-", 9) == 0)
+    {
+        type = "proxy";
+        port = GetPrivateProfileIntW(L"proxy", wn, 0, o->ini);
+    }
+    else if (strncmp(tmpl, "devapp-", 7) == 0)
+    {
+        wchar_t k[16];
+        GetPrivateProfileStringW(L"apps", wn, L"node", k, 16, o->ini);
+        type = _wcsicmp(k, L"python") == 0 ? "python" : "node";
+    }
+    else
+    {
+        swprintf(f, MAX_PATH, L"%s\\%s\\wp-settings.php", o->www, wn);
+        if (GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES)
+            type = "wordpress";
+        else
+        {
+            swprintf(f, MAX_PATH, L"%s\\%s\\artisan", o->www, wn);
+            if (GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES)
+                type = "laravel";
+        }
+        swprintf(f, MAX_PATH, L"%s\\%s\\package.json", o->www, wn);
+        pkg = GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES;
+        if (strncmp(tmpl, "devsites-", 9) == 0)
+            ols_site_php(o->ini, member, sp, MAX_PATH);
+    }
+    if (strcmp(type, "tool") != 0 && strcmp(type, "proxy") != 0)
+    {
+        swprintf(f, MAX_PATH, L"%s\\%s", o->www, wn);
+        if (!GetFullPathNameW(f, MAX_PATH, dir, NULL))
+            dir[0] = 0;
+        n = wcslen(dir);
+        while (n > 3 && dir[n - 1] == L'\\')
+            dir[--n] = 0;
+    }
+    tun = ols_tunnel_query(member, url, sizeof(url));
+    printf("%s{\"name\":", o->first ? "" : ",");
+    jstr(member);
+    printf(",\"domain\":");
+    jstr(dom);
+    printf(",\"type\":\"%s\",\"port\":%d,\"tunnel\":%s,\"tunnelUrl\":", type, port, tun ? "true" : "false");
+    jstr(url);
+    printf(",\"php\":");
+    jwstr(sp);
+    printf(",\"pkg\":%s,\"dir\":", pkg ? "true" : "false");
+    jwstr(dir);
+    printf("}");
+    o->first = 0;
+}
+
+static void sites(const wchar_t *root, const wchar_t *ini, const wchar_t *www)
+{
+    siteout_t o;
+    o.ini = ini;
+    o.www = www;
+    o.first = 1;
+    printf("\"sites\":[");
+    ols_dev_site_each(root, site_json, &o);
     printf("]");
 }
 
 int ols_status_main(int argc, char **argv)
 {
-    wchar_t root[MAX_PATH], ini[MAX_PATH], www[MAX_PATH], def[MAX_PATH], tld[32], ed[16], conf[MAX_PATH], admin[MAX_PATH];
+    wchar_t root[MAX_PATH], ini[MAX_PATH], www[MAX_PATH], def[MAX_PATH], tld[32], ed[16], conf[MAX_PATH], admin[MAX_PATH],
+        full[MAX_PATH];
     int service, dbi, dbr, dbp, ti, tt, tn;
     DWORD n = GetEnvironmentVariableW(L"OLS_ROOT", root, MAX_PATH);
     (void)argc;
@@ -234,8 +264,15 @@ int ols_status_main(int argc, char **argv)
         wcscpy(ed, L"server");
     swprintf(conf, MAX_PATH, L"%s\\conf\\httpd_config.conf", root);
     swprintf(admin, MAX_PATH, L"%s\\admin\\conf\\admin_config.conf", root);
+    if (!GetFullPathNameW(root, MAX_PATH, full, NULL))
+        wcscpy(full, root);
+    n = (DWORD)wcslen(full);
+    while (n > 3 && full[n - 1] == L'\\')
+        full[--n] = 0;
     printf("{\"edition\":");
     jwstr(ed);
+    printf(",\"root\":");
+    jwstr(full);
     printf(",\"server\":{\"running\":%s", server_running(root, &service) ? "true" : "false");
     printf(",\"service\":%s,\"http\":%d,\"https\":%d,\"admin\":%d},", service ? "true" : "false",
            listen_port(conf, "listener Default", 80), GetPrivateProfileIntW(L"sites", L"https", 0, ini),
