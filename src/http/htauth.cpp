@@ -53,7 +53,9 @@ HTAuth::HTAuth(const char *pRealm)
     , m_pUserDir(NULL)
     , m_authHeaderLen(0)
     , m_iAuthType(AUTH_DEFAULT)
-{}
+{
+    setName(pRealm);
+}
 
 
 HTAuth::~HTAuth()

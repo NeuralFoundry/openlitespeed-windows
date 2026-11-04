@@ -2609,6 +2609,8 @@ int HttpSession::processContextAuth()
         const HTAuth *pHtAuth = NULL;
         const AuthRequired *pHtReq = NULL;
         const AutoStr2 *pReal = m_request.getRealPath();
+        if (!pReal && m_request.getUrlStaticFileData() && m_request.getUrlStaticFileData()->pData)
+            pReal = m_request.getUrlStaticFileData()->pData->getRealPath();
         int ht = htAclCheck(m_request.getContext(), pReal ? pReal->c_str() : NULL,
                             getPeerAddr(), &pHtAuth, &pHtReq);
         if (ht == HTACL_DENY)
