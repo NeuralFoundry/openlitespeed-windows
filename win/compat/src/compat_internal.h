@@ -99,6 +99,39 @@ int ols_db_wordpress(const wchar_t *root, const char *site, const wchar_t *dir);
 int ols_tunnel_query(const char *site, char *url, size_t n);
 void ols_tunnel_summary(int *installed, int *token, int *named);
 void ols_db_summary(int *is_installed, int *running, int *port);
+
+#define OLS_JSON_NULL 0
+#define OLS_JSON_BOOL 1
+#define OLS_JSON_NUM 2
+#define OLS_JSON_STR 3
+#define OLS_JSON_ARR 4
+#define OLS_JSON_OBJ 5
+typedef struct ols_json
+{
+    int type, b;
+    char *key, *str;
+    double num;
+    struct ols_json *child, *next;
+} ols_json;
+ols_json *ols_json_parse(const char *s, size_t n);
+void ols_json_free(ols_json *j);
+ols_json *ols_json_get(const ols_json *o, const char *key);
+const char *ols_json_str(const ols_json *o, const char *key);
+void ols_jstr(const char *s);
+void ols_jwstr(const wchar_t *w);
+int ols_download(const wchar_t *url, const wchar_t *file, long long max, const char *what);
+int ols_sha256_handle(HANDLE h, char hex[65], long long *size);
+HANDLE ols_open_verified(const wchar_t *file, const char *sha, long long size);
+int ols_unpack(const wchar_t *zip, const wchar_t *dir, int strip);
+int ols_temp_dir(const wchar_t *root, wchar_t *out);
+int ols_remove_tree(const wchar_t *dir);
+int ols_site_php(const wchar_t *ini, const char *site, wchar_t *dir, size_t n);
+int ols_node_default(const wchar_t *root, wchar_t *out, size_t n);
+int ols_php_known(const wchar_t *root, const wchar_t *dir, wchar_t *full);
+int ols_php_current(const wchar_t *root, wchar_t *dir);
+int ols_path_search(const wchar_t *exe, wchar_t *out);
+void ols_status_runtime(const wchar_t *root, const wchar_t *ini);
+void ols_status_stats(const wchar_t *root);
 void ols_reserve_low_handles(void);
 int ols_accept_lock(SOCKET s);
 void ols_accept_unlock(void);

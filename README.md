@@ -2,18 +2,22 @@
 
 Website: [openlitespeed.dev/windows](https://openlitespeed.dev/windows/)
 
-A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web server 1.9.4. It runs on Windows 10, Windows 11 and Windows Server without WSL, Docker or a virtual machine, serves PHP through LSAPI or FastCGI and installs on its own or inside Laragon and XAMPP. The full stack edition adds a dashboard, MariaDB, phpMyAdmin and Cloudflare Tunnel, so a site on your computer can go online even behind a local IP. Free and open source under GPL-3.0.
+A native Windows build of the [OpenLiteSpeed](https://openlitespeed.org) web server 1.9.4. It runs on Windows 10, Windows 11 and Windows Server without WSL, Docker or a virtual machine, serves PHP through LSAPI or FastCGI and installs on its own or inside Laragon and XAMPP. The full stack edition adds a dashboard, MariaDB, phpMyAdmin and Cloudflare Tunnel, so a site on your computer can go online even behind a local IP. From the dashboard you install PHP and Node.js versions, give every site its own PHP version, create WordPress, Laravel, Node.js and Python sites and manage the databases. Free and open source under GPL-3.0.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/panel-dark.png">
-  <img src="docs/panel-light.png" width="880" alt="OpenLiteSpeed for Windows dashboard with the web server, MariaDB, Cloudflare Tunnel, PHP and the local sites">
+  <img src="docs/panel-light.png" width="880" alt="OpenLiteSpeed for Windows dashboard overview with the web server, MariaDB, Cloudflare Tunnel, live request numbers and the local sites">
 </picture>
 
 ## Features
 
 - Native Win32 program built with Visual C++, with a graphical installer, a tray app and a Windows service
 - Two editions in one installer: the web server only, or the full stack with a dashboard, MariaDB, phpMyAdmin and Cloudflare Tunnel
-- Dashboard: one window to start and stop the services, create sites, switch PHP, turn on trusted HTTPS and put sites online
+- Dashboard: one window to start and stop the services, create sites, install PHP and Node.js, manage databases, read the logs, change ports and put sites online
+- PHP 7.4 to 8.5 and Node.js LTS versions installed from the dashboard, checked against their published SHA-256
+- A PHP version for each site, PHP extensions turned on and off with a switch, and the common `php.ini` settings in a form
+- New sites as a plain PHP site, WordPress, Laravel (with Composer), a Node.js app or a Python app
+- Databases: create a database with its own user, export and import `.sql` files, remove a database
 - Put a local site online with Cloudflare Tunnel: a public https address for a site on your computer, with no port forwarding and no public IP. Your own domain works with a tunnel token.
 - MariaDB 11.8 and phpMyAdmin 5.2 on 127.0.0.1 only, with a generated root password. Every new WordPress site gets its own database and user.
 - Uses every CPU core: up to 32 HTTP worker processes on the same ports, restarted automatically after a crash, with zero downtime reload
@@ -125,24 +129,46 @@ To uninstall, use **Settings > Apps** or run `uninstall.exe --uninstall --silent
 
 ## Dashboard
 
-The full stack edition opens the dashboard from the Start menu, or with a double click on the tray icon. It is a desktop window, not a web page, so it does not listen on a port. It shows:
+The full stack edition opens the dashboard from the Start menu, or with a double click on the tray icon. It is a desktop window, not a web page, so it does not listen on a port. The pages:
 
-- the web server, MariaDB and Cloudflare Tunnel with their ports, each with a switch to start or stop it
-- every site with its local address, and a switch to put it online
-- the PHP version and trusted HTTPS, both changed with one click
-- **New site**, **New proxy site**, the projects folder, WebAdmin and the error log
+| Page | What you can do |
+|---|---|
+| Overview | Start and stop the web server, MariaDB and Cloudflare Tunnel, see requests per second and open connections |
+| Sites | Create and remove sites, pick the PHP version of each site, put a site online, open its folder or a terminal in it, run a folder as a Node.js or Python app |
+| PHP | Install PHP versions, choose the default, turn extensions on and off, change `php.ini` settings, install Composer |
+| Node.js | Install Node.js versions, choose the one that runs the apps, restart an app and read its log |
+| Databases | Create a database and its user, export and import `.sql` files, remove a database, open phpMyAdmin |
+| Logs | Read the server, MariaDB, app and tunnel logs, filter the lines, follow new lines |
+| Settings | Start with Windows, the projects folder, trusted HTTPS, the HTTP and WebAdmin ports and the WebAdmin password |
+
+**Terminal** at the bottom left opens a command prompt with the default PHP, Composer, Node.js and the MariaDB client on the `PATH`.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/panel-sites-dark.png">
+  <img src="docs/panel-sites-light.png" width="880" alt="Sites page of the dashboard with a PHP version for each site, Node.js and Python apps, a proxy site and the Online switches">
+</picture>
 
 The dashboard needs the Microsoft Edge WebView2 Runtime, which comes with Windows 11 and current Windows 10.
 
 ## Local sites
 
-Every folder in the projects folder is a site at `http://folder.test/`. **New site** in the dashboard or the tray creates the folder. With **Install WordPress** it also downloads the latest WordPress. When MariaDB is installed it creates a database and a user for the site and fills in `wp-config.php`, so the WordPress setup only asks for the site title and an admin account. The WordPress installer opens from this computer only, so nobody else on the network can finish it first.
+Every folder in the projects folder is a site at `http://folder.test/`. **New site** in the dashboard or the tray creates the folder. The dashboard offers these kinds of site:
 
-**New proxy site** gives an app that listens on a local port its own name, for example `app.test` for a Node.js or Vite dev server on port 5173. WebSockets are passed through. A proxy site answers this computer only, like the app behind it.
+| Kind | What you get |
+|---|---|
+| PHP site | A folder with an `index.php` |
+| WordPress | The latest WordPress. When MariaDB is installed, a database and a user for the site and a filled in `wp-config.php`, so the WordPress setup only asks for the site title and an admin account |
+| Laravel | A new Laravel project from `composer create-project`, served from its `public` folder |
+| Node.js app | A small `server.js` and `package.json`, started by the server with the default Node.js |
+| Python app | A WSGI `wsgi.py`, started by the server with the Python found on the computer |
+
+The WordPress installer opens from this computer only, so nobody else on the network can finish it first. A folder with a `package.json` becomes a Node.js app with **More > Run as a Node.js app**, and **Run as a PHP site** turns it back. **Remove site** moves the folder to the Recycle Bin and keeps the databases.
+
+**New proxy site** gives an app that listens on a local port its own name, for example `app.test` for a Vite dev server on port 5173. WebSockets are passed through. A proxy site answers this computer only, like the app behind it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/panel-site-dark.png">
-  <img src="docs/panel-site-light.png" width="420" alt="New site dialog with the site name and the Install WordPress option">
+  <img src="docs/panel-site-light.png" width="420" alt="New site dialog with the site name and the kinds of site: PHP, WordPress, Laravel, Node.js app and Python app">
 </picture>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/panel-proxy-dark.png">
@@ -172,6 +198,13 @@ MariaDB listens on `127.0.0.1` only and runs under your account, never as admini
 
 A WordPress site created from the tray or the dashboard gets its own database and user, and `wp-config.php` is filled in.
 
+On the **Databases** page, **New database** creates a database with a user of the same name and a generated password, shown once with a **Copy** button. **Export** writes a `.sql` file with `mariadb-dump`, **Import** loads a `.sql` file into the database, and **Remove** asks you to type the name first and can remove the user too.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/panel-db-dark.png">
+  <img src="docs/panel-db-light.png" width="880" alt="Databases page of the dashboard with MariaDB, the root password, and export, import and remove for each database">
+</picture>
+
 ## Trusted HTTPS
 
 **Trusted HTTPS** in the dashboard or the tray, or `openlitespeed --dev-https on`, creates a certificate authority on your computer, asks Windows to trust it for your account and serves every local site on `https://name.test/`. The authority is limited by name constraints to `.test`, `.localhost` and `.internal` names and to `127.0.0.1` and `::1`, so it cannot sign a certificate for any other site. Turning it off removes it from the Windows trust store.
@@ -183,6 +216,28 @@ A WordPress site created from the tray or the dashboard gets its own database an
 <img src="docs/phpinfo.png" width="640" alt="phpinfo of PHP 8.4 on Windows with Server API LiteSpeed">
 
 Switch the PHP version from the dashboard, the tray menu or with `openlitespeed --set-php <folder>`.
+
+**Install PHP** on the PHP page lists the versions on windows.php.net, from 7.4 to 8.5, thread safe and non thread safe. A download is checked against the SHA-256 that windows.php.net publishes, unpacked into `php\<version>` and gets a `php.ini` with the usual extensions turned on. Versions from 8.2 run through LSAPI, older ones through FastCGI.
+
+Each site can use its own PHP version: pick it in the PHP column of the Sites page, or run `openlitespeed --site php <site> <folder>`. Sites without a choice follow the default. For every version the **More** menu has **Extensions**, a switch for each extension of that PHP, and **Settings** for the memory limit, upload and POST size, execution time, input variables, error display and time zone. **Edit php.ini** opens the file in Notepad. Changes reload the web server.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/panel-php-dark.png">
+  <img src="docs/panel-php-light.png" width="880" alt="PHP page of the dashboard with three PHP versions, the default, the sites that use each version and Composer">
+</picture>
+
+**Install** under Composer downloads `composer.phar` from getcomposer.org, checked against its SHA-256. The dashboard terminal has `composer` on the `PATH`, and Laravel sites are created with it.
+
+## Node.js
+
+**Install Node.js** on the Node.js page lists the current and the LTS versions from nodejs.org. A download is checked against `SHASUMS256.txt` and unpacked into `node\<version>`. The page also lists Node.js found in `Program Files`, Laragon, nvm, Volta and on the `PATH`. **Make default** chooses the version that runs the Node.js apps, and the apps are listed below with **Restart** and **Log**.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/panel-node-dark.png">
+  <img src="docs/panel-node-light.png" width="880" alt="Node.js page of the dashboard with the installed Node.js versions and the running apps">
+</picture>
+
+A Node.js app needs no changes: `app.listen(3000)` is moved to the address the server gives it. See [docs/APPS.md](docs/APPS.md).
 
 ## Moving from Apache
 
@@ -226,11 +281,21 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed --acme-install [--email <address>]` | Turn on automatic Let's Encrypt certificates |
 | `openlitespeed --modsec-install [--detection-only]` / `--modsec-install --remove` | Turn the ModSecurity firewall with the OWASP Core Rule Set on or off |
 | `openlitespeed --dev-sites <folder> [tld]` | Create a site for every subfolder of a folder |
-| `openlitespeed --new-site <name> [--wordpress]` | Create a site in the projects folder, with WordPress and its database if asked |
+| `openlitespeed --new-site <name> [--wordpress\|--laravel\|--node\|--python]` | Create a site in the projects folder: a PHP site, WordPress with its database, a Laravel project, a Node.js app or a Python app |
+| `openlitespeed --site php <site> <folder>\|default` | Use another PHP version for one site |
+| `openlitespeed --site app <site> node\|python\|off` | Run a site folder as a Node.js or Python app, or as a PHP site again |
+| `openlitespeed --php available` / `install <8.x> [ts]` / `remove <folder>` | List and install the PHP versions from windows.php.net, remove a downloaded one |
+| `openlitespeed --php ext <folder>` / `ext-set <folder> <name> on\|off` | List the extensions of a PHP version, turn one on or off |
+| `openlitespeed --php ini <folder>` / `ini-set <folder> <key> <value>` | Read or change a common `php.ini` setting |
+| `openlitespeed --node list\|available` / `install <major>` / `default <node.exe>` / `remove <node.exe>` | Manage the Node.js versions for the apps |
+| `openlitespeed --composer install` | Download Composer into `tools\composer` |
+| `openlitespeed --set-port http\|admin <port>` | Change the website or WebAdmin port |
 | `openlitespeed --proxy add <name> <port>` / `remove <name>` / `list` | Add or remove a proxy site for an app on a local port |
 | `openlitespeed --dev-https on [port]\|off\|status` | Trusted HTTPS for the local sites |
 | `openlitespeed --dev-hosts` / `--dev-hosts-clear` | Add or remove the site names in the hosts file |
 | `openlitespeed --db install\|fetch\|start\|stop\|status` | Install, download only, start or stop MariaDB and phpMyAdmin |
+| `openlitespeed --db list` / `create <name> [--no-user]` / `drop <name> [--user]` | List, create or remove databases |
+| `openlitespeed --db export <name> <file.sql>` / `import <name> <file.sql>` | Export a database to a file or import a file into it |
 | `openlitespeed --tunnel start <site>` / `stop <site>` / `stop --all` / `status` | Put a site online with Cloudflare Tunnel or take it offline |
 | `openlitespeed --tunnel token` / `run` / `run-stop` / `token clear` | Save a tunnel token from standard input, connect or disconnect your own domain, forget the token |
 | `openlitespeed --status` | Server, PHP, sites, database and tunnels as JSON |

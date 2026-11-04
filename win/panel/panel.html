@@ -8,6 +8,7 @@
 <style>
 :root {
   --bg: #e7ebef;
+  --side: #dde3e8;
   --panel: #f8fafb;
   --raise: #ffffff;
   --ink: #132029;
@@ -22,6 +23,7 @@
   --danger: #b3261e;
   --link: #1a5bb4;
   --focus: #1a5bb4;
+  --sel: #c9d3dc;
   --shadow: 0 1px 0 rgba(19, 32, 41, .06), 0 1px 3px rgba(19, 32, 41, .08);
   --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
@@ -31,6 +33,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #10161c;
+    --side: #0c1116;
     --panel: #171f27;
     --raise: #1d2730;
     --ink: #e3e9ee;
@@ -45,6 +48,7 @@
     --danger: #ff8a80;
     --link: #79aef5;
     --focus: #79aef5;
+    --sel: #22303c;
     --shadow: 0 1px 0 rgba(0, 0, 0, .3);
     color-scheme: dark;
   }
@@ -58,27 +62,47 @@ body {
   font: 13.5px/1.45 var(--ui);
   font-variant-numeric: tabular-nums;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-columns: 212px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 button, input, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
 
-header {
+aside {
+  grid-row: 1 / 3;
+  background: var(--side);
+  border-right: 1px solid var(--rule);
   display: flex;
-  align-items: baseline;
-  gap: 14px;
-  padding: 18px 24px 14px;
+  flex-direction: column;
+  padding: 18px 12px 14px;
+  min-height: 0;
 }
-header h1 {
-  font: 600 21px/1.1 var(--display);
-  letter-spacing: -.01em;
-  margin: 0;
+.brand { padding: 0 10px 16px; }
+.brand h1 { font: 600 19px/1.15 var(--display); letter-spacing: -.01em; margin: 0; }
+.brand div { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+nav { display: flex; flex-direction: column; gap: 2px; }
+nav button {
+  display: flex; align-items: center; gap: 10px;
+  border: 0; background: none; text-align: left;
+  padding: 7px 10px; border-radius: 6px; cursor: pointer; color: var(--ink);
 }
-header .ver { color: var(--muted); }
-header .edition { color: var(--muted); padding-left: 12px; border-left: 1px solid var(--rule); }
-header nav { margin-left: auto; display: flex; gap: 6px; }
+nav button:hover { background: var(--sel); }
+nav button[aria-current="page"] { background: var(--raise); box-shadow: var(--shadow); font-weight: 600; }
+nav .dot { width: 8px; height: 8px; border-radius: 50%; background: transparent; flex: none; }
+nav .dot.on { background: var(--live); }
+nav .dot.off { background: var(--off); }
+nav .count { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 12.5px; }
+.side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; }
+.side-foot button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer; color: var(--link); }
+.side-foot button:hover { background: var(--sel); }
+
+main { min-height: 0; overflow: auto; padding: 20px 26px 16px; }
+section.page { max-width: 1180px; }
+.head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.head h2 { font: 600 21px/1.2 var(--display); letter-spacing: -.01em; margin: 0 auto 0 0; }
+h3.sub { font: 600 15px/1.2 var(--display); margin: 22px 0 10px; }
 
 .btn {
   border: 1px solid var(--rule);
@@ -91,19 +115,12 @@ header nav { margin-left: auto; display: flex; gap: 6px; }
 .btn:hover { border-color: var(--faint); }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.danger { color: var(--danger); }
 .btn.quiet { border-color: transparent; background: transparent; color: var(--link); padding-inline: 6px; }
 .btn.quiet:hover { text-decoration: underline; }
+.btn.small { padding: 3px 9px; font-size: 12.5px; }
 
-main {
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  gap: 18px;
-  padding: 2px 24px 12px;
-  min-height: 0;
-  overflow: hidden;
-}
-.rail { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
-
+.modules { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
 .module {
   display: grid;
   grid-template-columns: 22px 1fr auto;
@@ -117,18 +134,11 @@ main {
   padding: 13px 14px 12px;
   box-shadow: var(--shadow);
 }
-.lamp {
-  width: 14px; height: 14px;
-  border-radius: 50%;
-  background: var(--off);
-  justify-self: center;
-  transition: background .3s, box-shadow .3s;
-}
+.lamp { width: 14px; height: 14px; border-radius: 50%; background: var(--off); justify-self: center; transition: background .3s, box-shadow .3s; }
 .module.on .lamp { background: var(--live); box-shadow: 0 0 0 4px var(--live-soft), 0 0 12px var(--live); }
-.module.busy .lamp { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
 .module h2 { font: 600 15px/1.2 var(--display); margin: 0; }
 .module .state { color: var(--muted); font-size: 12.5px; }
-.ports { grid-column: 2 / 4; display: flex; gap: 18px; }
+.ports { grid-column: 2 / 4; display: flex; gap: 18px; flex-wrap: wrap; }
 .port { display: flex; flex-direction: column; }
 .port b { font: 600 22px/1 var(--display); letter-spacing: -.02em; }
 .port span { color: var(--muted); font-size: 12px; margin-top: 3px; }
@@ -136,134 +146,228 @@ main {
 .module .acts:empty { display: none; }
 .module .acts .btn { padding: 4px 10px; }
 
+.stats { display: flex; gap: 34px; margin: 22px 2px 4px; flex-wrap: wrap; }
+.stat b { display: block; font: 600 30px/1 var(--display); letter-spacing: -.02em; }
+.stat span { color: var(--muted); font-size: 12.5px; }
+
 .switch {
-  position: relative;
-  width: 46px; height: 26px;
-  border-radius: 13px;
-  border: 1px solid var(--rule);
-  background: var(--bg);
-  cursor: pointer;
-  padding: 0;
+  position: relative; width: 46px; height: 26px; border-radius: 13px;
+  border: 1px solid var(--rule); background: var(--bg); cursor: pointer; padding: 0; flex: none;
   transition: background .2s, border-color .2s;
 }
 .switch::after {
-  content: "";
-  position: absolute; top: 2px; left: 2px;
-  width: 20px; height: 20px; border-radius: 50%;
-  background: var(--raise);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
-  transition: transform .2s;
+  content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--raise); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .2s;
 }
 .switch[aria-checked="true"] { background: var(--live); border-color: var(--live); }
 .switch[aria-checked="true"]::after { transform: translateX(20px); }
 .switch:disabled { opacity: .5; cursor: default; }
 
-.settings { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 6px 14px; box-shadow: var(--shadow); }
-.row { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
-.row + .row { border-top: 1px solid var(--rule); }
-.row label { flex: 1; }
-.row select { width: 100%; min-width: 0; border: 1px solid var(--rule); background: var(--raise); border-radius: 6px; padding: 5px 6px; }
-.row.stack { flex-direction: column; align-items: stretch; gap: 6px; }
-
-.sites { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); }
-.sites-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 10px; }
-.sites-head h2 { font: 600 16px/1.2 var(--display); margin: 0 auto 0 0; }
-.list { overflow: auto; min-height: 0; }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); }
+.card.pad { padding: 6px 16px; }
+.list { overflow: auto; }
 table { width: 100%; border-collapse: collapse; }
-th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12.5px; padding: 6px 13px; border-bottom: 1px solid var(--rule); position: sticky; top: 0; background: var(--panel); }
-td { padding: 10px 13px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12.5px; padding: 8px 13px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+td { padding: 9px 13px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
 tr:last-child td { border-bottom: 0; }
-td.name { font-weight: 600; }
-td.kind { color: var(--muted); white-space: nowrap; }
-td.name { white-space: nowrap; }
-.addr { font: 12.5px var(--code); color: var(--link); background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+td.name { font-weight: 600; white-space: nowrap; }
+td.muted, .muted { color: var(--muted); }
+td.nowrap { white-space: nowrap; }
+td.end { text-align: right; white-space: nowrap; }
+td select { border: 1px solid var(--rule); background: var(--raise); border-radius: 6px; padding: 3px 4px; max-width: 170px; }
+td.grow { width: 100%; max-width: 0; }
+.addr { font: 12.5px var(--code); color: var(--link); background: none; border: 0; padding: 0; cursor: pointer; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .addr:hover { text-decoration: underline; }
+td.grow > .addr { display: block; }
 .online { display: flex; align-items: center; gap: 10px; }
 .public { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 4px; }
-.public .addr { overflow: hidden; text-overflow: ellipsis; max-width: 300px; white-space: nowrap; }
-.empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+.public .addr { flex: 0 1 auto; min-width: 0; }
+.tag { display: inline-block; font-size: 11.5px; line-height: 1; padding: 3px 6px 4px; border-radius: 4px; background: var(--bg); color: var(--muted); border: 1px solid var(--rule); margin-left: 6px; vertical-align: 1px; }
+.tag.live { color: var(--live); border-color: var(--live); background: var(--live-soft); }
+.empty { padding: 34px 16px; text-align: center; color: var(--muted); }
 .empty p { margin: 0 0 12px; }
 .note { color: var(--muted); font-size: 12.5px; }
+.quick { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
 
-footer { display: flex; align-items: center; gap: 12px; padding: 8px 24px 12px; color: var(--muted); font-size: 12.5px; }
+.row { display: flex; align-items: center; gap: 12px; padding: 11px 0; }
+.row + .row { border-top: 1px solid var(--rule); }
+.row .label { flex: 1; min-width: 0; }
+.row .label small { display: block; color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row input[type=number] { width: 96px; }
+.row input, .field input, .field select { border: 1px solid var(--rule); background: var(--raise); border-radius: 6px; padding: 5px 8px; }
+
+.menu-wrap { display: inline-block; }
+.menu {
+  position: fixed; z-index: 10; min-width: 200px;
+  background: var(--raise); border: 1px solid var(--rule); border-radius: 8px; padding: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .18);
+}
+.menu button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 6px 10px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.menu button:hover, .menu button:focus-visible { background: var(--sel); }
+.menu button.danger { color: var(--danger); }
+.menu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 2px; }
+
+.logs { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; min-height: 0; }
+.lognav { display: flex; flex-direction: column; gap: 2px; padding: 6px; align-self: start; }
+.lognav button { border: 0; background: none; text-align: left; padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex; gap: 8px; }
+.lognav button span { margin-left: auto; color: var(--muted); font-size: 12px; }
+.lognav button:hover { background: var(--sel); }
+.lognav button[aria-current="true"] { background: var(--sel); font-weight: 600; }
+.logview { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.logbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.logbar input[type=search] { flex: 1; min-width: 160px; border: 1px solid var(--rule); background: var(--raise); border-radius: 6px; padding: 5px 8px; }
+.logbar label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+pre.log { margin: 0; height: calc(100vh - 210px); min-height: 240px; overflow: auto; font: 12px/1.5 var(--code); white-space: pre-wrap; word-break: break-all; background: var(--raise); border: 1px solid var(--rule); border-radius: 8px; padding: 10px; }
+
+footer { grid-column: 2; display: flex; align-items: center; gap: 12px; padding: 7px 26px 10px; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--rule); }
 #msg { flex: 1; min-height: 1.4em; }
 #msg.err { color: var(--danger); }
 
 dialog {
-  border: 1px solid var(--rule);
-  border-radius: 12px;
-  background: var(--panel);
-  color: var(--ink);
-  padding: 20px 22px 18px;
-  width: 420px;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, .25);
+  border: 1px solid var(--rule); border-radius: 12px; background: var(--panel); color: var(--ink);
+  padding: 20px 22px 18px; width: 440px; max-width: 92vw; box-shadow: 0 18px 50px rgba(0, 0, 0, .25);
 }
 dialog::backdrop { background: rgba(10, 16, 22, .35); }
 dialog h3 { font: 600 17px/1.2 var(--display); margin: 0 0 14px; }
 dialog p { margin: 0 0 12px; color: var(--muted); }
+dialog.wide { width: min(760px, 92vw); }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-.field input[type=text], .field input[type=password], .field input[type=number] {
-  border: 1px solid var(--rule); background: var(--raise); border-radius: 6px; padding: 6px 8px;
-}
-.check { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.check { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.kinds { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.kinds label { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; border: 1px solid transparent; }
+.kinds label:has(input:checked) { border-color: var(--rule); background: var(--raise); }
+.kinds label.off { opacity: .55; }
+.kinds small { color: var(--muted); margin-left: auto; font-size: 12px; }
 .preview { font: 12.5px var(--code); color: var(--muted); min-height: 1.4em; margin: -4px 0 12px; }
 .preview.bad { font-family: var(--ui); color: var(--danger); }
 .dlg-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
-pre.log { margin: 0; max-height: 52vh; overflow: auto; font: 12px/1.5 var(--code); white-space: pre-wrap; word-break: break-all; background: var(--raise); border: 1px solid var(--rule); border-radius: 8px; padding: 10px; }
-dialog.wide { width: min(860px, 90vw); }
+.exts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px 14px; max-height: 52vh; overflow: auto; margin: 10px 0 12px; }
+.exts label { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 2px; }
+.filter { width: 100%; border: 1px solid var(--rule); background: var(--raise); border-radius: 6px; padding: 5px 8px; }
+.secret { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.secret code { font: 13px var(--code); background: var(--raise); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; flex: 1; overflow: auto; white-space: nowrap; }
+.avail td { padding-block: 7px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>OpenLiteSpeed</h1>
-  <span class="ver" id="ver"></span>
-  <span class="edition" id="edition"></span>
-  <nav>
-    <button class="btn quiet" id="btn-webadmin">WebAdmin</button>
-    <button class="btn quiet" id="btn-folder">Projects folder</button>
-    <button class="btn quiet" id="btn-logs">Logs</button>
+<aside>
+  <div class="brand"><h1>OpenLiteSpeed</h1><div id="ver"></div></div>
+  <nav aria-label="Pages">
+    <button data-page="overview" aria-current="page"><span class="dot" id="nav-web"></span>Overview</button>
+    <button data-page="sites"><span class="dot"></span>Sites<span class="count" id="nav-sites"></span></button>
+    <button data-page="php"><span class="dot"></span>PHP<span class="count" id="nav-php"></span></button>
+    <button data-page="node"><span class="dot"></span>Node.js<span class="count" id="nav-node"></span></button>
+    <button data-page="db"><span class="dot" id="nav-db"></span>Databases</button>
+    <button data-page="logs"><span class="dot"></span>Logs</button>
+    <button data-page="settings"><span class="dot"></span>Settings</button>
   </nav>
-</header>
+  <div class="side-foot">
+    <button id="side-terminal">Terminal</button>
+    <button id="side-folder">Projects folder</button>
+    <button id="side-webadmin">WebAdmin</button>
+  </div>
+</aside>
 
 <main>
-  <section class="rail" aria-label="Services">
-    <div class="module" id="m-web">
-      <span class="lamp" aria-hidden="true"></span>
-      <div><h2>Web server</h2><div class="state" id="web-state">Checking</div></div>
-      <button class="switch" role="switch" aria-checked="false" aria-label="Web server" id="web-switch"></button>
-      <div class="ports" id="web-ports"></div>
-      <div class="acts"><button class="btn" id="web-reload">Reload</button></div>
+  <section class="page" id="p-overview">
+    <div class="head"><h2>Overview</h2><button class="btn primary" id="ov-site">New site</button></div>
+    <div class="modules">
+      <div class="module" id="m-web">
+        <span class="lamp" aria-hidden="true"></span>
+        <div><h2>Web server</h2><div class="state" id="web-state">Checking</div></div>
+        <button class="switch" role="switch" aria-checked="false" aria-label="Web server" id="web-switch"></button>
+        <div class="ports" id="web-ports"></div>
+        <div class="acts"><button class="btn" id="web-reload">Reload</button></div>
+      </div>
+      <div class="module" id="m-db" hidden>
+        <span class="lamp" aria-hidden="true"></span>
+        <div><h2>MariaDB</h2><div class="state" id="db-state">Checking</div></div>
+        <button class="switch" role="switch" aria-checked="false" aria-label="MariaDB" id="db-switch"></button>
+        <div class="ports" id="db-ports"></div>
+        <div class="acts" id="db-acts"></div>
+      </div>
+      <div class="module" id="m-tun" hidden>
+        <span class="lamp" aria-hidden="true"></span>
+        <div><h2>Cloudflare Tunnel</h2><div class="state" id="tun-state">Checking</div></div>
+        <span></span>
+        <div class="acts" id="tun-acts"></div>
+      </div>
     </div>
-
-    <div class="module" id="m-db" hidden>
-      <span class="lamp" aria-hidden="true"></span>
-      <div><h2>MariaDB</h2><div class="state" id="db-state">Checking</div></div>
-      <button class="switch" role="switch" aria-checked="false" aria-label="MariaDB" id="db-switch"></button>
-      <div class="ports" id="db-ports"></div>
-      <div class="acts" id="db-acts"></div>
+    <div class="stats" id="stats" hidden>
+      <div class="stat"><b id="st-rps">0</b><span>requests per second</span></div>
+      <div class="stat"><b id="st-conns">0</b><span>open connections</span></div>
+      <div class="stat"><b id="st-total">0</b><span>requests since start</span></div>
     </div>
-
-    <div class="module" id="m-tun" hidden>
-      <span class="lamp" aria-hidden="true"></span>
-      <div><h2>Cloudflare Tunnel</h2><div class="state" id="tun-state">Checking</div></div>
-      <span></span>
-      <div class="acts" id="tun-acts"></div>
-    </div>
-
-    <div class="settings">
-      <div class="row stack"><label for="php">PHP</label><select id="php"></select></div>
-      <div class="row"><label id="https-label">Trusted HTTPS</label><button class="switch" role="switch" aria-checked="false" aria-labelledby="https-label" id="https-switch"></button></div>
-    </div>
+    <h3 class="sub">Sites</h3>
+    <div class="card list" id="ov-sites"></div>
   </section>
 
-  <section class="sites" aria-labelledby="sites-title">
-    <div class="sites-head">
-      <h2 id="sites-title">Sites</h2>
+  <section class="page" id="p-sites" hidden>
+    <div class="head">
+      <h2>Sites</h2>
       <button class="btn" id="btn-proxy">New proxy site</button>
       <button class="btn primary" id="btn-site">New site</button>
     </div>
-    <div class="list" id="list"></div>
+    <div class="card list" id="list"></div>
+  </section>
+
+  <section class="page" id="p-php" hidden>
+    <div class="head"><h2>PHP</h2><button class="btn primary" id="btn-phpinstall">Install PHP</button></div>
+    <div class="card list" id="php-list"></div>
+    <h3 class="sub">Composer</h3>
+    <div class="card pad"><div class="row"><div class="label" id="composer-state"></div><button class="btn" id="btn-composer"></button></div></div>
+  </section>
+
+  <section class="page" id="p-node" hidden>
+    <div class="head"><h2>Node.js</h2><button class="btn primary" id="btn-nodeinstall">Install Node.js</button></div>
+    <div class="card list" id="node-list"></div>
+    <h3 class="sub">Apps</h3>
+    <div class="card list" id="app-list"></div>
+  </section>
+
+  <section class="page" id="p-db" hidden>
+    <div class="head"><h2>Databases</h2><button class="btn primary" id="btn-dbnew">New database</button></div>
+    <div class="card pad" id="db-conn"></div>
+    <h3 class="sub" id="db-sub">Databases</h3>
+    <div class="card list" id="db-list"></div>
+  </section>
+
+  <section class="page" id="p-logs" hidden>
+    <div class="head"><h2>Logs</h2></div>
+    <div class="logs">
+      <div class="card lognav" id="log-nav"></div>
+      <div class="logview">
+        <div class="logbar">
+          <input type="search" id="log-filter" placeholder="Filter lines" aria-label="Filter lines" spellcheck="false">
+          <label><button class="switch" role="switch" aria-checked="false" id="log-follow" aria-label="Follow"></button>Follow</label>
+          <button class="btn" id="log-refresh">Refresh</button>
+          <button class="btn" id="log-notepad">Open in Notepad</button>
+        </div>
+        <pre class="log" id="log-view"></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="page" id="p-settings" hidden>
+    <div class="head"><h2>Settings</h2></div>
+    <div class="card pad">
+      <div class="row"><div class="label" id="lbl-autostart">Start with Windows<small>Starts OpenLiteSpeed when you sign in</small></div><button class="switch" role="switch" aria-checked="false" aria-labelledby="lbl-autostart" id="set-autostart"></button></div>
+      <div class="row"><div class="label">Projects folder<small id="set-www"></small></div><button class="btn" id="set-wwwbtn">Change</button></div>
+      <div class="row"><div class="label" id="https-label">Trusted HTTPS<small id="https-note">Certificates for .test sites that browsers trust</small></div><button class="switch" role="switch" aria-checked="false" aria-labelledby="https-label" id="https-switch"></button></div>
+    </div>
+    <h3 class="sub">Ports</h3>
+    <div class="card pad">
+      <div class="row"><label class="label" for="set-http">HTTP</label><input type="number" id="set-http" min="1" max="65535"><button class="btn" data-port="http">Save</button></div>
+      <div class="row"><label class="label" for="set-admin">WebAdmin</label><input type="number" id="set-admin" min="1" max="65535"><button class="btn" data-port="admin">Save</button></div>
+    </div>
+    <h3 class="sub">WebAdmin password</h3>
+    <div class="card pad">
+      <div class="row"><label class="label" for="set-pw1">New password<small>At least 8 characters, user name admin</small></label><input type="password" id="set-pw1" autocomplete="new-password" placeholder="New password"><input type="password" id="set-pw2" autocomplete="new-password" placeholder="Repeat it" aria-label="Repeat the password"><button class="btn" id="set-pwsave" disabled>Save</button></div>
+    </div>
+    <h3 class="sub">About</h3>
+    <div class="card pad"><div class="row"><div class="label" id="about"></div><button class="btn quiet" id="about-link">Project page</button></div></div>
   </section>
 </main>
 
@@ -273,7 +377,13 @@ dialog.wide { width: min(860px, 90vw); }
   <h3>New site</h3>
   <div class="field"><label for="site-name">Site name</label><input type="text" id="site-name" maxlength="63" autocomplete="off" spellcheck="false"></div>
   <div class="preview" id="site-preview"></div>
-  <label class="check"><input type="checkbox" id="site-wp"> Install WordPress</label>
+  <div class="kinds" id="site-kinds" role="radiogroup" aria-label="Kind of site">
+    <label><input type="radio" name="kind" value="blank" checked> PHP site</label>
+    <label><input type="radio" name="kind" value="wordpress"> WordPress <small>own database when MariaDB runs</small></label>
+    <label id="kind-laravel"><input type="radio" name="kind" value="laravel"> Laravel <small id="kind-laravel-note"></small></label>
+    <label id="kind-node"><input type="radio" name="kind" value="node"> Node.js app <small id="kind-node-note"></small></label>
+    <label id="kind-python"><input type="radio" name="kind" value="python"> Python app <small id="kind-python-note"></small></label>
+  </div>
   <div class="dlg-acts"><button class="btn" data-close>Cancel</button><button class="btn primary" id="site-ok" disabled>Create</button></div>
 </dialog>
 
@@ -298,26 +408,87 @@ dialog.wide { width: min(860px, 90vw); }
   <div class="dlg-acts"><button class="btn" data-close>Cancel</button><button class="btn primary" id="token-ok">Save and start</button></div>
 </dialog>
 
-<dialog id="dlg-logs" class="wide">
-  <h3>Error log</h3>
-  <pre class="log" id="log"></pre>
-  <div class="dlg-acts"><button class="btn" id="log-refresh">Refresh</button><button class="btn primary" data-close>Close</button></div>
+<dialog id="dlg-phpinstall" class="wide">
+  <h3>Install PHP</h3>
+  <p>Official builds from windows.php.net, checked against their SHA-256.</p>
+  <div class="card list" id="php-avail"><div class="empty">Loading</div></div>
+  <div class="dlg-acts"><button class="btn primary" data-close>Close</button></div>
+</dialog>
+
+<dialog id="dlg-ext" class="wide">
+  <h3>Extensions of <span id="ext-title"></span></h3>
+  <input type="search" id="ext-filter" placeholder="Filter" aria-label="Filter extensions" spellcheck="false" class="filter">
+  <div class="exts" id="ext-list"></div>
+  <div class="dlg-acts"><button class="btn primary" data-close>Close</button></div>
+</dialog>
+
+<dialog id="dlg-phpini">
+  <h3>Settings of <span id="ini-title"></span></h3>
+  <div class="fields">
+    <div class="field"><label for="ini-memory_limit">Memory limit</label><input type="text" id="ini-memory_limit" data-key="memory_limit" placeholder="128M"></div>
+    <div class="field"><label for="ini-max_execution_time">Max execution time (s)</label><input type="text" id="ini-max_execution_time" data-key="max_execution_time" placeholder="30"></div>
+    <div class="field"><label for="ini-upload_max_filesize">Upload size</label><input type="text" id="ini-upload_max_filesize" data-key="upload_max_filesize" placeholder="2M"></div>
+    <div class="field"><label for="ini-post_max_size">POST size</label><input type="text" id="ini-post_max_size" data-key="post_max_size" placeholder="8M"></div>
+    <div class="field"><label for="ini-max_input_vars">Max input vars</label><input type="text" id="ini-max_input_vars" data-key="max_input_vars" placeholder="1000"></div>
+    <div class="field"><label for="ini-display_errors">Display errors</label><select id="ini-display_errors" data-key="display_errors"><option>Off</option><option>On</option></select></div>
+  </div>
+  <div class="field"><label for="ini-date.timezone">Time zone</label><input type="text" id="ini-date.timezone" data-key="date.timezone" list="zones" placeholder="UTC" spellcheck="false"></div>
+  <datalist id="zones"></datalist>
+  <div class="dlg-acts"><button class="btn quiet" id="ini-notepad">Edit php.ini</button><span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="ini-ok">Save</button></div>
+</dialog>
+
+<dialog id="dlg-nodeinstall">
+  <h3>Install Node.js</h3>
+  <p>Official builds from nodejs.org, checked against their SHA-256.</p>
+  <div class="card list" id="node-avail"><div class="empty">Loading</div></div>
+  <div class="dlg-acts"><button class="btn primary" data-close>Close</button></div>
+</dialog>
+
+<dialog id="dlg-dbnew">
+  <h3>New database</h3>
+  <div class="field"><label for="dbnew-name">Name</label><input type="text" id="dbnew-name" maxlength="64" autocomplete="off" spellcheck="false"></div>
+  <div class="preview" id="dbnew-preview"></div>
+  <label class="check"><input type="checkbox" id="dbnew-user" checked> Create a user with the same name</label>
+  <div class="dlg-acts"><button class="btn" data-close>Cancel</button><button class="btn primary" id="dbnew-ok" disabled>Create</button></div>
+</dialog>
+
+<dialog id="dlg-dbpw">
+  <h3>Database <span id="dbpw-name"></span> is ready</h3>
+  <p>Save the password now. It is not shown again.</p>
+  <div class="field"><span>User</span><div class="secret"><code id="dbpw-user"></code></div></div>
+  <div class="field"><span>Password</span><div class="secret"><code id="dbpw-pass"></code><button class="btn" id="dbpw-copy">Copy</button></div></div>
+  <div class="field"><span>Host</span><div class="secret"><code id="dbpw-host"></code></div></div>
+  <div class="dlg-acts"><button class="btn primary" id="dbpw-close">Done</button></div>
+</dialog>
+
+<dialog id="dlg-confirm">
+  <h3 id="cf-title"></h3>
+  <p id="cf-text"></p>
+  <div class="field" id="cf-typewrap" hidden><label for="cf-type" id="cf-typelabel"></label><input type="text" id="cf-type" autocomplete="off" spellcheck="false"></div>
+  <label class="check" id="cf-checkwrap" hidden><input type="checkbox" id="cf-check"> <span id="cf-checklabel"></span></label>
+  <div class="dlg-acts"><button class="btn" id="cf-cancel">Cancel</button><button class="btn primary" id="cf-ok"></button></div>
 </dialog>
 
 <script>
 (() => {
   "use strict";
   const $ = id => document.getElementById(id);
-  const wv = window.chrome && window.chrome.webview;
-  let state = null, busy = 0, nextId = 1;
+  const preview = window.__preview || null;
+  const wv = !preview && window.chrome && window.chrome.webview;
+  let state = null, busy = 0, nextId = 1, page = "overview";
+  let phpList = [], nodeList = [], dbList = null, logList = [], logId = "error", logText = "", settings = null;
   const pending = new Map();
 
   function call(action, params = {}) {
-    if (!wv) return Promise.reject(new Error("not running in the panel"));
+    if (preview) {
+      const d = preview.data && preview.data[action];
+      return d instanceof Error ? Promise.reject(d) : Promise.resolve(d === undefined ? null : d);
+    }
+    if (!wv) return Promise.reject(new Error("Open this page from the OpenLiteSpeed panel."));
     const id = nextId++;
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
-      wv.postMessage(JSON.stringify(Object.assign({ id, action }, params)));
+      wv.postMessage(JSON.stringify(Object.assign({}, params, { id, action })));
     });
   }
   if (wv) wv.addEventListener("message", e => {
@@ -338,34 +509,84 @@ dialog.wide { width: min(860px, 90vw); }
   function el(tag, cls, text) {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
-    if (text !== undefined) n.textContent = text;
+    if (text !== undefined && text !== null) n.textContent = text;
     return n;
   }
   function button(text, cls, fn, disabled) {
     const b = el("button", "btn" + (cls ? " " + cls : ""), text);
+    b.type = "button";
     b.addEventListener("click", fn);
     if (disabled) b.disabled = true;
     return b;
+  }
+  function sw(on, label, fn, disabled) {
+    const s = el("button", "switch");
+    s.type = "button";
+    s.setAttribute("role", "switch");
+    s.setAttribute("aria-checked", !!on);
+    s.setAttribute("aria-label", label);
+    s.disabled = !!disabled;
+    s.addEventListener("click", fn);
+    return s;
   }
   function port(value, label) {
     const p = el("div", "port");
     p.append(el("b", "", String(value)), el("span", "", label));
     return p;
   }
+  function table(heads, rows) {
+    const t = el("table"), th = el("thead"), hr = el("tr"), tb = el("tbody");
+    heads.forEach(h => hr.append(el("th", "", h)));
+    th.append(hr);
+    rows.forEach(r => tb.append(r));
+    t.append(th, tb);
+    return t;
+  }
+  function td(content, cls) {
+    const c = el("td", cls);
+    if (content instanceof Node) c.append(content);
+    else if (Array.isArray(content)) content.forEach(x => x && c.append(x));
+    else if (content !== undefined && content !== null) c.textContent = content;
+    return c;
+  }
+  function empty(text, btn) {
+    const e = el("div", "empty");
+    e.append(el("p", "", text));
+    if (btn) e.append(btn);
+    return e;
+  }
+  function size(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(0) + " KB";
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
+    return (n / 1073741824).toFixed(2) + " GB";
+  }
+  function num(n) { return Math.round(n).toLocaleString("en-US"); }
   function siteUrl(domain) {
     const s = state.server;
     if (s.https > 0) return "https://" + domain + (s.https === 443 ? "" : ":" + s.https) + "/";
     return "http://" + domain + (s.http === 80 ? "" : ":" + s.http) + "/";
   }
+  function addr(url) {
+    const a = el("button", "addr", url);
+    a.type = "button";
+    a.addEventListener("click", () => call("open", { url }).catch(e => say(e.message, true)));
+    return a;
+  }
   const nameOk = n => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(n) && n !== "localhost" && n !== "phpmyadmin";
+  const dbOk = n => /^[a-z0-9_]{1,64}$/.test(n) && !/^(mysql|information_schema|performance_schema|sys|root)$/i.test(n);
+  const full = () => state && state.edition === "full";
+  const sameDir = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
+  const kindName = { folder: "PHP", wordpress: "WordPress", laravel: "Laravel", node: "Node.js app", python: "Python app", proxy: "Proxy", tool: "Local only" };
 
   async function act(label, action, params, after) {
     busy++;
     say(label + "...");
     try {
       const data = await call(action, params);
+      if (data === "cancelled") { say(""); return null; }
       say(after ? after(data) : "");
-      return data;
+      return data === null ? true : data;
     } catch (e) {
       say(e.message, true);
       return null;
@@ -375,142 +596,506 @@ dialog.wide { width: min(860px, 90vw); }
     }
   }
 
-  function render() {
-    const s = state;
-    const full = s.edition === "full";
-    $("ver").textContent = s.version || "";
-    $("edition").textContent = full ? "Full stack" : "Web server";
+  let menuOpen = null, menuOwner = null;
+  function closeMenu() { if (menuOpen) { menuOpen.remove(); menuOpen = null; menuOwner = null; } }
+  document.addEventListener("click", e => { if (menuOpen && !menuOpen.contains(e.target) && !(menuOwner && menuOwner.contains(e.target))) closeMenu(); }, true);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeMenu(); });
+  document.querySelector("main").addEventListener("scroll", closeMenu);
+  function menuButton(items) {
+    const wrap = el("span", "menu-wrap"), b = button("More", "small", ev => {
+      ev.stopPropagation();
+      const had = menuOpen && menuOwner === wrap;
+      closeMenu();
+      if (had) return;
+      const m = el("div", "menu");
+      m.setAttribute("role", "menu");
+      items.forEach(it => {
+        if (!it) return;
+        if (it === "-") { m.append(el("hr")); return; }
+        const mi = el("button", it.danger ? "danger" : "", it.label);
+        mi.type = "button";
+        mi.setAttribute("role", "menuitem");
+        mi.addEventListener("click", () => { closeMenu(); it.fn(); });
+        m.append(mi);
+      });
+      document.body.append(m);
+      const br = b.getBoundingClientRect(), mr = m.getBoundingClientRect();
+      const below = br.bottom + 4 + mr.height <= window.innerHeight - 8;
+      m.style.top = Math.max(8, below ? br.bottom + 4 : br.top - 4 - mr.height) + "px";
+      m.style.left = Math.max(8, br.right - mr.width) + "px";
+      menuOpen = m;
+      menuOwner = wrap;
+      const f = m.querySelector("button");
+      if (f) f.focus();
+    });
+    b.setAttribute("aria-haspopup", "menu");
+    wrap.append(b);
+    return wrap;
+  }
 
-    const web = s.server.running;
+  const dlgConfirm = $("dlg-confirm");
+  function ask(o) {
+    $("cf-title").textContent = o.title;
+    $("cf-text").textContent = o.text || "";
+    $("cf-text").hidden = !o.text;
+    $("cf-ok").textContent = o.ok || "OK";
+    $("cf-ok").className = "btn primary" + (o.danger ? " danger" : "");
+    $("cf-typewrap").hidden = !o.type;
+    $("cf-type").value = "";
+    $("cf-typelabel").textContent = o.type ? "Type " + o.type + " to confirm" : "";
+    $("cf-checkwrap").hidden = !o.check;
+    $("cf-check").checked = false;
+    $("cf-checklabel").textContent = o.check || "";
+    $("cf-ok").disabled = !!o.type;
+    return new Promise(resolve => {
+      const done = v => { cleanup(); dlgConfirm.close(); resolve(v); };
+      const ok = () => done({ ok: true, check: $("cf-check").checked });
+      const cancel = () => done(null);
+      const typed = () => { $("cf-ok").disabled = $("cf-type").value !== o.type; };
+      const close = () => { cleanup(); resolve(null); };
+      function cleanup() {
+        $("cf-ok").removeEventListener("click", ok);
+        $("cf-cancel").removeEventListener("click", cancel);
+        $("cf-type").removeEventListener("input", typed);
+        dlgConfirm.removeEventListener("cancel", close);
+      }
+      $("cf-ok").addEventListener("click", ok);
+      $("cf-cancel").addEventListener("click", cancel);
+      $("cf-type").addEventListener("input", typed);
+      dlgConfirm.addEventListener("cancel", close);
+      dlgConfirm.showModal();
+    });
+  }
+
+  function renderShell() {
+    const s = state;
+    $("ver").textContent = (s.version || "") + " · " + (full() ? "Full stack" : "Web server");
+    $("nav-web").className = "dot " + (s.server.running ? "on" : "off");
+    $("nav-db").className = "dot" + (s.db.installed ? (s.db.running ? " on" : " off") : "");
+    document.querySelector('nav [data-page="db"]').hidden = !full() && !s.db.installed;
+    const n = s.sites.filter(x => x.type !== "tool").length;
+    $("nav-sites").textContent = n ? String(n) : "";
+    $("nav-php").textContent = s.php && s.php.version ? s.php.version : "";
+    $("nav-node").textContent = s.node && s.node.version ? s.node.version : "";
+    $("folder-path").textContent = s.www || "";
+  }
+
+  function renderModules() {
+    const s = state, web = s.server.running;
     $("m-web").className = "module" + (web ? " on" : "");
     $("web-state").textContent = web ? (s.server.service ? "Running as a Windows service" : "Running") : "Stopped";
-    const ws = $("web-switch");
-    ws.setAttribute("aria-checked", web);
+    $("web-switch").setAttribute("aria-checked", web);
     $("web-reload").disabled = !web;
     const wp = $("web-ports");
     wp.replaceChildren(port(s.server.http, "HTTP"));
     if (s.server.https > 0) wp.append(port(s.server.https, "HTTPS"));
     wp.append(port(s.server.admin, "WebAdmin"));
 
-    $("m-db").hidden = !full && !s.db.installed;
-    if (full || s.db.installed) {
-      const d = s.db, dm = $("m-db"), acts = $("db-acts"), ds = $("db-switch");
-      dm.className = "module" + (d.running ? " on" : "");
-      ds.hidden = !d.installed;
-      ds.setAttribute("aria-checked", d.running);
+    $("m-db").hidden = !full() && !s.db.installed;
+    if (full() || s.db.installed) {
+      const d = s.db, acts = $("db-acts");
+      $("m-db").className = "module" + (d.running ? " on" : "");
+      $("db-switch").hidden = !d.installed;
+      $("db-switch").setAttribute("aria-checked", d.running);
       $("db-ports").replaceChildren(d.installed ? port(d.port, "Port on 127.0.0.1") : "");
       $("db-state").textContent = d.installed ? (d.running ? "Running" : "Stopped") : "Not installed";
       acts.replaceChildren();
       if (d.installed) {
         acts.append(button("phpMyAdmin", "", () => call("pma.open").catch(e => say(e.message, true)), !d.running || !web));
-        acts.append(button("Copy password", "", () => act("Copying", "db.copypw", {}, () => "The root password is on the clipboard. It is not kept in the clipboard history.")));
+        acts.append(button("Copy password", "", copyRootPw));
       } else {
-        acts.append(button("Install MariaDB and phpMyAdmin", "primary", () =>
-          act("Downloading MariaDB and phpMyAdmin", "db.install", {}, () => "MariaDB is running. Use Copy password to sign in to phpMyAdmin as root.")));
+        acts.append(button("Install MariaDB and phpMyAdmin", "primary", installDb));
       }
     }
 
-    if (full) {
-      const t = s.tunnel, tm = $("m-tun"), ta = $("tun-acts");
-      tm.hidden = false;
+    $("m-tun").hidden = !full();
+    if (full()) {
+      const t = s.tunnel, ta = $("tun-acts");
       const shared = s.sites.filter(x => x.tunnel).length;
-      tm.className = "module" + (shared || t.named ? " on" : "");
+      $("m-tun").className = "module" + (shared || t.named ? " on" : "");
       $("tun-state").textContent = t.named ? "Your domain is connected" : shared ? shared + (shared === 1 ? " site is online" : " sites are online") : "Nothing is shared";
       ta.replaceChildren();
       if (t.named) ta.append(button("Disconnect your domain", "", () => act("Disconnecting", "tunnel.runstop", {})));
       else if (t.token) ta.append(button("Connect your domain", "", () => act("Connecting", "tunnel.run", {}, () => "Your domain is connected.")));
       ta.append(button(t.token ? "Change token" : "Use your own domain", "", openToken));
       if (t.token && !t.named) ta.append(button("Forget token", "quiet", () => act("Removing the token", "tunnel.clear", {})));
-    } else {
-      $("m-tun").hidden = true;
     }
 
-    const hs = $("https-switch");
-    hs.setAttribute("aria-checked", s.server.https > 0);
-
-    renderSites(full);
-    $("folder-path").textContent = s.www || "";
+    const st = s.stats || {};
+    $("stats").hidden = !web || !st.reports;
+    $("st-rps").textContent = (st.reqPerSec || 0).toFixed(st.reqPerSec >= 100 ? 0 : 1);
+    $("st-conns").textContent = num(st.conns || 0);
+    $("st-total").textContent = num(st.totalReqs || 0);
   }
 
-  function renderSites(full) {
-    const list = $("list"), sites = state.sites;
+  function copyRootPw() {
+    act("Copying", "db.copypw", {}, () => "The root password is on the clipboard. It is not kept in the clipboard history.");
+  }
+  function installDb() {
+    act("Downloading MariaDB and phpMyAdmin", "db.install", {}, () => "MariaDB is running. Use Copy password to sign in to phpMyAdmin as root.");
+  }
+
+  function renderOverview() {
+    renderModules();
+    const box = $("ov-sites"), sites = state.sites.filter(x => x.type !== "tool");
     if (!sites.length) {
-      const e = el("div", "empty");
-      e.append(el("p", "", "Every folder in your projects folder becomes a site."));
-      e.append(button("Create a site", "primary", openSite));
-      list.replaceChildren(e);
+      box.replaceChildren(empty("Every folder in your projects folder becomes a site.", button("Create a site", "primary", openSite)));
       return;
     }
-    const table = el("table"), head = el("tr");
-    ["Site", "Kind", "Address"].concat(full ? ["Online"] : []).concat([""]).forEach(h => head.append(el("th", "", h)));
-    const thead = el("thead"); thead.append(head);
-    const tbody = el("tbody");
-    for (const site of sites) {
+    const rows = sites.slice(0, 8).map(site => {
       const tr = el("tr");
-      tr.append(el("td", "name", site.domain));
-      const kind = site.type === "wordpress" ? "WordPress" : site.type === "proxy" ? "App, port " + site.port : site.type === "tool" ? "Local only" : "Folder";
-      tr.append(el("td", "kind", kind));
-      const addrTd = el("td"), url = siteUrl(site.domain), a = el("button", "addr", url);
-      a.addEventListener("click", () => call("open", { url }).catch(e => say(e.message, true)));
-      addrTd.append(a);
-      if (full && site.tunnel && site.tunnelUrl) {
-        const pub = el("div", "public"), pa = el("button", "addr", site.tunnelUrl);
+      tr.append(td(site.domain, "name"), td(kindName[site.type] || site.type, "muted nowrap"), td(addr(siteUrl(site.domain))));
+      const on = td(null, "end");
+      if (site.tunnel && site.tunnelUrl) on.append(el("span", "tag live", "Online"));
+      tr.append(on);
+      return tr;
+    });
+    const t = table(["Site", "Kind", "Address", ""], rows);
+    box.replaceChildren(t);
+    if (sites.length > 8) {
+      const more = el("div", "empty");
+      more.style.padding = "10px";
+      more.append(button("All " + sites.length + " sites", "quiet", () => show("sites")));
+      box.append(more);
+    }
+  }
+
+  function phpOptions(site) {
+    const sel = el("select");
+    sel.setAttribute("aria-label", "PHP for " + site.domain);
+    const def = el("option", "", "Default" + (state.php.version ? " (" + state.php.version + ")" : ""));
+    def.value = "-1";
+    sel.append(def);
+    let matched = !site.php;
+    phpList.forEach((p, i) => {
+      if (p.current) return;
+      const o = el("option", "", p.version + (p.ts ? " TS" : "") + (p.source && p.source !== "OpenLiteSpeed" ? " · " + p.source : ""));
+      o.value = String(i);
+      o.title = p.dir;
+      if (sameDir(p.dir, site.php)) { o.selected = true; matched = true; }
+      sel.append(o);
+    });
+    if (!matched) {
+      const o = el("option", "", "Unknown");
+      o.value = "x";
+      o.selected = true;
+      o.disabled = true;
+      sel.append(o);
+    }
+    sel.disabled = busy > 0 && !preview;
+    sel.addEventListener("change", () => {
+      const index = parseInt(sel.value, 10);
+      act("Switching PHP for " + site.domain, "site.php", { name: site.name, index }, () => site.domain + " uses " + (index < 0 ? "the default PHP" : "PHP " + phpList[index].version) + ".");
+    });
+    return sel;
+  }
+
+  function siteMenu(site) {
+    const isApp = site.type === "node" || site.type === "python", php = ["folder", "wordpress", "laravel"].includes(site.type);
+    const items = [];
+    if (site.type !== "proxy" && site.type !== "tool") {
+      items.push({ label: "Open folder", fn: () => call("site.folder", { name: site.name }).catch(e => say(e.message, true)) });
+      items.push({ label: "Open terminal here", fn: () => call("site.terminal", { name: site.name }).catch(e => say(e.message, true)) });
+    }
+    if (isApp) {
+      items.push({ label: "Restart app", fn: () => act("Restarting " + site.domain, "app.restart", { name: site.name }, () => site.domain + " restarts within 10 seconds.") });
+      items.push({ label: "App log", fn: () => { logId = "app:" + site.name; show("logs"); } });
+      items.push("-");
+      items.push({ label: "Run as a PHP site", fn: () => act("Changing " + site.domain, "site.app", { name: site.name, kind: "off" }, () => site.domain + " is a PHP site again.") });
+    }
+    if (php && site.type === "folder") {
+      items.push("-");
+      items.push({ label: "Run as a Node.js app", fn: () => act("Changing " + site.domain, "site.app", { name: site.name, kind: "node" }, () => site.domain + " runs as a Node.js app.") });
+      if (state.python) items.push({ label: "Run as a Python app", fn: () => act("Changing " + site.domain, "site.app", { name: site.name, kind: "python" }, () => site.domain + " runs as a Python app.") });
+    }
+    if (site.type === "proxy") {
+      items.push({ label: "Remove proxy site", danger: true, fn: async () => {
+        if (await ask({ title: "Remove " + site.domain + "?", text: "The app on port " + site.port + " is not touched.", ok: "Remove", danger: true }))
+          act("Removing", "proxy.remove", { name: site.name }, () => site.domain + " was removed.");
+      } });
+    } else if (site.type !== "tool") {
+      items.push("-");
+      items.push({ label: "Remove site", danger: true, fn: async () => {
+        const r = await ask({ title: "Remove " + site.domain + "?", text: "The folder " + site.name + " goes to the Recycle Bin. Databases are kept.", ok: "Remove", danger: true, type: site.name });
+        if (r) act("Removing " + site.domain, "site.remove", { name: site.name }, () => site.domain + " is in the Recycle Bin.");
+      } });
+    }
+    return items.length ? menuButton(items) : null;
+  }
+
+  function renderSites() {
+    const list = $("list"), sites = state.sites, f = full();
+    if (!sites.length) {
+      list.replaceChildren(empty("Every folder in your projects folder becomes a site.", button("Create a site", "primary", openSite)));
+      return;
+    }
+    const rows = sites.map(site => {
+      const tr = el("tr");
+      tr.append(td(site.domain, "name"));
+      tr.append(td(site.type === "proxy" ? "App on port " + site.port : kindName[site.type] || site.type, "muted nowrap"));
+      const php = ["folder", "wordpress", "laravel"].includes(site.type);
+      tr.append(td(php ? phpOptions(site) : el("span", "muted", "—")));
+      const a = td(addr(siteUrl(site.domain)), "grow");
+      if (f && site.tunnel && site.tunnelUrl) {
+        const pub = el("div", "public"), pa = addr(site.tunnelUrl);
         pa.title = site.tunnelUrl;
-        pa.addEventListener("click", () => call("open", { url: site.tunnelUrl }).catch(e => say(e.message, true)));
         pub.append(pa, button("Copy", "quiet", () => act("Copying", "copy", { text: site.tunnelUrl }, () => "Link copied.")));
-        addrTd.append(pub);
+        a.append(pub);
       }
-      tr.append(addrTd);
-      if (full) {
-        const on = el("td");
+      tr.append(a);
+      if (f) {
+        const on = td();
         if (site.type !== "tool") {
-          const wrap = el("div", "online"), sw = el("button", "switch");
-          sw.setAttribute("role", "switch");
-          sw.setAttribute("aria-checked", !!site.tunnel);
-          sw.setAttribute("aria-label", "Share " + site.domain + " online");
-          sw.disabled = !state.server.running;
-          sw.addEventListener("click", () => site.tunnel
+          const wrap = el("div", "online");
+          wrap.append(sw(site.tunnel, "Share " + site.domain + " online", () => site.tunnel
             ? act("Stopping", "tunnel.stop", { name: site.name }, () => site.domain + " is no longer online.")
-            : openShare(site));
-          wrap.append(sw);
+            : openShare(site), !state.server.running));
           if (site.tunnel && !site.tunnelUrl) wrap.append(el("span", "note", "Starting"));
           on.append(wrap);
         }
         tr.append(on);
       }
-      const end = el("td");
-      if (site.type === "proxy") end.append(button("Remove", "quiet", () => {
-        if (confirm("Remove the proxy site " + site.domain + "? The app itself is not touched."))
-          act("Removing", "proxy.remove", { name: site.name }, () => site.domain + " was removed.");
-      }));
-      tr.append(end);
-      tbody.append(tr);
+      tr.append(td(siteMenu(site), "end"));
+      return tr;
+    });
+    list.replaceChildren(table(["Site", "Kind", "PHP", "Address"].concat(f ? ["Online"] : []).concat([""]), rows));
+  }
+
+  function renderPhp() {
+    const box = $("php-list");
+    if (!phpList.length) {
+      box.replaceChildren(empty("No PHP was found on this computer.", button("Install PHP", "primary", openPhpInstall)));
+    } else {
+      const rows = phpList.map((p, i) => {
+        const tr = el("tr"), used = state.sites.filter(s => sameDir(s.php, p.dir)).length;
+        const name = td(null, "name");
+        name.append("PHP " + p.version + (p.ts ? " TS" : ""));
+        if (p.current) name.append(el("span", "tag live", "Default"));
+        tr.append(name);
+        tr.append(td(p.lsapi ? "LSAPI" : "FastCGI", "muted nowrap"));
+        tr.append(td(p.source, "muted nowrap"));
+        tr.append(td(used ? used + (used === 1 ? " site" : " sites") : p.current ? "Other sites" : "", "muted nowrap"));
+        const end = td(null, "end");
+        if (!p.current) end.append(button("Make default", "small", () => act("Switching PHP", "php.set", { index: i }, () => "PHP " + p.version + " is the default.")));
+        end.append(" ", menuButton([
+          { label: "Extensions", fn: () => openExt(i) },
+          { label: "Settings", fn: () => openIni(i) },
+          { label: "Edit php.ini", fn: () => call("php.editini", { index: i }).catch(e => say(e.message, true)) },
+          { label: "Open folder", fn: () => call("php.folder", { index: i }).catch(e => say(e.message, true)) },
+          p.ours && !p.current && !used ? "-" : null,
+          p.ours && !p.current && !used ? { label: "Remove", danger: true, fn: async () => {
+            if (await ask({ title: "Remove PHP " + p.version + "?", text: "The folder " + p.dir + " is deleted.", ok: "Remove", danger: true }))
+              act("Removing PHP " + p.version, "php.remove", { index: i }, () => "PHP " + p.version + " was removed.").then(loadPhp);
+          } } : null
+        ]));
+        tr.append(end);
+        return tr;
+      });
+      box.replaceChildren(table(["Version", "Runs as", "From", "Used by", ""], rows));
     }
-    table.append(thead, tbody);
-    list.replaceChildren(table);
+    $("composer-state").replaceChildren(document.createTextNode(state.composer ? "Composer is installed" : "Composer is not installed"),
+      el("small", "", state.composer ? "Use it from the terminal, or create Laravel sites" : "Needed for Laravel sites and composer in the terminal"));
+    $("btn-composer").textContent = state.composer ? "Update" : "Install";
+  }
+
+  function renderNode() {
+    const box = $("node-list");
+    if (!nodeList.length) {
+      box.replaceChildren(empty("No Node.js was found on this computer.", button("Install Node.js", "primary", openNodeInstall)));
+    } else {
+      const rows = nodeList.map((n, i) => {
+        const tr = el("tr"), name = td(null, "name");
+        name.append("Node.js " + n.version);
+        if (n.default) name.append(el("span", "tag live", "Default"));
+        tr.append(name, td(n.source, "muted nowrap"), td(n.exe, "muted"));
+        const end = td(null, "end");
+        if (!n.default) end.append(button("Make default", "small", () => act("Switching Node.js", "node.default", { index: i }, () => "Node.js " + n.version + " runs the apps.").then(loadNode)));
+        if (n.ours && !n.default) end.append(" ", button("Remove", "small danger", async () => {
+          if (await ask({ title: "Remove Node.js " + n.version + "?", ok: "Remove", danger: true }))
+            act("Removing Node.js " + n.version, "node.remove", { index: i }, () => "Node.js " + n.version + " was removed.").then(loadNode);
+        }));
+        tr.append(end);
+        return tr;
+      });
+      box.replaceChildren(table(["Version", "From", "Path", ""], rows));
+    }
+    const apps = state.sites.filter(s => s.type === "node" || s.type === "python");
+    const ab = $("app-list");
+    if (!apps.length) {
+      ab.replaceChildren(empty("Create a Node.js app, or run a folder with package.json as an app from the Sites page.", button("New Node.js app", "", () => openSite("node"))));
+      return;
+    }
+    ab.replaceChildren(table(["App", "Runs on", "Address", ""], apps.map(site => {
+      const tr = el("tr");
+      tr.append(td(site.domain, "name"), td(site.type === "python" ? "Python" : "Node.js " + (state.node.version || ""), "muted nowrap"), td(addr(siteUrl(site.domain))));
+      const end = td(null, "end");
+      end.append(button("Restart", "small", () => act("Restarting " + site.domain, "app.restart", { name: site.name }, () => site.domain + " restarts within 10 seconds.")),
+        " ", button("Log", "small", () => { logId = "app:" + site.name; show("logs"); }));
+      tr.append(end);
+      return tr;
+    })));
+  }
+
+  function renderDb() {
+    const d = state.db, conn = $("db-conn"), box = $("db-list");
+    $("btn-dbnew").disabled = !d.installed || !d.running;
+    conn.replaceChildren();
+    if (!d.installed) {
+      const r = el("div", "row");
+      r.append(el("div", "label", "MariaDB and phpMyAdmin are not installed"), button("Install", "primary", installDb));
+      conn.append(r);
+      $("db-sub").hidden = true;
+      box.hidden = true;
+      return;
+    }
+    $("db-sub").hidden = false;
+    box.hidden = false;
+    const r1 = el("div", "row"), l1 = el("div", "label", "MariaDB");
+    l1.append(el("small", "", d.running ? "Running on 127.0.0.1, port " + d.port + ", user root" : "Stopped"));
+    r1.append(l1, sw(d.running, "MariaDB", () => act(d.running ? "Stopping MariaDB" : "Starting MariaDB", d.running ? "db.stop" : "db.start", {}).then(loadDb)));
+    const r2 = el("div", "row"), l2 = el("div", "label", "Root password");
+    l2.append(el("small", "", "Kept in data\\client.cnf, readable only by your account"));
+    r2.append(l2, button("Copy password", "", copyRootPw), button("phpMyAdmin", "", () => call("pma.open").catch(e => say(e.message, true)), !d.running || !state.server.running));
+    conn.append(r1, r2);
+    if (!d.running) { dbList = null; box.replaceChildren(empty("Start MariaDB to see the databases.")); return; }
+    if (dbList === null) { box.replaceChildren(empty("Loading")); if (!preview) loadDb(); return; }
+    if (!dbList.length) { box.replaceChildren(empty("There are no databases yet.", button("New database", "primary", openDbNew))); return; }
+    box.replaceChildren(table(["Database", "Tables", "Size", ""], dbList.map(db => {
+      const tr = el("tr");
+      tr.append(td(db.name, "name"), td(String(db.tables), "muted"), td(size(db.size), "muted nowrap"));
+      const end = td(null, "end");
+      if (db.managed) {
+        end.append(button("Export", "small", () => act("Exporting " + db.name, "db.export", { name: db.name }, () => db.name + " was exported.")),
+          " ", button("Import", "small", () => act("Importing into " + db.name, "db.import", { name: db.name }, () => "The import into " + db.name + " finished.").then(loadDb)),
+          " ", button("Remove", "small danger", async () => {
+            const r = await ask({ title: "Remove the database " + db.name + "?", text: "All tables in it are deleted. Export it first if you need the data.", ok: "Remove", danger: true, type: db.name, check: db.user ? "Also remove the user " + db.name : "" });
+            if (r) act("Removing " + db.name, "db.drop", { name: db.name, user: !!(db.user && r.check) }, () => db.name + " was removed.").then(loadDb);
+          }));
+      }
+      tr.append(end);
+      return tr;
+    })));
+  }
+
+  function renderLogs() {
+    const nav = $("log-nav");
+    nav.replaceChildren();
+    if (!logList.length) nav.append(el("div", "note", "No logs yet"));
+    if (logList.length && !logList.some(l => l.id === logId)) logId = logList[0].id;
+    logList.forEach(l => {
+      const b = el("button");
+      b.type = "button";
+      b.append(document.createTextNode(l.label), el("span", "", size(l.size)));
+      b.setAttribute("aria-current", l.id === logId);
+      b.addEventListener("click", () => { logId = l.id; renderLogs(); loadLog(true); });
+      nav.append(b);
+    });
+  }
+  function paintLog(toEnd) {
+    const f = $("log-filter").value.trim().toLowerCase(), v = $("log-view");
+    let t = logText;
+    if (f) t = t.split("\n").filter(x => x.toLowerCase().includes(f)).join("\n");
+    const atEnd = v.scrollTop + v.clientHeight >= v.scrollHeight - 30;
+    v.textContent = t || (logText ? "No lines match." : "The log is empty.");
+    if (toEnd || atEnd) v.scrollTop = v.scrollHeight;
+  }
+
+  function renderSettings() {
+    $("set-www").textContent = state.www || "";
+    $("https-switch").setAttribute("aria-checked", state.server.https > 0);
+    $("https-note").textContent = state.server.https > 0 ? "On, port " + state.server.https : "Certificates for .test sites that browsers trust";
+    if (document.activeElement !== $("set-http")) $("set-http").value = state.server.http;
+    if (document.activeElement !== $("set-admin")) $("set-admin").value = state.server.admin;
+    $("about").textContent = "OpenLiteSpeed for Windows " + (state.version || "") + ", " + (full() ? "full stack edition" : "web server edition");
+    if (settings) $("set-autostart").setAttribute("aria-checked", !!settings.autostart);
+  }
+
+  function render() {
+    if (!state) return;
+    renderShell();
+    if (page === "overview") renderOverview();
+    else if (page === "sites") renderSites();
+    else if (page === "php") renderPhp();
+    else if (page === "node") renderNode();
+    else if (page === "db") renderDb();
+    else if (page === "logs") renderLogs();
+    else if (page === "settings") renderSettings();
   }
 
   async function refresh() {
-    if (!wv) return;
+    if (!wv && !preview) return;
     try {
-      state = await call("status");
+      state = preview ? preview.state : await call("status");
       render();
     } catch (e) {
       say(e.message, true);
     }
   }
 
-  function wireDialog(d) {
-    d.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => d.close()));
+  async function loadPhp() {
+    try { phpList = (await call("php.list")) || []; } catch (e) { say(e.message, true); }
+    render();
   }
-  document.querySelectorAll("dialog").forEach(wireDialog);
+  async function loadNode() {
+    try { nodeList = (await call("node.list")) || []; } catch (e) { say(e.message, true); }
+    render();
+  }
+  let dbLoading = false;
+  async function loadDb() {
+    if (!state || !state.db.installed || !state.db.running) { dbList = null; render(); return; }
+    if (dbLoading) return;
+    dbLoading = true;
+    try { dbList = (await call("db.list")) || []; } catch (e) { dbList = []; say(e.message, true); }
+    dbLoading = false;
+    render();
+  }
+  async function loadLogs() {
+    try { logList = (await call("log.list")) || []; } catch (e) { say(e.message, true); }
+    renderLogs();
+    loadLog(true);
+  }
+  async function loadLog(toEnd) {
+    if (!logList.some(l => l.id === logId)) { logText = ""; paintLog(toEnd); return; }
+    try { logText = (await call("log.read", { log: logId })) || ""; } catch (e) { logText = e.message; }
+    paintLog(toEnd);
+  }
+  async function loadSettings() {
+    try { settings = await call("settings"); } catch (e) { say(e.message, true); }
+    render();
+  }
 
-  function openSite() {
+  function show(p) {
+    page = p;
+    closeMenu();
+    document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-current", b.dataset.page === p ? "page" : "false"));
+    document.querySelectorAll("section.page").forEach(s => { s.hidden = s.id !== "p-" + p; });
+    render();
+    if (p === "sites" || p === "php") loadPhp();
+    if (p === "node") loadNode();
+    if (p === "db") loadDb();
+    if (p === "logs") loadLogs();
+    if (p === "settings") loadSettings();
+    document.querySelector("main").scrollTop = 0;
+  }
+  document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => show(b.dataset.page)));
+
+  document.querySelectorAll("dialog").forEach(d => d.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => d.close())));
+
+  function openSite(kind) {
     $("site-name").value = "";
-    $("site-wp").checked = false;
+    const k = typeof kind === "string" ? kind : "blank";
+    document.querySelectorAll("#site-kinds input").forEach(r => { r.checked = r.value === k; });
+    const canLaravel = !!(state && state.composer && state.php && state.php.version);
+    const canNode = !!(state && state.node && state.node.exe), canPy = !!(state && state.python);
+    [["laravel", canLaravel, "install Composer on the PHP page"], ["node", canNode, "install Node.js on the Node.js page"], ["python", canPy, "Python was not found"]].forEach(([n, ok, why]) => {
+      $("kind-" + n).className = ok ? "" : "off";
+      $("kind-" + n).querySelector("input").disabled = !ok;
+      $("kind-" + n + "-note").textContent = ok ? (n === "node" ? "Node.js " + state.node.version : n === "laravel" ? "with Composer" : "") : why;
+    });
     checkSite();
     $("dlg-site").showModal();
   }
+  function siteKind() { const r = document.querySelector("#site-kinds input:checked"); return r ? r.value : "blank"; }
   function checkSite() {
     const n = $("site-name").value.trim(), p = $("site-preview");
     const taken = state && state.sites.some(s => s.name === n);
@@ -521,10 +1106,11 @@ dialog.wide { width: min(860px, 90vw); }
   }
   $("site-name").addEventListener("input", checkSite);
   $("site-ok").addEventListener("click", () => {
-    const name = $("site-name").value.trim(), wp = $("site-wp").checked;
+    const name = $("site-name").value.trim(), kind = siteKind(), dom = name + "." + state.tld;
     $("dlg-site").close();
-    act(wp ? "Creating " + name + " and downloading WordPress" : "Creating " + name, "site.new", { name, wp },
-      () => wp ? name + "." + state.tld + " is ready. Finish the WordPress setup in the browser." : name + "." + state.tld + " is ready.");
+    const label = { wordpress: "Creating " + name + " and downloading WordPress", laravel: "Creating " + name + " with Composer, this takes a minute", node: "Creating the Node.js app " + name, python: "Creating the Python app " + name }[kind] || "Creating " + name;
+    const done = { wordpress: dom + " is ready. Finish the WordPress setup in the browser.", laravel: dom + " is a new Laravel project." }[kind] || dom + " is ready.";
+    act(label, "site.new", { name, kind }, () => done);
   });
 
   function openProxy() {
@@ -576,8 +1162,158 @@ dialog.wide { width: min(860px, 90vw); }
       act("Connecting", "tunnel.run", {}, () => "Your domain is connected.");
   });
 
+  async function openPhpInstall() {
+    const box = $("php-avail");
+    box.replaceChildren(empty("Loading the versions from windows.php.net"));
+    $("dlg-phpinstall").showModal();
+    let list;
+    try { list = (await call("php.available")) || []; } catch (e) { box.replaceChildren(empty(e.message)); return; }
+    const branches = [...new Set(list.map(x => x.branch))].sort((a, b) => parseFloat(b) - parseFloat(a));
+    const rows = branches.map(br => {
+      const tr = el("tr"), items = list.filter(x => x.branch === br), nts = items.find(x => !x.ts), ts = items.find(x => x.ts);
+      const any = nts || ts, name = td(null, "name");
+      name.append("PHP " + any.version);
+      if (!any.lsapi) name.append(el("span", "tag", "FastCGI only"));
+      tr.append(name);
+      const cell = (x, label) => {
+        const c = td(null, "end");
+        if (!x) return c;
+        if (x.installed) c.append(el("span", "muted", label + " installed"));
+        else c.append(button("Install " + label, "small", async ev => {
+          ev.target.disabled = true;
+          const r = await act("Downloading PHP " + x.version + " " + label, "php.install", { branch: x.branch, ts: x.ts }, () => "PHP " + x.version + " " + label + " is installed. Make it the default or pick it for a site.");
+          if (r !== null) { $("dlg-phpinstall").open && $("dlg-phpinstall").close(); loadPhp(); }
+          else ev.target.disabled = false;
+        }));
+        return c;
+      };
+      tr.append(cell(nts, "NTS"), cell(ts, "TS"));
+      return tr;
+    });
+    const t = table(["Version", "", ""], rows);
+    t.classList.add("avail");
+    box.replaceChildren(t);
+  }
+
+  let extIndex = -1, extData = [];
+  async function openExt(i) {
+    extIndex = i;
+    $("ext-title").textContent = "PHP " + phpList[i].version;
+    $("ext-filter").value = "";
+    $("ext-list").replaceChildren(el("div", "note", "Loading"));
+    $("dlg-ext").showModal();
+    try { extData = ((await call("php.ext", { index: i })) || {}).extensions || []; } catch (e) { $("ext-list").replaceChildren(el("div", "note", e.message)); return; }
+    paintExt();
+  }
+  function paintExt() {
+    const f = $("ext-filter").value.trim().toLowerCase(), box = $("ext-list");
+    box.replaceChildren();
+    extData.filter(x => !f || x.name.includes(f)).forEach(x => {
+      const l = el("label");
+      l.append(el("span", "", x.name), sw(x.on, x.name, async ev => {
+        const s = ev.currentTarget, on = s.getAttribute("aria-checked") !== "true";
+        s.disabled = true;
+        const r = await act((on ? "Turning on " : "Turning off ") + x.name, "php.extset", { index: extIndex, name: x.name, on }, () => x.name + (on ? " is on." : " is off.") + " The web server was reloaded.");
+        s.disabled = false;
+        if (r !== null) { x.on = on; s.setAttribute("aria-checked", on); }
+      }));
+      box.append(l);
+    });
+  }
+  $("ext-filter").addEventListener("input", paintExt);
+
+  let iniIndex = -1, iniData = {};
+  const zones = ["UTC", "Europe/Istanbul", "Europe/London", "Europe/Berlin", "Europe/Paris", "Europe/Amsterdam", "Europe/Madrid", "Europe/Rome", "Europe/Moscow", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Sao_Paulo", "Asia/Dubai", "Asia/Kolkata", "Asia/Shanghai", "Asia/Tokyo", "Asia/Singapore", "Australia/Sydney"];
+  zones.forEach(z => { const o = el("option"); o.value = z; $("zones").append(o); });
+  async function openIni(i) {
+    iniIndex = i;
+    $("ini-title").textContent = "PHP " + phpList[i].version;
+    document.querySelectorAll("#dlg-phpini [data-key]").forEach(f => { f.value = ""; });
+    $("dlg-phpini").showModal();
+    try { iniData = (await call("php.ini", { index: i })) || {}; } catch (e) { say(e.message, true); return; }
+    document.querySelectorAll("#dlg-phpini [data-key]").forEach(f => {
+      const v = iniData[f.dataset.key] || "";
+      if (f.tagName === "SELECT") f.value = /^(on|1|true)$/i.test(v) ? "On" : "Off";
+      else f.value = v.replace(/^"|"$/g, "");
+    });
+  }
+  $("ini-ok").addEventListener("click", async () => {
+    const changes = [];
+    document.querySelectorAll("#dlg-phpini [data-key]").forEach(f => {
+      const k = f.dataset.key, v = f.value.trim(), old = (iniData[k] || "").replace(/^"|"$/g, "");
+      const cur = f.tagName === "SELECT" ? (/^(on|1|true)$/i.test(old) ? "On" : "Off") : old;
+      if (v && v !== cur) changes.push([k, v]);
+    });
+    $("dlg-phpini").close();
+    for (const [key, value] of changes) {
+      if (await act("Saving " + key, "php.iniset", { index: iniIndex, key, value }) === null) return;
+    }
+    if (changes.length) say("Saved. The web server was reloaded.");
+  });
+  $("ini-notepad").addEventListener("click", () => call("php.editini", { index: iniIndex }).catch(e => say(e.message, true)));
+
+  async function openNodeInstall() {
+    const box = $("node-avail");
+    box.replaceChildren(empty("Loading the versions from nodejs.org"));
+    $("dlg-nodeinstall").showModal();
+    let list;
+    try { list = (await call("node.available")) || []; } catch (e) { box.replaceChildren(empty(e.message)); return; }
+    const t = table(["Version", "", ""], list.map(n => {
+      const tr = el("tr");
+      tr.append(td("Node.js " + n.version, "name"), td(n.lts ? "LTS " + n.lts : "Current", "muted"));
+      const c = td(null, "end");
+      if (n.installed) c.append(el("span", "muted", "Installed"));
+      else c.append(button("Install", "small", async ev => {
+        ev.target.disabled = true;
+        const r = await act("Downloading Node.js " + n.version, "node.install", { major: n.major }, () => "Node.js " + n.version + " is installed.");
+        if (r !== null) { $("dlg-nodeinstall").close(); loadNode(); } else ev.target.disabled = false;
+      }));
+      tr.append(c);
+      return tr;
+    }));
+    t.classList.add("avail");
+    box.replaceChildren(t);
+  }
+
+  function openDbNew() {
+    $("dbnew-name").value = "";
+    $("dbnew-user").checked = true;
+    checkDbNew();
+    $("dlg-dbnew").showModal();
+  }
+  function checkDbNew() {
+    const n = $("dbnew-name").value.trim(), taken = dbList && dbList.some(d => d.name.toLowerCase() === n.toLowerCase());
+    const ok = dbOk(n) && !taken;
+    $("dbnew-preview").className = "preview" + (n && !ok ? " bad" : "");
+    $("dbnew-preview").textContent = !n ? "" : taken ? "A database with this name exists" : ok ? "" : "Use lowercase letters, digits and '_'";
+    $("dbnew-ok").disabled = !ok;
+  }
+  $("dbnew-name").addEventListener("input", checkDbNew);
+  $("dbnew-ok").addEventListener("click", async () => {
+    const name = $("dbnew-name").value.trim(), user = $("dbnew-user").checked;
+    $("dlg-dbnew").close();
+    const r = await act("Creating " + name, "db.create", { name, user }, () => "The database " + name + " is ready.");
+    loadDb();
+    if (r && r.password) {
+      $("dbpw-name").textContent = name;
+      $("dbpw-user").textContent = r.user;
+      $("dbpw-pass").textContent = r.password;
+      $("dbpw-host").textContent = "127.0.0.1:" + state.db.port;
+      $("dlg-dbpw").showModal();
+    }
+  });
+  $("dbpw-copy").addEventListener("click", () => act("Copying", "db.copytext", { text: $("dbpw-pass").textContent }, () => "The password is on the clipboard. It is not kept in the clipboard history."));
+  function clearPw() { $("dbpw-pass").textContent = ""; }
+  $("dbpw-close").addEventListener("click", () => { clearPw(); $("dlg-dbpw").close(); });
+  $("dlg-dbpw").addEventListener("close", clearPw);
+
   $("btn-site").addEventListener("click", openSite);
+  $("ov-site").addEventListener("click", openSite);
   $("btn-proxy").addEventListener("click", openProxy);
+  $("btn-phpinstall").addEventListener("click", openPhpInstall);
+  $("btn-nodeinstall").addEventListener("click", openNodeInstall);
+  $("btn-dbnew").addEventListener("click", openDbNew);
+  $("btn-composer").addEventListener("click", () => act(state.composer ? "Updating Composer" : "Installing Composer", "composer.install", {}, () => "Composer is installed."));
   $("web-switch").addEventListener("click", () => {
     const on = state.server.running;
     act(on ? "Stopping the web server" : "Starting the web server", on ? "server.stop" : "server.start", {});
@@ -587,47 +1323,58 @@ dialog.wide { width: min(860px, 90vw); }
     const on = state.db.running;
     act(on ? "Stopping MariaDB" : "Starting MariaDB", on ? "db.stop" : "db.start", {});
   });
-  $("https-switch").addEventListener("click", () => {
+  $("https-switch").addEventListener("click", async () => {
     const on = state.server.https > 0;
-    if (!on && !confirm("Windows will ask you to trust a certificate authority made on this computer. It can only sign certificates for .test, .localhost and .internal sites and for this computer's own address.\n\nTurn on trusted HTTPS?")) return;
+    if (!on && !await ask({ title: "Turn on trusted HTTPS?", text: "Windows will ask you to trust a certificate authority made on this computer. It can only sign certificates for .test, .localhost and .internal sites and for this computer's own address.", ok: "Turn on" })) return;
     act(on ? "Turning off trusted HTTPS" : "Turning on trusted HTTPS", "https", { on: !on }, () => on ? "Trusted HTTPS is off." : "Trusted HTTPS is on.");
   });
-  $("php").addEventListener("change", e => {
-    const i = parseInt(e.target.value, 10);
-    act("Switching PHP", "php.set", { index: i }, () => "PHP was switched.");
+  $("set-autostart").addEventListener("click", async () => {
+    const on = !(settings && settings.autostart);
+    if (await act(on ? "Turning on start with Windows" : "Turning off start with Windows", "settings.autostart", { on }) !== null) loadSettings();
   });
-  $("btn-webadmin").addEventListener("click", () => call("open", { url: "https://localhost:" + state.server.admin + "/" }).catch(e => say(e.message, true)));
-  $("btn-folder").addEventListener("click", () => call("folder", { which: "www" }).catch(e => say(e.message, true)));
-  async function loadLog() {
-    try { $("log").textContent = (await call("log")) || "The log is empty."; }
-    catch (e) { $("log").textContent = e.message; }
-  }
-  $("btn-logs").addEventListener("click", () => { loadLog(); $("dlg-logs").showModal(); });
-  $("log-refresh").addEventListener("click", loadLog);
+  $("set-wwwbtn").addEventListener("click", () => act("Choosing the projects folder", "settings.www", {}, () => "The sites now come from the new folder."));
+  document.querySelectorAll("[data-port]").forEach(b => b.addEventListener("click", async () => {
+    const which = b.dataset.port, portNum = parseInt($(which === "http" ? "set-http" : "set-admin").value, 10);
+    if (!(portNum > 0 && portNum < 65536)) { say("Use a port between 1 and 65535.", true); return; }
+    if (await ask({ title: "Change the " + (which === "http" ? "HTTP" : "WebAdmin") + " port to " + portNum + "?", text: state.server.running ? "The web server restarts." : "", ok: "Change" }))
+      act("Changing the port", "settings.port", { which, port: portNum }, () => "The " + (which === "http" ? "HTTP" : "WebAdmin") + " port is " + portNum + ".");
+  }));
+  function checkPw() { const a = $("set-pw1").value; $("set-pwsave").disabled = a.length < 8 || a !== $("set-pw2").value; }
+  $("set-pw1").addEventListener("input", checkPw);
+  $("set-pw2").addEventListener("input", checkPw);
+  $("set-pwsave").addEventListener("click", async () => {
+    const password = $("set-pw1").value;
+    $("set-pw1").value = "";
+    $("set-pw2").value = "";
+    checkPw();
+    await act("Saving the WebAdmin password", "settings.adminpw", { password }, () => "The WebAdmin password was changed. The user name is admin.");
+  });
+  $("about-link").addEventListener("click", () => call("open", { url: "https://github.com/NeuralFoundry/openlitespeed-windows" }).catch(e => say(e.message, true)));
+  $("side-webadmin").addEventListener("click", () => call("open", { url: "https://localhost:" + state.server.admin + "/" }).catch(e => say(e.message, true)));
+  $("side-folder").addEventListener("click", () => call("folder", {}).catch(e => say(e.message, true)));
+  $("side-terminal").addEventListener("click", () => call("terminal", {}).catch(e => say(e.message, true)));
+  $("log-refresh").addEventListener("click", loadLogs);
+  $("log-filter").addEventListener("input", paintLog);
+  $("log-notepad").addEventListener("click", () => call("log.open", { log: logId }).catch(e => say(e.message, true)));
+  $("log-follow").addEventListener("click", ev => { const s = ev.currentTarget; s.setAttribute("aria-checked", s.getAttribute("aria-checked") !== "true"); });
 
-  async function loadPhp() {
-    try {
-      const list = await call("php.list"), sel = $("php");
-      sel.replaceChildren();
-      list.forEach((p, i) => {
-        const o = el("option", "", p.label);
-        o.value = String(i);
-        o.title = p.dir;
-        if (p.current) o.selected = true;
-        sel.append(o);
-      });
-      if (!list.length) sel.append(el("option", "", "No PHP found"));
-    } catch (e) { say(e.message, true); }
-  }
-
-  if (window.__preview) {
-    state = window.__preview;
-    render();
-    const sel = $("php");
-    (state.phpList || []).forEach(p => { const o = el("option", "", p.label); o.selected = !!p.current; sel.append(o); });
+  if (preview) {
+    phpList = (preview.data && preview.data["php.list"]) || [];
+    nodeList = (preview.data && preview.data["node.list"]) || [];
+    dbList = (preview.data && preview.data["db.list"]) || [];
+    logList = (preview.data && preview.data["log.list"]) || [];
+    settings = (preview.data && preview.data.settings) || null;
+    state = preview.state;
+    show(preview.page || "overview");
   } else if (wv) {
-    refresh().then(loadPhp);
-    setInterval(() => { if (!busy && !document.querySelector("dialog[open]")) refresh(); }, 3000);
+    refresh().then(() => loadPhp());
+    setInterval(() => {
+      if (busy || document.querySelector("dialog[open]") || menuOpen) return;
+      const a = document.activeElement;
+      if (a && (a.tagName === "SELECT" || a.tagName === "INPUT")) return;
+      refresh();
+      if (page === "logs" && $("log-follow").getAttribute("aria-checked") === "true") loadLog();
+    }, 3000);
   } else {
     say("Open this page from the OpenLiteSpeed panel.", true);
   }

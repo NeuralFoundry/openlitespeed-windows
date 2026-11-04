@@ -157,7 +157,8 @@ static void sites(const wchar_t *root, const wchar_t *ini, const wchar_t *www)
             else if (member[0] && sscanf(line, "vhDomain %159s", dom) == 1)
             {
                 const char *type = "folder";
-                int port = 0, tun;
+                wchar_t sp[MAX_PATH] = L"";
+                int port = 0, tun, pkg = 0;
                 if (strcmp(member, "localhost") == 0)
                 {
                     member[0] = 0;
@@ -171,11 +172,27 @@ static void sites(const wchar_t *root, const wchar_t *ini, const wchar_t *www)
                     type = "proxy";
                     port = GetPrivateProfileIntW(L"proxy", wn, 0, ini);
                 }
+                else if (strncmp(tmpl, "devapp-", 7) == 0)
+                {
+                    wchar_t k[16];
+                    GetPrivateProfileStringW(L"apps", wn, L"node", k, 16, ini);
+                    type = _wcsicmp(k, L"python") == 0 ? "python" : "node";
+                }
                 else
                 {
                     swprintf(f, MAX_PATH, L"%s\\%s\\wp-settings.php", www, wn);
                     if (GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES)
                         type = "wordpress";
+                    else
+                    {
+                        swprintf(f, MAX_PATH, L"%s\\%s\\artisan", www, wn);
+                        if (GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES)
+                            type = "laravel";
+                    }
+                    swprintf(f, MAX_PATH, L"%s\\%s\\package.json", www, wn);
+                    pkg = GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES;
+                    if (strncmp(tmpl, "devsites-", 9) == 0)
+                        ols_site_php(ini, member, sp, MAX_PATH);
                 }
                 tun = ols_tunnel_query(member, url, sizeof(url));
                 printf("%s{\"name\":", first ? "" : ",");
@@ -184,7 +201,9 @@ static void sites(const wchar_t *root, const wchar_t *ini, const wchar_t *www)
                 jstr(dom);
                 printf(",\"type\":\"%s\",\"port\":%d,\"tunnel\":%s,\"tunnelUrl\":", type, port, tun ? "true" : "false");
                 jstr(url);
-                printf("}");
+                printf(",\"php\":");
+                jwstr(sp);
+                printf(",\"pkg\":%s}", pkg ? "true" : "false");
                 first = 0;
                 member[0] = 0;
             }
@@ -231,7 +250,54 @@ int ols_status_main(int argc, char **argv)
     ols_db_summary(&dbi, &dbr, &dbp);
     printf(",\"db\":{\"installed\":%s,\"running\":%s,\"port\":%d}", dbi ? "true" : "false", dbr ? "true" : "false", dbp);
     ols_tunnel_summary(&ti, &tt, &tn);
-    printf(",\"tunnel\":{\"installed\":%s,\"token\":%s,\"named\":%s}}\n", ti ? "true" : "false", tt ? "true" : "false",
+    printf(",\"tunnel\":{\"installed\":%s,\"token\":%s,\"named\":%s}", ti ? "true" : "false", tt ? "true" : "false",
            tn ? "true" : "false");
+    ols_status_runtime(root, ini);
+    {
+        char py[MAX_PATH * 3];
+        printf(",\"python\":%s", ols_find_runtime("python.exe", py, sizeof(py)) == 0 ? "true" : "false");
+    }
+    ols_status_stats(root);
+    printf("}\n");
     return 0;
+}
+
+static double field(const char *t, const char *key)
+{
+    const char *p = strstr(t, key);
+    return p ? atof(p + strlen(key)) : 0;
+}
+
+void ols_status_stats(const wchar_t *root)
+{
+    wchar_t pat[MAX_PATH], f[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    HANDLE h;
+    double rps = 0, total = 0, conns = 0;
+    int files = 0;
+    swprintf(pat, MAX_PATH, L"%s\\tmp\\lshttpd\\.rtreport*", root);
+    h = FindFirstFileW(pat, &fd);
+    if (h != INVALID_HANDLE_VALUE)
+    {
+        do
+        {
+            char *t = NULL, *r;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                continue;
+            swprintf(f, MAX_PATH, L"%s\\tmp\\lshttpd\\%s", root, fd.cFileName);
+            if (read_text(f, &t) != 0)
+                continue;
+            conns += field(t, "PLAINCONN: ") + field(t, "SSLCONN: ");
+            if ((r = strstr(t, "REQ_RATE []:")) != NULL)
+            {
+                rps += field(r, "REQ_PER_SEC: ");
+                total += field(r, "TOT_REQS: ");
+            }
+            ++files;
+            free(t);
+        }
+        while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    printf(",\"stats\":{\"reports\":%d,\"reqPerSec\":%.1f,\"totalReqs\":%.0f,\"conns\":%.0f}", files, rps, total, conns);
 }

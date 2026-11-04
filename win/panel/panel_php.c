@@ -36,3 +36,17 @@ int panel_php_list(const wchar_t *root, const wchar_t *ini, const wchar_t *curre
     }
     return n;
 }
+
+int panel_php_info(int i, int *major, int *minor, int *patch, int *ts, int *lsapi, wchar_t *source, size_t n)
+{
+    if (i < 0 || i >= phpd_count)
+        return -1;
+    *major = phpd_list[i].major;
+    *minor = phpd_list[i].minor;
+    *patch = phpd_list[i].patch;
+    *ts = phpd_list[i].ts;
+    *lsapi = phpd_list[i].lsapi;
+    wcsncpy(source, phpd_list[i].source, n - 1);
+    source[n - 1] = 0;
+    return 0;
+}

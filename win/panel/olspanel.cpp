@@ -7,10 +7,12 @@
 #ifndef _UNICODE
 #define _UNICODE
 #endif
+#include <winsock2.h>
 #include <windows.h>
 #include <winsvc.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <dwmapi.h>
 #include <wrl.h>
 #include <WebView2.h>
@@ -33,6 +35,8 @@ using Microsoft::WRL::ComPtr;
 
 extern "C" int panel_php_list(const wchar_t *root, const wchar_t *ini, const wchar_t *current,
                               wchar_t (*labels)[MAX_PATH + 96], wchar_t (*dirs)[MAX_PATH], int max);
+extern "C" int panel_php_info(int i, int *major, int *minor, int *patch, int *ts, int *lsapi, wchar_t *source,
+                              size_t n);
 
 static HINSTANCE g_inst;
 static HWND g_wnd;
@@ -40,8 +44,8 @@ static wchar_t g_root[MAX_PATH], g_exe[MAX_PATH], g_ini[MAX_PATH];
 static ComPtr<ICoreWebView2Controller> g_ctrl;
 static ComPtr<ICoreWebView2> g_view;
 static bool g_loaded, g_devtools;
-static std::mutex g_lock, g_phplock;
-static std::vector<std::wstring> g_php;
+static std::mutex g_lock, g_phplock, g_dllock;
+static std::vector<std::wstring> g_php, g_node;
 
 static std::string utf8(const std::wstring &w)
 {
@@ -436,6 +440,40 @@ static bool service_installed()
     return svc != NULL;
 }
 
+static bool port_open(int port)
+{
+    static bool ready = false;
+    WSADATA wd;
+    sockaddr_in a = {};
+    SOCKET s;
+    bool ok;
+    if (!ready)
+        ready = WSAStartup(MAKEWORD(2, 2), &wd) == 0;
+    if ((s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET)
+        return false;
+    a.sin_family = AF_INET;
+    a.sin_port = htons((u_short)port);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ok = connect(s, (sockaddr *)&a, sizeof(a)) == 0;
+    closesocket(s);
+    return ok;
+}
+
+static bool wait_up(int port, int seconds)
+{
+    for (int i = 0; i < seconds * 4; ++i)
+    {
+        if (is_running() && port_open(port))
+        {
+            Sleep(1500);
+            if (is_running() && port_open(port))
+                return true;
+        }
+        Sleep(250);
+    }
+    return false;
+}
+
 static DWORD hosts_update()
 {
     DWORD r = run(L"--dev-hosts", NULL, NULL);
@@ -508,6 +546,291 @@ static std::wstring current_php()
     return w;
 }
 
+static std::wstring www_dir()
+{
+    return ini_str(L"sites", L"www", (std::wstring(g_root) + L"\\www").c_str());
+}
+
+static bool plain_dir(const std::wstring &p)
+{
+    DWORD a = GetFileAttributesW(p.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) && !(a & FILE_ATTRIBUTE_REPARSE_POINT);
+}
+
+static bool site_dir(const std::string &name, std::wstring &dir)
+{
+    if (!name_ok(name))
+        return false;
+    dir = www_dir() + L"\\" + wide(name);
+    return plain_dir(dir);
+}
+
+static bool db_ok(const std::string &n)
+{
+    if (n.empty() || n.size() > 64)
+        return false;
+    for (char c : n)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
+            return false;
+    return true;
+}
+
+static bool arg_ok(const std::string &v, const char *extra)
+{
+    if (v.empty() || v.size() > 64)
+        return false;
+    for (char c : v)
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strchr(extra, c)))
+            return false;
+    return true;
+}
+
+static bool quoted_ok(const std::wstring &p)
+{
+    return !p.empty() && p.size() < MAX_PATH && p.find(L'"') == std::wstring::npos;
+}
+
+static std::wstring q(const std::wstring &p)
+{
+    return L"\"" + p + (!p.empty() && p.back() == L'\\' ? L"." : L"") + L"\"";
+}
+
+static bool pick_php(const Msg &m, std::wstring &dir)
+{
+    std::lock_guard<std::mutex> pg(g_phplock);
+    long long i = m.n("index");
+    if (i < 0 || i >= (long long)g_php.size())
+        return false;
+    dir = g_php[(size_t)i];
+    return quoted_ok(dir);
+}
+
+static bool pick_node(const Msg &m, std::wstring &exe)
+{
+    std::lock_guard<std::mutex> pg(g_phplock);
+    long long i = m.n("index");
+    if (i < 0 || i >= (long long)g_node.size())
+        return false;
+    exe = g_node[(size_t)i];
+    return quoted_ok(exe);
+}
+
+static std::string json_part(const std::string &out)
+{
+    size_t b = out.find_first_of("[{");
+    if (b == std::string::npos)
+        return std::string();
+    std::string j = out.substr(b);
+    while (!j.empty() && (j.back() == '\n' || j.back() == '\r' || j.back() == ' '))
+        j.pop_back();
+    return j;
+}
+
+static bool pick_file(bool save, const std::wstring &name, std::wstring &out)
+{
+    ComPtr<IFileDialog> d;
+    ComPtr<IShellItem> it;
+    COMDLG_FILTERSPEC f[] = { { L"SQL files", L"*.sql" } };
+    DWORD opt = 0;
+    PWSTR p = nullptr;
+    if (FAILED(CoCreateInstance(save ? CLSID_FileSaveDialog : CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&d))))
+        return false;
+    d->SetFileTypes(1, f);
+    d->SetDefaultExtension(L"sql");
+    if (save)
+        d->SetFileName(name.c_str());
+    d->GetOptions(&opt);
+    d->SetOptions(opt | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR | (save ? FOS_OVERWRITEPROMPT : FOS_FILEMUSTEXIST));
+    if (FAILED(d->Show(g_wnd)) || FAILED(d->GetResult(&it)) || FAILED(it->GetDisplayName(SIGDN_FILESYSPATH, &p)) || !p)
+        return false;
+    out = p;
+    CoTaskMemFree(p);
+    return true;
+}
+
+static bool pick_folder(const std::wstring &start, std::wstring &out)
+{
+    ComPtr<IFileOpenDialog> d;
+    ComPtr<IShellItem> it, at;
+    DWORD opt = 0;
+    PWSTR p = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d))))
+        return false;
+    d->GetOptions(&opt);
+    d->SetOptions(opt | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR);
+    if (SUCCEEDED(SHCreateItemFromParsingName(start.c_str(), NULL, IID_PPV_ARGS(&at))))
+        d->SetFolder(at.Get());
+    if (FAILED(d->Show(g_wnd)) || FAILED(d->GetResult(&it)) || FAILED(it->GetDisplayName(SIGDN_FILESYSPATH, &p)) || !p)
+        return false;
+    out = p;
+    CoTaskMemFree(p);
+    return true;
+}
+
+static int recycle(const std::wstring &dir)
+{
+    std::wstring from = dir;
+    SHFILEOPSTRUCTW op = {};
+    from.push_back(L'\0');
+    op.hwnd = g_wnd;
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING | FOF_SILENT | FOF_NOERRORUI;
+    int r = SHFileOperationW(&op);
+    if (op.fAnyOperationsAborted)
+        return -1;
+    return r == 0 && GetFileAttributesW(dir.c_str()) == INVALID_FILE_ATTRIBUTES ? 1 : 0;
+}
+
+static bool open_terminal(const std::wstring &cwd)
+{
+    wchar_t sys[MAX_PATH];
+    std::wstring php = current_php(), node = ini_str(L"node", L"bin", L""), path, env, exe, cmd;
+    std::vector<std::wstring> add;
+    STARTUPINFOW si = {};
+    PROCESS_INFORMATION pi = {};
+    wchar_t title[] = L"OpenLiteSpeed";
+    if (GetSystemDirectoryW(sys, MAX_PATH) == 0)
+        return false;
+    if (!php.empty())
+        add.push_back(php);
+    if (!node.empty() && node.size() > 9)
+        add.push_back(node.substr(0, node.find_last_of(L'\\')));
+    add.push_back(std::wstring(g_root) + L"\\tools\\composer");
+    add.push_back(std::wstring(g_root) + L"\\mariadb\\bin");
+    for (const auto &d : add)
+        if (plain_dir(d))
+            path += d + L";";
+    if (wchar_t *blk = GetEnvironmentStringsW())
+    {
+        for (wchar_t *e = blk; *e; e += wcslen(e) + 1)
+        {
+            if (_wcsnicmp(e, L"PATH=", 5) == 0)
+                path += e + 5;
+            else if (_wcsnicmp(e, L"PHPRC=", 6) != 0 && _wcsnicmp(e, L"NoDefaultCurrentDirectoryInExePath=", 35) != 0)
+            {
+                env += e;
+                env.push_back(L'\0');
+            }
+        }
+        FreeEnvironmentStringsW(blk);
+    }
+    env += L"PATH=" + path;
+    env.push_back(L'\0');
+    env += L"NoDefaultCurrentDirectoryInExePath=1";
+    env.push_back(L'\0');
+    if (!php.empty())
+    {
+        env += L"PHPRC=" + php;
+        env.push_back(L'\0');
+    }
+    env.push_back(L'\0');
+    exe = std::wstring(sys) + L"\\cmd.exe";
+    cmd = q(exe);
+    si.cb = sizeof(si);
+    si.lpTitle = title;
+    if (!CreateProcessW(exe.c_str(), &cmd[0], NULL, NULL, FALSE, CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT,
+                        &env[0], cwd.c_str(), &si, &pi))
+        return false;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
+static bool autorun_on()
+{
+    HKEY k;
+    DWORD type, n = 0;
+    LONG r;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_QUERY_VALUE, &k)
+        != ERROR_SUCCESS)
+        return false;
+    r = RegQueryValueExW(k, L"OpenLiteSpeed", NULL, &type, NULL, &n);
+    RegCloseKey(k);
+    return r == ERROR_SUCCESS;
+}
+
+static bool autorun_set(bool on)
+{
+    HKEY k;
+    LONG r;
+    std::wstring v = q(std::wstring(g_root) + L"\\bin\\olstray.exe");
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &k)
+        != ERROR_SUCCESS)
+        return false;
+    if (on)
+        r = RegSetValueExW(k, L"OpenLiteSpeed", 0, REG_SZ, (const BYTE *)v.c_str(), (DWORD)((v.size() + 1) * sizeof(wchar_t)));
+    else
+    {
+        r = RegDeleteValueW(k, L"OpenLiteSpeed");
+        if (r == ERROR_FILE_NOT_FOUND)
+            r = ERROR_SUCCESS;
+    }
+    RegCloseKey(k);
+    return r == ERROR_SUCCESS;
+}
+
+struct LogFile
+{
+    std::string id, label;
+    std::wstring path;
+};
+
+static std::vector<LogFile> log_files()
+{
+    std::vector<LogFile> v;
+    std::wstring r = g_root, www = www_dir();
+    wchar_t sect[16384];
+    WIN32_FIND_DATAW fd;
+    HANDLE f;
+    v.push_back({ "error", "Web server errors", r + L"\\logs\\error.log" });
+    v.push_back({ "access", "Web server requests", r + L"\\logs\\access.log" });
+    v.push_back({ "stderr", "Web server output", r + L"\\logs\\stderr.log" });
+    v.push_back({ "mariadb", "MariaDB", r + L"\\logs\\mariadb.err" });
+    v.push_back({ "webadmin", "WebAdmin", r + L"\\admin\\logs\\error.log" });
+    if (GetPrivateProfileSectionW(L"apps", sect, 16384, g_ini) > 0)
+        for (wchar_t *e = sect; *e; e += wcslen(e) + 1)
+        {
+            wchar_t *eq = wcschr(e, L'=');
+            std::string n;
+            if (!eq)
+                continue;
+            n = utf8(std::wstring(e, eq));
+            if (!name_ok(n))
+                continue;
+            bool py = _wcsicmp(eq + 1, L"python") == 0;
+            v.push_back({ "app:" + n, n + " app", www + L"\\" + wide(n) + (py ? L"\\stderr.log" : L"\\log\\stderr.log") });
+        }
+    f = FindFirstFileW((r + L"\\tmp\\tunnel\\*.log").c_str(), &fd);
+    if (f != INVALID_HANDLE_VALUE)
+    {
+        do
+        {
+            std::wstring fn = fd.cFileName;
+            std::string n = utf8(fn.substr(0, fn.size() - 4));
+            if (n == "_named")
+                v.push_back({ "tunnel:_named", "Tunnel for your domain", r + L"\\tmp\\tunnel\\" + fn });
+            else if (name_ok(n))
+                v.push_back({ "tunnel:" + n, "Tunnel for " + n, r + L"\\tmp\\tunnel\\" + fn });
+        }
+        while (FindNextFileW(f, &fd));
+        FindClose(f);
+    }
+    return v;
+}
+
+static bool log_path(const std::string &id, std::wstring &path)
+{
+    for (const auto &l : log_files())
+        if (l.id == id)
+        {
+            path = l.path;
+            return true;
+        }
+    return false;
+}
+
 struct Result
 {
     bool ok = true;
@@ -555,13 +878,21 @@ static Result handle(const Msg &m)
         std::wstring cur = current_php();
         int n = panel_php_list(g_root, g_ini, cur.c_str(), labels, dirs, MAX_PHP);
         std::string j = "[";
+        std::wstring ours = std::wstring(g_root) + L"\\php\\";
         g_php.clear();
         for (int i = 0; i < n; ++i)
         {
+            int ma = 0, mi = 0, pa = 0, ts = 0, ls = 0;
+            wchar_t src[24] = L"";
+            char ver[32];
+            panel_php_info(i, &ma, &mi, &pa, &ts, &ls, src, 24);
+            snprintf(ver, sizeof(ver), "%d.%d.%d", ma, mi, pa);
             g_php.push_back(dirs[i]);
             j += (i ? "," : "") + std::string("{\"label\":") + jesc(utf8(labels[i])) + ",\"dir\":" + jesc(utf8(dirs[i]))
-                 + ",\"current\":"
-                 + (_wcsicmp(dirs[i], cur.c_str()) == 0 ? "true" : "false") + "}";
+                 + ",\"current\":" + (_wcsicmp(dirs[i], cur.c_str()) == 0 ? "true" : "false") + ",\"version\":" + jesc(ver)
+                 + ",\"ts\":" + (ts ? "true" : "false") + ",\"lsapi\":" + (ls ? "true" : "false")
+                 + ",\"source\":" + jesc(utf8(src)) + ",\"ours\":"
+                 + (_wcsnicmp(dirs[i], ours.c_str(), ours.size()) == 0 ? "true" : "false") + "}";
         }
         Result r;
         r.data = j + "]";
@@ -572,6 +903,166 @@ static Result handle(const Msg &m)
         Result r;
         r.data = jesc(read_shared(std::wstring(g_root) + L"\\logs\\error.log", 65536));
         return r;
+    }
+    if (a == "log.list")
+    {
+        std::string j = "[";
+        bool first = true;
+        for (const auto &l : log_files())
+        {
+            WIN32_FILE_ATTRIBUTE_DATA fa;
+            if (!GetFileAttributesExW(l.path.c_str(), GetFileExInfoStandard, &fa))
+                continue;
+            unsigned long long size = ((unsigned long long)fa.nFileSizeHigh << 32) | fa.nFileSizeLow;
+            j += (first ? "" : ",") + std::string("{\"id\":") + jesc(l.id) + ",\"label\":" + jesc(l.label)
+                 + ",\"size\":" + std::to_string(size) + "}";
+            first = false;
+        }
+        Result r;
+        r.data = j + "]";
+        return r;
+    }
+    if (a == "log.read" || a == "log.open")
+    {
+        std::wstring path;
+        if (!log_path(m.s("log"), path))
+            return fail("That log is not available.");
+        if (a == "log.open")
+        {
+            wchar_t sys[MAX_PATH];
+            if (!GetSystemDirectoryW(sys, MAX_PATH) || GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES)
+                return fail("That log is not available.");
+            ShellExecuteW(NULL, L"open", (std::wstring(sys) + L"\\notepad.exe").c_str(), q(path).c_str(), NULL,
+                          SW_SHOWNORMAL);
+            return Result();
+        }
+        Result r;
+        r.data = jesc(read_shared(path, 262144));
+        return r;
+    }
+    if (a == "php.available")
+    {
+        if ((code = run(L"--php available", &out, NULL)) != 0 || json_part(out).empty())
+            return fail(last_line(out, "The PHP versions could not be listed."));
+        Result r;
+        r.data = json_part(out);
+        return r;
+    }
+    if (a == "php.ext" || a == "php.ini")
+    {
+        std::wstring dir;
+        if (!pick_php(m, dir))
+            return fail("Pick a PHP version from the list.");
+        if ((code = run((a == "php.ext" ? L"--php ext " : L"--php ini ") + q(dir), &out, NULL)) != 0
+            || json_part(out).empty())
+            return fail(last_line(out, "The PHP settings could not be read."));
+        Result r;
+        r.data = json_part(out);
+        return r;
+    }
+    if (a == "php.folder" || a == "php.editini")
+    {
+        std::wstring dir;
+        wchar_t sys[MAX_PATH];
+        if (!pick_php(m, dir))
+            return fail("Pick a PHP version from the list.");
+        if (a == "php.folder")
+        {
+            ShellExecuteW(NULL, L"explore", dir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            return Result();
+        }
+        if (GetFileAttributesW((dir + L"\\php.ini").c_str()) == INVALID_FILE_ATTRIBUTES)
+            run(L"--php ini-create " + q(dir), NULL, NULL);
+        if (!GetSystemDirectoryW(sys, MAX_PATH) || GetFileAttributesW((dir + L"\\php.ini").c_str()) == INVALID_FILE_ATTRIBUTES)
+            return fail("This PHP has no php.ini.");
+        ShellExecuteW(NULL, L"open", (std::wstring(sys) + L"\\notepad.exe").c_str(), q(dir + L"\\php.ini").c_str(), NULL,
+                      SW_SHOWNORMAL);
+        return Result();
+    }
+    if (a == "node.list")
+    {
+        if ((code = run(L"--node list", &out, NULL)) != 0 || json_part(out).empty())
+            return fail(last_line(out, "Node.js could not be listed."));
+        std::string j = json_part(out);
+        {
+            std::lock_guard<std::mutex> pg(g_phplock);
+            size_t p = 0;
+            g_node.clear();
+            while ((p = j.find("\"exe\":", p)) != std::string::npos)
+            {
+                std::string v;
+                size_t i = p + 6;
+                if (!parse_string(j, i, v))
+                    break;
+                g_node.push_back(wide(v));
+                p = i;
+            }
+        }
+        Result r;
+        r.data = j;
+        return r;
+    }
+    if (a == "node.available")
+    {
+        if ((code = run(L"--node available", &out, NULL)) != 0 || json_part(out).empty())
+            return fail(last_line(out, "The Node.js versions could not be listed."));
+        Result r;
+        r.data = json_part(out);
+        return r;
+    }
+    if (a == "db.list")
+    {
+        if ((code = run(L"--db list", &out, NULL)) != 0 || json_part(out).empty())
+            return fail(last_line(out, "The databases could not be listed."));
+        Result r;
+        r.data = json_part(out);
+        return r;
+    }
+    if (a == "site.folder" || a == "site.terminal")
+    {
+        std::wstring dir;
+        if (!site_dir(m.s("name"), dir))
+            return fail("That site has no folder.");
+        if (a == "site.folder")
+            ShellExecuteW(NULL, L"explore", dir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        else if (!open_terminal(dir))
+            return fail("The terminal could not be opened.");
+        return Result();
+    }
+    if (a == "terminal")
+    {
+        std::wstring www = www_dir();
+        if (!open_terminal(plain_dir(www) ? www : std::wstring(g_root)))
+            return fail("The terminal could not be opened.");
+        return Result();
+    }
+    if (a == "settings")
+    {
+        Result r;
+        r.data = std::string("{\"autostart\":") + (autorun_on() ? "true" : "false") + "}";
+        return r;
+    }
+    if (a == "settings.autostart")
+    {
+        if (!autorun_set(m.b("on")))
+            return fail("The Windows startup setting could not be changed.");
+        return Result();
+    }
+    if (a == "app.restart")
+    {
+        std::wstring dir;
+        if (!site_dir(m.s("name"), dir))
+            return fail("That app has no folder.");
+        CreateDirectoryW((dir + L"\\tmp").c_str(), NULL);
+        HANDLE h = CreateFileW((dir + L"\\tmp\\restart.txt").c_str(), GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+                               FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE)
+            return fail("The app could not be restarted.");
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        SetFileTime(h, NULL, NULL, &ft);
+        CloseHandle(h);
+        return Result();
     }
     if (a == "open")
     {
@@ -616,6 +1107,34 @@ static Result handle(const Msg &m)
         SecureZeroMemory(&t[0], t.size());
         return ok ? Result() : fail("The database password was not found.");
     }
+    if (a == "php.install" || a == "node.install" || a == "composer.install")
+    {
+        std::unique_lock<std::mutex> dl(g_dllock, std::try_to_lock);
+        if (!dl.owns_lock())
+            return fail("Another download is still running. Try again when it has finished.");
+        if (a == "php.install")
+        {
+            std::string b = m.s("branch");
+            if (!arg_ok(b, ".") || b.find('.') == std::string::npos)
+                return fail("Pick a PHP version from the list.");
+            code = run(L"--php install " + wide(b) + (m.b("ts") ? L" ts" : L""), &out, NULL);
+            return ran(code, out, "PHP could not be installed.");
+        }
+        if (a == "node.install")
+        {
+            long long mj = m.n("major");
+            if (mj < 18 || mj > 999)
+                return fail("Pick a Node.js version from the list.");
+            code = run(L"--node install " + std::to_wstring(mj), &out, NULL);
+            if (code == 0)
+            {
+                std::lock_guard<std::mutex> g(g_lock);
+                reload_if_running();
+            }
+            return ran(code, out, "Node.js could not be installed.");
+        }
+        return ran(run(L"--composer install", &out, NULL), out, "Composer could not be installed.");
+    }
 
     std::lock_guard<std::mutex> g(g_lock);
     if (a == "server.start" || a == "server.stop" || a == "server.reload")
@@ -640,10 +1159,17 @@ static Result handle(const Msg &m)
         return ran(run(a == "db.start" ? L"--db start" : L"--db stop", &out, NULL), out, "MariaDB did not respond.");
     if (a == "site.new")
     {
-        std::string n = m.s("name");
+        std::string n = m.s("name"), k = m.s("kind");
         if (!name_ok(n))
             return fail("Use lowercase letters, digits and '-' for the site name.");
-        code = run(L"--new-site " + wide(n) + (m.b("wp") ? L" --wordpress" : L""), &out, NULL);
+        if (m.b("wp"))
+            k = "wordpress";
+        std::wstring flag = k == "wordpress" ? L" --wordpress"
+                            : k == "node"    ? L" --node"
+                            : k == "python"  ? L" --python"
+                            : k == "laravel" ? L" --laravel"
+                                             : L"";
+        code = run(L"--new-site " + wide(n) + flag, &out, NULL);
         if (code != 0)
             return fail(last_line(out, "The site could not be created."));
         hosts_update();
@@ -735,8 +1261,236 @@ static Result handle(const Msg &m)
             return fail("That PHP folder cannot be used.");
         code = run(L"--set-php \"" + dir + L"\"", &out, NULL);
         if (code == 0)
+        {
+            run(L"--site resync", NULL, NULL);
             reload_if_running();
+        }
         return ran(code, out, "PHP could not be switched.");
+    }
+    if (a == "php.remove")
+    {
+        std::wstring dir;
+        if (!pick_php(m, dir))
+            return fail("Pick a PHP version from the list.");
+        reload_if_running();
+        return ran(run(L"--php remove " + q(dir), &out, NULL), out, "PHP could not be removed.");
+    }
+    if (a == "php.extset")
+    {
+        std::wstring dir;
+        std::string n = m.s("name");
+        if (!pick_php(m, dir) || !arg_ok(n, "_"))
+            return fail("Pick an extension from the list.");
+        code = run(L"--php ext-set " + q(dir) + L" " + wide(n) + (m.b("on") ? L" on" : L" off"), &out, NULL);
+        if (code == 0)
+            reload_if_running();
+        return ran(code, out, "The extension could not be changed.");
+    }
+    if (a == "php.iniset")
+    {
+        std::wstring dir;
+        std::string k = m.s("key"), v = m.s("value");
+        if (!pick_php(m, dir) || !arg_ok(k, "._") || !arg_ok(v, "/_+-"))
+            return fail("That value is not allowed.");
+        code = run(L"--php ini-set " + q(dir) + L" " + wide(k) + L" " + wide(v), &out, NULL);
+        if (code == 0)
+            reload_if_running();
+        return ran(code, out, "The setting could not be saved.");
+    }
+    if (a == "site.php")
+    {
+        std::wstring dir, sd;
+        std::string n = m.s("name");
+        long long i = m.n("index");
+        if (!site_dir(n, sd))
+            return fail("That site has no folder.");
+        if (i >= 0 && !pick_php(m, dir))
+            return fail("Pick a PHP version from the list.");
+        code = run(L"--site php " + wide(n) + L" " + (i >= 0 ? q(dir) : std::wstring(L"default")), &out, NULL);
+        if (code == 0)
+            reload_if_running();
+        return ran(code, out, "The PHP version of the site could not be changed.");
+    }
+    if (a == "site.app")
+    {
+        std::wstring sd;
+        std::string n = m.s("name"), k = m.s("kind");
+        if (!site_dir(n, sd) || (k != "node" && k != "python" && k != "off"))
+            return fail("That site cannot run as an app.");
+        code = run(L"--site app " + wide(n) + L" " + wide(k), &out, NULL);
+        if (code == 0)
+            reload_if_running();
+        return ran(code, out, "The site could not be changed.");
+    }
+    if (a == "site.remove")
+    {
+        std::wstring dir;
+        std::string n = m.s("name");
+        if (!name_ok(n))
+            return fail("That site cannot be removed.");
+        dir = www_dir() + L"\\" + wide(n);
+        DWORD at = GetFileAttributesW(dir.c_str());
+        if (at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_REPARSE_POINT))
+            return fail("This site folder is a link. Remove it in File Explorer.");
+        std::wstring wn = wide(n), kind = ini_str(L"apps", wn.c_str(), L""), php = ini_str(L"sitephp", wn.c_str(), L"");
+        run(L"--tunnel stop " + wn, NULL, NULL);
+        code = run(L"--site forget " + wn, &out, NULL);
+        if (code != 0)
+            return fail(last_line(out, "The site list could not be updated."));
+        reload_if_running();
+        bool gone = at == INVALID_FILE_ATTRIBUTES;
+        for (int i = 0; i < 12 && !gone; ++i)
+        {
+            Sleep(i ? 1000 : 1500);
+            int rc = recycle(dir);
+            gone = rc == 1;
+            if (rc < 0)
+                break;
+        }
+        if (!gone)
+        {
+            if (!kind.empty())
+                WritePrivateProfileStringW(L"apps", wn.c_str(), kind.c_str(), g_ini);
+            if (!php.empty())
+                WritePrivateProfileStringW(L"sitephp", wn.c_str(), php.c_str(), g_ini);
+            run(L"--site resync", NULL, NULL);
+            reload_if_running();
+            return fail("The site folder could not be moved to the Recycle Bin. Close programs that use it and try again.");
+        }
+        run(L"--site resync", NULL, NULL);
+        hosts_update();
+        reload_if_running();
+        return Result();
+    }
+    if (a == "node.default" || a == "node.remove")
+    {
+        std::wstring exe;
+        if (!pick_node(m, exe))
+            return fail("Pick a Node.js version from the list.");
+        code = run((a == "node.default" ? L"--node default " : L"--node remove ") + q(exe), &out, NULL);
+        if (code == 0)
+            reload_if_running();
+        return ran(code, out, a == "node.default" ? "Node.js could not be switched." : "Node.js could not be removed.");
+    }
+    if (a == "db.create")
+    {
+        std::string n = m.s("name");
+        if (!db_ok(n))
+            return fail("Use lowercase letters, digits and '_' for the database name.");
+        code = run(L"--db create " + wide(n) + (m.b("user") ? L"" : L" --no-user"), &out, NULL);
+        if (code != 0)
+            return fail(last_line(out, "The database could not be created."));
+        Result r;
+        size_t p = out.find("\npassword ");
+        if (p != std::string::npos)
+        {
+            p += 10;
+            std::string pw = out.substr(p, out.find_first_of("\r\n", p) - p);
+            r.data = "{\"user\":" + jesc(n) + ",\"password\":" + jesc(pw) + "}";
+            SecureZeroMemory(&pw[0], pw.size());
+        }
+        SecureZeroMemory(&out[0], out.size());
+        return r;
+    }
+    if (a == "db.copytext")
+    {
+        std::string t = m.s("text");
+        bool ok = !t.empty() && t.size() < 128 && clip_set(wide(t), true);
+        SecureZeroMemory(&t[0], t.size());
+        return ok ? Result() : fail("The text could not be copied.");
+    }
+    if (a == "db.drop")
+    {
+        std::string n = m.s("name");
+        if (!db_ok(n))
+            return fail("That database cannot be removed.");
+        return ran(run(L"--db drop " + wide(n) + (m.b("user") ? L" --user" : L""), &out, NULL), out,
+                   "The database could not be removed.");
+    }
+    if (a == "db.export" || a == "db.import")
+    {
+        std::string n = m.s("name");
+        std::wstring file;
+        SYSTEMTIME st;
+        wchar_t stamp[32];
+        if (!db_ok(n))
+            return fail("Pick a database from the list.");
+        GetLocalTime(&st);
+        swprintf(stamp, 32, L"-%04d%02d%02d-%02d%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+        if (!pick_file(a == "db.export", wide(n) + stamp + L".sql", file))
+        {
+            Result r;
+            r.data = "\"cancelled\"";
+            return r;
+        }
+        if (!quoted_ok(file))
+            return fail("That file cannot be used.");
+        code = run((a == "db.export" ? L"--db export " : L"--db import ") + wide(n) + L" " + q(file), &out, NULL);
+        return ran(code, out, a == "db.export" ? "The database could not be exported." : "The import stopped with an error.");
+    }
+    if (a == "settings.www")
+    {
+        std::wstring cur = www_dir(), dir, tld = ini_str(L"sites", L"tld", L"test");
+        if (!pick_folder(cur, dir))
+        {
+            Result r;
+            r.data = "\"cancelled\"";
+            return r;
+        }
+        if (!quoted_ok(dir) || !plain_dir(dir) || dir.size() <= 3)
+            return fail("That folder cannot be the projects folder.");
+        if (!WritePrivateProfileStringW(L"sites", L"www", dir.c_str(), g_ini))
+            return fail("The projects folder could not be saved.");
+        code = run(L"--dev-sites " + q(dir) + L" " + tld
+                       + (GetPrivateProfileIntW(L"sites", L"root", 0, g_ini) ? L" --root" : L""),
+                   &out, NULL);
+        if (code == 0)
+        {
+            hosts_update();
+            reload_if_running();
+        }
+        return ran(code, out, "The sites in that folder could not be set up.");
+    }
+    if (a == "settings.port")
+    {
+        std::string w = m.s("which");
+        long long port = m.n("port");
+        bool was;
+        if ((w != "http" && w != "admin") || port <= 0 || port > 65535)
+            return fail("Use a port between 1 and 65535.");
+        code = run(L"--set-port " + wide(w) + L" " + std::to_wstring(port), &out, NULL);
+        if (code != 0)
+            return fail(last_line(out, "The port could not be changed."));
+        if ((was = is_running()))
+        {
+            code = run(L"-s restart", &out, NULL);
+            if (code != 0 && service_installed())
+                code = run_elevated(L"-s restart");
+            if (code != 0)
+                return fail(last_line(out, "The port was saved, but the web server did not restart."));
+            if (!wait_up((int)port, 20))
+                return fail("The port was saved, but the web server is not answering on port " + std::to_string(port)
+                            + ". See the error log.");
+        }
+        return Result();
+    }
+    if (a == "settings.adminpw")
+    {
+        std::string pw = m.s("password");
+        bool ok = pw.size() >= 8 && pw.size() <= 128;
+        for (char c : pw)
+            if ((unsigned char)c < 0x20 || c == 0x7f)
+                ok = false;
+        if (!ok)
+        {
+            SecureZeroMemory(&pw[0], pw.size());
+            return fail("Use 8 to 128 characters for the WebAdmin password.");
+        }
+        std::string in = pw + "\n";
+        code = run(L"--admin-password " + q(std::wstring(g_root) + L"\\admin\\conf\\htpasswd") + L" - admin", &out, &in);
+        SecureZeroMemory(&in[0], in.size());
+        SecureZeroMemory(&pw[0], pw.size());
+        return ran(code, out, "The WebAdmin password could not be changed.");
     }
     return fail("Unknown action.");
 }
@@ -756,6 +1510,7 @@ static void dispatch(const std::string &json)
     std::thread([m]() {
         long long id = m.n("id");
         Result r;
+        HRESULT co = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         try
         {
             r = handle(m);
@@ -764,6 +1519,8 @@ static void dispatch(const std::string &json)
         {
             r = fail("Something went wrong.");
         }
+        if (SUCCEEDED(co))
+            CoUninitialize();
         std::string reply = "{\"id\":" + std::to_string(id) + ",\"ok\":" + (r.ok ? "true" : "false");
         reply += r.ok ? ",\"data\":" + r.data + "}" : ",\"error\":" + jesc(r.error) + "}";
         post_reply(reply);

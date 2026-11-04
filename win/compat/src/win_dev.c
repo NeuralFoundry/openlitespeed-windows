@@ -358,6 +358,91 @@ static void add_aliases_from(const wchar_t *file, char **out, size_t *len, size_
     free(text);
 }
 
+static const char s_app[] =
+    "allowSymbolLink          1\r\n"
+    "enableScript             1\r\n"
+    "restrained               1\r\n"
+    "setUIDMode               0\r\n"
+    "vhRoot                   %s/%s/\r\n"
+    "\r\n"
+    "virtualHostConfig {\r\n"
+    "  docRoot                $VH_ROOT/public/\r\n"
+    "  enableGzip             1\r\n"
+    "\r\n"
+    "  context / {\r\n"
+    "    type                 appserver\r\n"
+    "    location             %s/%s/\r\n"
+    "    appType              %s\r\n"
+    "%s"
+    "    appserverEnv         0\r\n"
+    "  }\r\n"
+    "\r\n"
+    "  rewrite {\r\n"
+    "    enable               0\r\n"
+    "  }\r\n"
+    "}\r\n";
+
+static const char s_hidden[] =
+    "\r\n"
+    "  context exp:^/(?:.*/)?\\.(?!well-known/) {\r\n"
+    "    allowBrowse          0\r\n"
+    "  }\r\n";
+
+#define MAX_CFG 128
+#define MAX_GROUPS 8
+
+static int php_proc(const wchar_t *root, const wchar_t *wdir, const char *name, int tcp, char *out, size_t n,
+                    int *pmajor, int *pminor, int *pts, int *plsapi, int noexec);
+
+static int token_elevated(void)
+{
+    HANDLE t;
+    TOKEN_ELEVATION e;
+    DWORD n;
+    int r = 0;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &t))
+    {
+        if (GetTokenInformation(t, TokenElevation, &e, sizeof(e), &n))
+            r = e.TokenIsElevated != 0;
+        CloseHandle(t);
+    }
+    return r;
+}
+
+static int conf_safe(const char *s)
+{
+    return !strpbrk(s, "{}\r\n");
+}
+
+static int read_names(const wchar_t *ini, const wchar_t *sect, char (*names)[64], wchar_t (*vals)[MAX_PATH], int max)
+{
+    wchar_t buf[16384], *e;
+    int n = 0;
+    if (GetPrivateProfileSectionW(sect, buf, 16384, ini) <= 0)
+        return 0;
+    for (e = buf; *e && n < max; e += wcslen(e) + 1)
+    {
+        wchar_t *eq = wcschr(e, L'=');
+        if (!eq || eq - e >= 64)
+            continue;
+        *eq = 0;
+        if (WideCharToMultiByte(CP_UTF8, 0, e, -1, names[n], 64, NULL, NULL) <= 0 || !valid_label(names[n])
+            || wcslen(eq + 1) >= MAX_PATH)
+            continue;
+        wcscpy(vals[n], eq + 1);
+        ++n;
+    }
+    return n;
+}
+
+static unsigned dir_hash(const wchar_t *d)
+{
+    unsigned h = 2166136261u;
+    for (; *d; ++d)
+        h = (h ^ (unsigned)towlower(*d)) * 16777619u;
+    return h;
+}
+
 static char *build_template(const wchar_t *root, int with_aliases)
 {
     char *out = NULL;
@@ -367,6 +452,7 @@ static char *build_template(const wchar_t *root, int with_aliases)
     wchar_t lr[MAX_PATH], xr[MAX_PATH], lr2[MAX_PATH], xr2[MAX_PATH], d[MAX_PATH], ini[MAX_PATH], stack[16];
     int i, use_lr, use_xr;
     buf_add(&out, &len, &cap, s_template, sizeof(s_template) - 1 - 3);
+    buf_str(&out, &len, &cap, s_hidden);
     if (with_aliases)
     {
         swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
@@ -425,6 +511,17 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
     int count = 0, nnames = 0, ncap = 0, https, ssl = 0, tools, i, np = 0, pports[MAX_PROXIES];
     char pnames[MAX_PROXIES][64];
     char *q;
+    static char appn[MAX_CFG][64], spn[MAX_CFG][64];
+    static wchar_t appv[MAX_CFG][MAX_PATH], spv[MAX_CFG][MAX_PATH];
+    wchar_t gdir[MAX_GROUPS][MAX_PATH], cur[MAX_PATH], full[MAX_PATH];
+    char *gmem[MAX_GROUPS], *procs = NULL, ghash[MAX_GROUPS][12];
+    size_t gml[MAX_GROUPS], gmc[MAX_GROUPS], plen = 0, pcap = 0;
+    int napp, nsp, ng = 0, g, spg[MAX_CFG], appk[MAX_CFG], appon[MAX_CFG], elev = token_elevated();
+    char *rootmem = NULL, *rootctx = NULL;
+    size_t rml = 0, rmc = 0, rcl = 0, rcc = 0;
+    memset(gmem, 0, sizeof(gmem));
+    memset(gml, 0, sizeof(gml));
+    memset(gmc, 0, sizeof(gmc));
     if (!tld || !*tld)
         tld = "test";
     if (!valid_label(tld) || root_dir(root, MAX_PATH) < 0
@@ -442,6 +539,39 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
             *q = '/';
     if (q > wwwfwd && q[-1] == '/')
         q[-1] = 0;
+    if (!conf_safe(wwwfwd))
+    {
+        fprintf(stderr, "the path of the projects folder must not contain { or }\n");
+        return 2;
+    }
+
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    napp = read_names(ini, L"apps", appn, appv, MAX_CFG);
+    for (i = 0; i < napp; ++i)
+    {
+        appk[i] = _wcsicmp(appv[i], L"python") == 0 ? 2 : _wcsicmp(appv[i], L"node") == 0 ? 1 : 0;
+        appon[i] = 0;
+    }
+    nsp = read_names(ini, L"sitephp", spn, spv, MAX_CFG);
+    if (ols_php_current(root, cur) != 0)
+        cur[0] = 0;
+    for (i = 0; i < nsp; ++i)
+    {
+        spg[i] = -1;
+        if (!ols_php_known(root, spv[i], full) || (cur[0] && _wcsicmp(full, cur) == 0))
+            continue;
+        for (g = 0; g < ng && _wcsicmp(gdir[g], full) != 0; ++g)
+            ;
+        if (g == ng)
+        {
+            if (ng == MAX_GROUPS)
+                continue;
+            wcscpy(gdir[ng], full);
+            snprintf(ghash[ng], sizeof(ghash[ng]), "%08x", dir_hash(full));
+            ++ng;
+        }
+        spg[i] = g;
+    }
 
     swprintf(tpl, MAX_PATH, L"%s\\conf\\templates", root);
     CreateDirectoryW(tpl, NULL);
@@ -463,7 +593,7 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
                  "    member localhost {\r\n        vhDomain             localhost\r\n"
                  "        vhAliases            127.0.0.1, *\r\n        vhRoot               %s/\r\n    }\r\n",
                  wwwfwd);
-        buf_str(&mem, &mlen, &mcap, line);
+        buf_str(&rootmem, &rml, &rmc, line);
         printf("http://localhost/  ->  %s/\n", wwwfwd);
     }
     swprintf(pat, MAX_PATH, L"%s\\*", wwww);
@@ -483,15 +613,38 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
                 printf("skipped %s (use lowercase letters, digits and '-')\n", name);
                 continue;
             }
-            swprintf(p, MAX_PATH, L"%s\\%s\\public\\index.php", wwww, fd.cFileName);
-            if (file_exists(p))
-                sub = "public/";
-            snprintf(line, sizeof(line),
-                     "    member %s {\r\n        vhDomain             %s.%s\r\n"
-                     "        vhAliases            www.%s.%s\r\n        vhRoot               %s/%s/%s\r\n    }\r\n",
-                     name, name, tld, name, tld, wwwfwd, name, sub);
-            buf_str(&mem, &mlen, &mcap, line);
-            printf("http://%s.%s/  ->  %s/%s/%s\n", name, tld, wwwfwd, name, sub);
+            for (i = 0; i < napp && (appk[i] == 0 || strcmp(appn[i], name) != 0); ++i)
+                ;
+            swprintf(p, MAX_PATH, L"%s\\%s\\artisan", wwww, fd.cFileName);
+            if (i < napp || file_exists(p))
+            {
+                snprintf(line, sizeof(line), "\r\n  context exp:^/%s/(?!public/) {\r\n    allowBrowse          0\r\n  }\r\n",
+                         name);
+                buf_str(&rootctx, &rcl, &rcc, line);
+            }
+            if (i < napp)
+            {
+                appon[i] = 1;
+                printf("http://%s.%s/  ->  %s app in %s/%s/\n", name, tld, appk[i] == 2 ? "Python" : "Node.js", wwwfwd,
+                       name);
+            }
+            else
+            {
+                swprintf(p, MAX_PATH, L"%s\\%s\\public\\index.php", wwww, fd.cFileName);
+                if (file_exists(p))
+                    sub = "public/";
+                snprintf(line, sizeof(line),
+                         "    member %s {\r\n        vhDomain             %s.%s\r\n"
+                         "        vhAliases            www.%s.%s\r\n        vhRoot               %s/%s/%s\r\n    }\r\n",
+                         name, name, tld, name, tld, wwwfwd, name, sub);
+                for (i = 0; i < nsp && strcmp(spn[i], name) != 0; ++i)
+                    ;
+                if (i < nsp && spg[i] >= 0)
+                    buf_str(&gmem[spg[i]], &gml[spg[i]], &gmc[spg[i]], line);
+                else
+                    buf_str(&mem, &mlen, &mcap, line);
+                printf("http://%s.%s/  ->  %s/%s/%s\n", name, tld, wwwfwd, name, sub);
+            }
             if (nnames == ncap)
             {
                 char **grown = (char **)realloc(names, (size_t)(ncap ? ncap * 2 : 32) * sizeof(char *));
@@ -581,6 +734,91 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
                 printf("http://%s.%s/  ->  127.0.0.1:%d\n", pn, tld, pp);
             }
     }
+    for (g = 0; g < ng; ++g)
+    {
+        char proc[4096], *t;
+        int maj, mn, ts, lsapi;
+        size_t tl;
+        if (!gmem[g])
+            continue;
+        snprintf(line, sizeof(line), "lsphp-%s", ghash[g]);
+        t = php_proc(root, gdir[g], line, 9101 + g, proc, sizeof(proc), &maj, &mn, &ts, &lsapi, elev) == 0
+                ? build_template(root, with_root)
+                : NULL;
+        if (t && (tl = strlen(t)) >= 3)
+        {
+            char *tt = NULL;
+            size_t ttl = 0, ttc = 0;
+            buf_add(&tt, &ttl, &ttc, t, tl - 3);
+            snprintf(line, sizeof(line), "\r\n  scriptHandler {\r\n    add                  %s:lsphp-%s php\r\n  }\r\n}\r\n",
+                     lsapi ? "lsapi" : "fcgi", ghash[g]);
+            buf_str(&tt, &ttl, &ttc, line);
+            free(t);
+            t = tt;
+            swprintf(tpl, MAX_PATH, L"%s\\conf\\templates\\devsite-%S.conf", root, ghash[g]);
+            if (t && write_file(tpl, t, strlen(t)) == 0)
+            {
+                buf_str(&procs, &plen, &pcap, proc);
+                printf("PHP %d.%d %s for: %ls\n", maj, mn, ts ? "TS" : "NTS", gdir[g]);
+                free(t);
+                continue;
+            }
+        }
+        free(t);
+        fprintf(stderr, "sites that use %ls fall back to the default PHP\n", gdir[g]);
+        buf_str(&mem, &mlen, &mcap, gmem[g]);
+        free(gmem[g]);
+        gmem[g] = NULL;
+    }
+    {
+        wchar_t node[MAX_PATH], wn[64];
+        char nodef[MAX_PATH * 3], binl[MAX_PATH * 3 + 64], body[4096 + MAX_PATH * 6];
+        nodef[0] = 0;
+        if (ols_node_default(root, node, MAX_PATH) == 0 && WideCharToMultiByte(CP_UTF8, 0, node, -1, nodef, sizeof(nodef), NULL, NULL) > 0)
+            for (q = nodef; *q; ++q)
+                if (*q == '\\')
+                    *q = '/';
+        for (i = 0; i < napp; ++i)
+        {
+            if (!appon[i])
+                continue;
+            MultiByteToWideChar(CP_UTF8, 0, appn[i], -1, wn, 64);
+            swprintf(p, MAX_PATH, L"%s\\%s\\public", wwww, wn);
+            CreateDirectoryW(p, NULL);
+            binl[0] = 0;
+            if (appk[i] == 1 && nodef[0] && conf_safe(nodef))
+                snprintf(binl, sizeof(binl), "    binPath              %s\r\n", nodef);
+            snprintf(body, sizeof(body), s_app, wwwfwd, appn[i], wwwfwd, appn[i], appk[i] == 2 ? "wsgi" : "node", binl);
+            swprintf(tpl, MAX_PATH, L"%s\\conf\\templates\\app-%s.conf", root, wn);
+            if (write_file(tpl, body, strlen(body)) != 0)
+            {
+                fprintf(stderr, "cannot write %ls\n", tpl);
+                appon[i] = 0;
+            }
+        }
+    }
+    if (rootmem)
+    {
+        char *t = build_template(root, 1), *tt = NULL;
+        size_t tl = t ? strlen(t) : 0, ttl = 0, ttc = 0;
+        if (tl >= 3)
+        {
+            buf_add(&tt, &ttl, &ttc, t, tl - 3);
+            if (rootctx)
+                buf_str(&tt, &ttl, &ttc, rootctx);
+            buf_str(&tt, &ttl, &ttc, "}\r\n");
+        }
+        free(t);
+        swprintf(tpl, MAX_PATH, L"%s\\conf\\templates\\devroot.conf", root);
+        if (!tt || write_file(tpl, tt, strlen(tt)) != 0)
+        {
+            fprintf(stderr, "cannot write %ls (error %lu)\n", tpl, GetLastError());
+            free(rootmem);
+            rootmem = NULL;
+        }
+        free(tt);
+    }
+    free(rootctx);
     https = GetPrivateProfileIntW(L"sites", L"https", 0, ini);
     if (https > 0 && https < 65536)
     {
@@ -604,6 +842,9 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
         free(names[--nnames]);
     free(names);
     buf_str(&block, &blen, &bcap, DEV_BEGIN "\r\n");
+    if (procs)
+        buf_str(&block, &blen, &bcap, procs);
+    free(procs);
     if (ssl)
     {
         snprintf(line, sizeof(line),
@@ -612,6 +853,15 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
                  "    certFile                 $SERVER_ROOT/conf/cert/devsites.crt\r\n}\r\n",
                  https);
         buf_str(&block, &blen, &bcap, line);
+    }
+    if (rootmem)
+    {
+        buf_str(&block, &blen, &bcap, "vhTemplate devroot {\r\n    templateFile             conf/templates/devroot.conf\r\n");
+        buf_str(&block, &blen, &bcap, ssl ? "    listeners                Default, DevSSL\r\n"
+                                          : "    listeners                Default\r\n");
+        buf_str(&block, &blen, &bcap, rootmem);
+        buf_str(&block, &blen, &bcap, "}\r\n");
+        free(rootmem);
     }
     buf_str(&block, &blen, &bcap, "vhTemplate devsites {\r\n    templateFile             conf/templates/devsite.conf\r\n");
     buf_str(&block, &blen, &bcap, ssl ? "    listeners                Default, DevSSL\r\n"
@@ -636,6 +886,30 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
                  "    listeners                Default%s\r\n    member %s {\r\n"
                  "        vhDomain             %s.%s\r\n        vhAliases            www.%s.%s\r\n    }\r\n}\r\n",
                  pnames[i], pnames[i], ssl ? ", DevSSL" : "", pnames[i], pnames[i], tld, pnames[i], tld);
+        buf_str(&block, &blen, &bcap, line);
+    }
+    for (g = 0; g < ng; ++g)
+    {
+        if (!gmem[g])
+            continue;
+        snprintf(line, sizeof(line),
+                 "vhTemplate devsites-%s {\r\n    templateFile             conf/templates/devsite-%s.conf\r\n"
+                 "    listeners                Default%s\r\n",
+                 ghash[g], ghash[g], ssl ? ", DevSSL" : "");
+        buf_str(&block, &blen, &bcap, line);
+        buf_str(&block, &blen, &bcap, gmem[g]);
+        buf_str(&block, &blen, &bcap, "}\r\n");
+        free(gmem[g]);
+    }
+    for (i = 0; i < napp; ++i)
+    {
+        if (!appon[i])
+            continue;
+        snprintf(line, sizeof(line),
+                 "vhTemplate devapp-%s {\r\n    templateFile             conf/templates/app-%s.conf\r\n"
+                 "    listeners                Default%s\r\n    member %s {\r\n"
+                 "        vhDomain             %s.%s\r\n        vhAliases            www.%s.%s\r\n    }\r\n}\r\n",
+                 appn[i], appn[i], ssl ? ", DevSSL" : "", appn[i], appn[i], tld, appn[i], tld);
         buf_str(&block, &blen, &bcap, line);
     }
     buf_str(&block, &blen, &bcap, DEV_END "\r\n");
@@ -753,6 +1027,346 @@ static int install_wordpress(const wchar_t *dir)
     return 0;
 }
 
+static int run_shown(const wchar_t *exe, wchar_t *cmd, const wchar_t *cwd, DWORD timeout)
+{
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    DWORD code = 1;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = INVALID_HANDLE_VALUE;
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    fflush(stdout);
+    fflush(stderr);
+    if (!CreateProcessW(exe, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, cwd, &si, &pi))
+        return -1;
+    if (WaitForSingleObject(pi.hProcess, timeout) == WAIT_TIMEOUT)
+    {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 5000);
+    }
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return (int)code;
+}
+
+static int php_has_module(const wchar_t *php, const wchar_t *phprc, const char *mod)
+{
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    HANDLE rd, wr, nul;
+    wchar_t cmd[MAX_PATH + 8], old[MAX_PATH];
+    char out[16384], want[64];
+    DWORD got, total = 0, had;
+    int ok;
+    if (!CreatePipe(&rd, &wr, &sa, 65536))
+        return 0;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = nul;
+    si.hStdOutput = wr;
+    si.hStdError = wr;
+    swprintf(cmd, MAX_PATH + 8, L"\"%s\" -m", php);
+    had = GetEnvironmentVariableW(L"PHPRC", old, MAX_PATH);
+    SetEnvironmentVariableW(L"PHPRC", phprc);
+    ok = CreateProcessW(php, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, phprc, &si, &pi);
+    SetEnvironmentVariableW(L"PHPRC", had && had < MAX_PATH ? old : NULL);
+    CloseHandle(wr);
+    if (nul != INVALID_HANDLE_VALUE)
+        CloseHandle(nul);
+    if (!ok)
+    {
+        CloseHandle(rd);
+        return 0;
+    }
+    CloseHandle(pi.hThread);
+    while (total < sizeof(out) - 1 && ReadFile(rd, out + total, (DWORD)(sizeof(out) - 1 - total), &got, NULL) && got)
+        total += got;
+    CloseHandle(rd);
+    if (WaitForSingleObject(pi.hProcess, 20000) != WAIT_OBJECT_0)
+        TerminateProcess(pi.hProcess, 1);
+    CloseHandle(pi.hProcess);
+    out[total] = 0;
+    snprintf(want, sizeof(want), "\n%s\r", mod);
+    if (strstr(out, want))
+        return 1;
+    snprintf(want, sizeof(want), "\n%s\n", mod);
+    return strstr(out, want) != NULL;
+}
+
+static int install_laravel(const wchar_t *root, const wchar_t *dir)
+{
+    wchar_t cur[MAX_PATH], php[MAX_PATH], phar[MAX_PATH], cmd[MAX_PATH * 4], old[MAX_PATH], www[MAX_PATH], *s;
+    DWORD had;
+    int r;
+    if (ols_php_current(root, cur) != 0)
+    {
+        fprintf(stderr, "choose a PHP version first\n");
+        return 1;
+    }
+    swprintf(php, MAX_PATH, L"%s\\php.exe", cur);
+    swprintf(phar, MAX_PATH, L"%s\\tools\\composer\\composer.phar", root);
+    if (!file_exists(php))
+    {
+        fprintf(stderr, "php.exe is missing from %ls\n", cur);
+        return 1;
+    }
+    if (!file_exists(phar))
+    {
+        fprintf(stderr, "install Composer first\n");
+        return 1;
+    }
+    if (!php_has_module(php, cur, "pdo_sqlite"))
+    {
+        fprintf(stderr, "Laravel stores its data in SQLite: turn on the pdo_sqlite extension of the default PHP on the PHP page, then try again\n");
+        return 1;
+    }
+    wcscpy(www, dir);
+    if ((s = wcsrchr(www, L'\\')) != NULL)
+        *s = 0;
+    swprintf(cmd, MAX_PATH * 4,
+             L"\"%s\" \"%s\" create-project laravel/laravel \"%s\" --no-interaction --prefer-dist --no-progress --no-ansi",
+             php, phar, dir);
+    printf("creating a Laravel project with Composer...\n");
+    had = GetEnvironmentVariableW(L"PHPRC", old, MAX_PATH);
+    SetEnvironmentVariableW(L"PHPRC", cur);
+    r = run_shown(php, cmd, www, 1800000);
+    SetEnvironmentVariableW(L"PHPRC", had && had < MAX_PATH ? old : NULL);
+    swprintf(cmd, MAX_PATH * 4, L"%s\\artisan", dir);
+    if (r != 0 || !file_exists(cmd))
+    {
+        fprintf(stderr, "Composer could not create the Laravel project\n");
+        return 1;
+    }
+    return 0;
+}
+
+static int write_app_starter(const wchar_t *dir, const char *name, const char *tld, int python)
+{
+    wchar_t f[MAX_PATH];
+    char text[2048];
+    int n;
+    swprintf(f, MAX_PATH, L"%s\\public", dir);
+    if (!CreateDirectoryW(f, NULL))
+        return -1;
+    if (python)
+    {
+        n = snprintf(text, sizeof(text),
+                     "import sys\r\n\r\n\r\ndef application(environ, start_response):\r\n"
+                     "    body = ('<!doctype html><title>%s.%s</title><h1>%s</h1>'\r\n"
+                     "            '<p>OpenLiteSpeed is running this Python %%s app.</p>' %% sys.version.split()[0]).encode()\r\n"
+                     "    start_response('200 OK', [('Content-Type', 'text/html; charset=utf-8'),\r\n"
+                     "                              ('Content-Length', str(len(body)))])\r\n"
+                     "    return [body]\r\n",
+                     name, tld, name);
+        swprintf(f, MAX_PATH, L"%s\\wsgi.py", dir);
+        return n > 0 && (size_t)n < sizeof(text) ? write_file(f, text, (size_t)n) : -1;
+    }
+    n = snprintf(text, sizeof(text),
+                 "{\r\n  \"name\": \"%s\",\r\n  \"private\": true,\r\n  \"main\": \"server.js\",\r\n"
+                 "  \"scripts\": {\r\n    \"start\": \"node server.js\"\r\n  }\r\n}\r\n",
+                 name);
+    swprintf(f, MAX_PATH, L"%s\\package.json", dir);
+    if (n <= 0 || (size_t)n >= sizeof(text) || write_file(f, text, (size_t)n) != 0)
+        return -1;
+    n = snprintf(text, sizeof(text),
+                 "const http = require('http');\r\n\r\n"
+                 "const server = http.createServer((req, res) => {\r\n"
+                 "  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });\r\n"
+                 "  res.end('<!doctype html><title>%s.%s</title><h1>%s</h1>' +\r\n"
+                 "    '<p>OpenLiteSpeed is running this Node.js ' + process.version + ' app.</p>');\r\n"
+                 "});\r\n\r\n"
+                 "server.listen(process.env.PORT || 3000);\r\n",
+                 name, tld, name);
+    swprintf(f, MAX_PATH, L"%s\\server.js", dir);
+    return n > 0 && (size_t)n < sizeof(text) ? write_file(f, text, (size_t)n) : -1;
+}
+
+int ols_site_php(const wchar_t *ini, const char *site, wchar_t *dir, size_t n)
+{
+    wchar_t wn[64];
+    dir[0] = 0;
+    if (MultiByteToWideChar(CP_UTF8, 0, site, -1, wn, 64) <= 0)
+        return -1;
+    GetPrivateProfileStringW(L"sitephp", wn, L"", dir, (DWORD)n, ini);
+    return dir[0] ? 0 : -1;
+}
+
+int ols_site_main(int argc, char **argv)
+{
+    wchar_t root[MAX_PATH], ini[MAX_PATH], www[MAX_PATH], def[MAX_PATH], dir[MAX_PATH], wname[64], w[MAX_PATH],
+        full[MAX_PATH], cur[MAX_PATH];
+    const char *act = argc >= 1 ? argv[0] : "";
+    int rc;
+    if (root_dir(root, MAX_PATH) < 0)
+    {
+        fprintf(stderr, "OLS_ROOT is not set\n");
+        return 2;
+    }
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    if (strcmp(act, "resync") == 0)
+        return ols_dev_resync(root, ini);
+    if (argc < 2 || !valid_label(argv[1]) || strcmp(argv[1], "localhost") == 0 || strcmp(argv[1], "phpmyadmin") == 0
+        || MultiByteToWideChar(CP_UTF8, 0, argv[1], -1, wname, 64) <= 0)
+    {
+        fprintf(stderr, "usage: openlitespeed --site php <name> <php folder|default> | app <name> node|python|off |\n"
+                        "       forget <name>\n");
+        return 2;
+    }
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    swprintf(def, MAX_PATH, L"%s\\www", root);
+    GetPrivateProfileStringW(L"sites", L"www", def, www, MAX_PATH, ini);
+    swprintf(dir, MAX_PATH, L"%s\\%s", www, wname);
+    if (strcmp(act, "forget") == 0)
+    {
+        WritePrivateProfileStringW(L"apps", wname, NULL, ini);
+        WritePrivateProfileStringW(L"sitephp", wname, NULL, ini);
+    }
+    else if (!dir_exists(dir))
+    {
+        fprintf(stderr, "the projects folder has no site named %s\n", argv[1]);
+        return 2;
+    }
+    else if (strcmp(act, "php") == 0 && argc >= 3)
+    {
+        if (strcmp(argv[2], "default") == 0)
+            WritePrivateProfileStringW(L"sitephp", wname, NULL, ini);
+        else if (MultiByteToWideChar(CP_UTF8, 0, argv[2], -1, w, MAX_PATH) <= 0 || !ols_php_known(root, w, full))
+        {
+            fprintf(stderr, "that PHP folder is not one OpenLiteSpeed found on this computer\n");
+            return 2;
+        }
+        else if (ols_php_current(root, cur) == 0 && _wcsicmp(cur, full) == 0)
+            WritePrivateProfileStringW(L"sitephp", wname, NULL, ini);
+        else if (!WritePrivateProfileStringW(L"sitephp", wname, full, ini))
+            return 1;
+    }
+    else if (strcmp(act, "app") == 0 && argc >= 3
+             && (strcmp(argv[2], "node") == 0 || strcmp(argv[2], "python") == 0 || strcmp(argv[2], "off") == 0))
+    {
+        if (strcmp(argv[2], "off") == 0)
+            WritePrivateProfileStringW(L"apps", wname, NULL, ini);
+        else
+        {
+            swprintf(w, MAX_PATH, L"%s\\public", dir);
+            CreateDirectoryW(w, NULL);
+            if (!WritePrivateProfileStringW(L"apps", wname, argv[2][0] == 'p' ? L"python" : L"node", ini))
+                return 1;
+        }
+    }
+    else
+    {
+        fprintf(stderr, "usage: openlitespeed --site php <name> <php folder|default> | app <name> node|python|off |\n"
+                        "       forget <name>\n");
+        return 2;
+    }
+    rc = ols_dev_resync(root, ini);
+    if (rc == 0)
+        printf("%s updated\n", argv[1]);
+    return rc;
+}
+
+static int listener_port(const wchar_t *file, const char *anchor)
+{
+    char *text = NULL, *p, *q, *c = NULL;
+    size_t len;
+    int port = 0;
+    if (read_file(file, &text, &len) != 0 || !text)
+        return 0;
+    if ((p = strstr(text, anchor)) != NULL && (p = strstr(p, "address")) != NULL)
+    {
+        for (q = p; *q && *q != '\r' && *q != '\n'; ++q)
+            if (*q == ':')
+                c = q;
+        if (c)
+            port = atoi(c + 1);
+    }
+    free(text);
+    return port;
+}
+
+static int set_listener_port(const wchar_t *file, const char *anchor, int port)
+{
+    char *text = NULL, *p, *e, *c = NULL, *out = NULL, num[16];
+    size_t len, olen = 0, ocap = 0;
+    int r;
+    if (read_file(file, &text, &len) != 0 || !text)
+        return -1;
+    if ((p = strstr(text, anchor)) == NULL || (p = strstr(p, "address")) == NULL)
+    {
+        free(text);
+        return -1;
+    }
+    for (e = p; *e && *e != '\r' && *e != '\n'; ++e)
+        if (*e == ':')
+            c = e;
+    if (!c)
+    {
+        free(text);
+        return -1;
+    }
+    snprintf(num, sizeof(num), "%d", port);
+    buf_add(&out, &olen, &ocap, text, (size_t)(c + 1 - text));
+    buf_str(&out, &olen, &ocap, num);
+    buf_str(&out, &olen, &ocap, e);
+    free(text);
+    r = out ? write_file(file, out, olen) : -1;
+    free(out);
+    return r;
+}
+
+int ols_set_port(const char *which, const char *port_s)
+{
+    wchar_t root[MAX_PATH], conf[MAX_PATH], admin[MAX_PATH], ini[MAX_PATH];
+    int port = atoi(port_s), http, adm, https, admin_side;
+    if (root_dir(root, MAX_PATH) < 0)
+    {
+        fprintf(stderr, "OLS_ROOT is not set\n");
+        return 2;
+    }
+    admin_side = strcmp(which, "admin") == 0;
+    if ((!admin_side && strcmp(which, "http") != 0) || port <= 0 || port > 65535 || strspn(port_s, "0123456789") != strlen(port_s))
+    {
+        fprintf(stderr, "usage: openlitespeed --set-port http|admin <port>\n");
+        return 2;
+    }
+    swprintf(conf, MAX_PATH, L"%s\\conf\\httpd_config.conf", root);
+    swprintf(admin, MAX_PATH, L"%s\\admin\\conf\\admin_config.conf", root);
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    http = ols_default_port(root);
+    adm = listener_port(admin, "listener adminListener");
+    https = GetPrivateProfileIntW(L"sites", L"https", 0, ini);
+    if (port == (admin_side ? adm : http))
+    {
+        printf("the port is already %d\n", port);
+        return 0;
+    }
+    if (port == (admin_side ? http : adm) || port == https)
+    {
+        fprintf(stderr, "port %d is already used by OpenLiteSpeed\n", port);
+        return 2;
+    }
+    if (ols_port_listening(port))
+    {
+        fprintf(stderr, "another program is listening on port %d\n", port);
+        return 2;
+    }
+    if (set_listener_port(admin_side ? admin : conf, admin_side ? "listener adminListener" : "listener Default", port) != 0)
+    {
+        fprintf(stderr, "cannot change the port in the configuration\n");
+        return 1;
+    }
+    printf("%s port is now %d; restart the web server to use it\n", admin_side ? "WebAdmin" : "HTTP", port);
+    return 0;
+}
+
 int ols_new_site(const char *name, const char *tld, const char *flavor)
 {
     wchar_t root[MAX_PATH], ini[MAX_PATH], www[MAX_PATH], def[MAX_PATH], dir[MAX_PATH], idx[MAX_PATH], wname[128];
@@ -813,6 +1427,24 @@ int ols_new_site(const char *name, const char *tld, const char *flavor)
         }
         if (ols_db_wordpress(root, name, dir) == 1)
             fprintf(stderr, "WordPress will ask for the database details in the browser\n");
+    }
+    else if (flavor && strcmp(flavor, "laravel") == 0)
+    {
+        if (install_laravel(root, dir) != 0)
+        {
+            if (ols_remove_tree(dir) != 0)
+                fprintf(stderr, "remove the folder %ls before you try again\n", dir);
+            return 1;
+        }
+    }
+    else if (flavor && (strcmp(flavor, "node") == 0 || strcmp(flavor, "python") == 0))
+    {
+        if (write_app_starter(dir, name, tld, flavor[0] == 'p') != 0)
+        {
+            ols_remove_tree(dir);
+            return 1;
+        }
+        WritePrivateProfileStringW(L"apps", wname, flavor[0] == 'p' ? L"python" : L"node", ini);
     }
     else
     {
@@ -1186,28 +1818,28 @@ static int probe_php(const wchar_t *exe, const wchar_t *dir, int major, int mino
     return *code == 0 && strstr(out, want) && strstr(out, sapi);
 }
 
-int ols_set_php(const char *dir)
+static int php_proc(const wchar_t *root, const wchar_t *wdir, const char *name, int tcp, char *out, size_t n,
+                    int *pmajor, int *pminor, int *pts, int *plsapi, int noexec)
 {
-    wchar_t root[MAX_PATH], wdir[MAX_PATH], cgi[MAX_PATH], dll[MAX_PATH], lsphp[MAX_PATH],
-        src[MAX_PATH], conf[MAX_PATH], sock[MAX_PATH];
-    char *text = NULL, *out, block[4096], fdir[MAX_PATH * 3], *q;
-    size_t len;
-    int major = 0, minor = 0, ts, lsapi = 0, uds;
+    wchar_t cgi[MAX_PATH], dll[MAX_PATH], lsphp[MAX_PATH], src[MAX_PATH], sock[MAX_PATH], wn[64];
+    char fdir[MAX_PATH * 3], addr[160], *q;
+    int major = 0, minor = 0, ts, lsapi = 0, r;
     DWORD code;
-    if (root_dir(root, MAX_PATH) < 0 || MultiByteToWideChar(CP_UTF8, 0, dir, -1, wdir, MAX_PATH) <= 0)
-        return 2;
-    GetFullPathNameW(wdir, MAX_PATH, cgi, NULL);
-    wcscpy(wdir, cgi);
-    len = wcslen(wdir);
-    while (len > 3 && (wdir[len - 1] == L'\\' || wdir[len - 1] == L'/'))
-        wdir[--len] = 0;
     swprintf(cgi, MAX_PATH, L"%s\\php-cgi.exe", wdir);
     if (!file_exists(cgi) || php_version(cgi, &major, &minor) != 0)
     {
-        fprintf(stderr, "php-cgi.exe not found in %s\n", dir);
+        fprintf(stderr, "php-cgi.exe not found in %ls\n", wdir);
         return 2;
     }
-    if (!probe_php(cgi, wdir, major, minor, "(cgi-fcgi)", &code))
+    if (noexec)
+    {
+        swprintf(dll, MAX_PATH, L"%s\\php%dts.dll", wdir, major);
+        ts = file_exists(dll);
+        swprintf(src, MAX_PATH, L"%s\\bin\\lsphp\\%d.%d-%s\\lsphp.exe", root, major, minor, ts ? L"ts" : L"nts");
+        swprintf(lsphp, MAX_PATH, L"%s\\lsphp.exe", wdir);
+        lsapi = file_exists(src) && same_file_content(src, lsphp);
+    }
+    else if (!probe_php(cgi, wdir, major, minor, "(cgi-fcgi)", &code))
     {
         const char *why = "";
         if (code == 0xC0000135)
@@ -1217,17 +1849,20 @@ int ols_set_php(const char *dir)
             if (vc)
                 FreeLibrary(vc);
         }
-        fprintf(stderr, "php-cgi.exe in %s does not start (exit code 0x%08lX)%s\n", dir, code, why);
+        fprintf(stderr, "php-cgi.exe in %ls does not start (exit code 0x%08lX)%s\n", wdir, code, why);
         return 3;
     }
-    swprintf(dll, MAX_PATH, L"%s\\php%dts.dll", wdir, major);
-    ts = file_exists(dll);
-    swprintf(src, MAX_PATH, L"%s\\bin\\lsphp\\%d.%d-%s\\lsphp.exe", root, major, minor, ts ? L"ts" : L"nts");
-    swprintf(lsphp, MAX_PATH, L"%s\\lsphp.exe", wdir);
-    if (file_exists(src))
+    else
+    {
+        swprintf(dll, MAX_PATH, L"%s\\php%dts.dll", wdir, major);
+        ts = file_exists(dll);
+        swprintf(src, MAX_PATH, L"%s\\bin\\lsphp\\%d.%d-%s\\lsphp.exe", root, major, minor, ts ? L"ts" : L"nts");
+        swprintf(lsphp, MAX_PATH, L"%s\\lsphp.exe", wdir);
+    }
+    if (!noexec && file_exists(src))
     {
         if (!same_file_content(src, lsphp) && !CopyFileW(src, lsphp, FALSE))
-            fprintf(stderr, "warning: cannot copy lsphp.exe into %s (error %lu), using php-cgi\n", dir,
+            fprintf(stderr, "warning: cannot copy lsphp.exe into %ls (error %lu), using php-cgi\n", wdir,
                     GetLastError());
         else if (!probe_php(lsphp, wdir, major, minor, "(litespeed)", &code))
             fprintf(stderr, "warning: lsphp.exe does not run with this PHP build (exit code 0x%08lX), using php-cgi\n",
@@ -1235,40 +1870,73 @@ int ols_set_php(const char *dir)
         else
             lsapi = 1;
     }
-    if (WideCharToMultiByte(CP_UTF8, 0, wdir, -1, fdir, sizeof(fdir), NULL, NULL) <= 0)
+    if (WideCharToMultiByte(CP_UTF8, 0, wdir, -1, fdir, sizeof(fdir), NULL, NULL) <= 0
+        || MultiByteToWideChar(CP_UTF8, 0, name, -1, wn, 64) <= 0)
         return 2;
+    if (!conf_safe(fdir))
+    {
+        fprintf(stderr, "the PHP folder %ls has { or } in its path and cannot be used\n", wdir);
+        return 2;
+    }
     for (q = fdir; *q; ++q)
         if (*q == '\\')
             *q = '/';
-    swprintf(sock, MAX_PATH, L"%s\\tmp\\lshttpd\\lsphp.sock", root);
-    uds = wcslen(sock) < 100;
+    swprintf(sock, MAX_PATH, L"%s\\tmp\\lshttpd\\%s.sock", root, wn);
+    if (wcslen(sock) < 100)
+        snprintf(addr, sizeof(addr), "uds://tmp/lshttpd/%s.sock", name);
+    else
+        snprintf(addr, sizeof(addr), "127.0.0.1:%d", tcp);
+    r = snprintf(out, n,
+                 "extProcessor %s {\r\n"
+                 "    type                         %s\r\n"
+                 "    address                      %s\r\n"
+                 "    maxConns                     10\r\n"
+                 "    env                          %s\r\n"
+                 "    env                          PHPRC=%s\r\n"
+                 "    initTimeout                  60\r\n"
+                 "    retryTimeout                 0\r\n"
+                 "    persistConn                  1\r\n"
+                 "    respBuffer                   0\r\n"
+                 "    autoStart                    1\r\n"
+                 "    path                         %s/%s\r\n"
+                 "    backlog                      100\r\n"
+                 "    instances                    10\r\n"
+                 "}\r\n",
+                 name, lsapi ? "lsapi" : "fcgi", addr, lsapi ? "LSAPI_MAX_REQS=10000" : "PHP_FCGI_MAX_REQUESTS=0",
+                 fdir, fdir, lsapi ? "lsphp.exe" : "php-cgi.exe");
+    if (r <= 0 || (size_t)r >= n)
+        return 2;
+    *pmajor = major;
+    *pminor = minor;
+    *pts = ts;
+    *plsapi = lsapi;
+    return 0;
+}
+
+int ols_set_php(const char *dir)
+{
+    wchar_t root[MAX_PATH], wdir[MAX_PATH], full[MAX_PATH], conf[MAX_PATH];
+    char *text = NULL, *out, block[4608], proc[4096];
+    size_t len;
+    int major = 0, minor = 0, ts = 0, lsapi = 0, rc;
+    if (root_dir(root, MAX_PATH) < 0 || MultiByteToWideChar(CP_UTF8, 0, dir, -1, wdir, MAX_PATH) <= 0)
+        return 2;
+    GetFullPathNameW(wdir, MAX_PATH, full, NULL);
+    wcscpy(wdir, full);
+    len = wcslen(wdir);
+    while (len > 3 && (wdir[len - 1] == L'\\' || wdir[len - 1] == L'/'))
+        wdir[--len] = 0;
+    if ((rc = php_proc(root, wdir, "lsphp", 9100, proc, sizeof(proc), &major, &minor, &ts, &lsapi, 0)) != 0)
+        return rc;
     snprintf(block, sizeof(block),
              PHP_BEGIN "\r\n"
-             "extProcessor lsphp {\r\n"
-             "    type                         %s\r\n"
-             "    address                      %s\r\n"
-             "    maxConns                     10\r\n"
-             "    env                          %s\r\n"
-             "    env                          PHPRC=%s\r\n"
-             "    initTimeout                  60\r\n"
-             "    retryTimeout                 0\r\n"
-             "    persistConn                  1\r\n"
-             "    respBuffer                   0\r\n"
-             "    autoStart                    1\r\n"
-             "    path                         %s/%s\r\n"
-             "    backlog                      100\r\n"
-             "    instances                    10\r\n"
-             "}\r\n"
+             "%s"
              "\r\n"
              "scriptHandler {\r\n"
              "    add                          %s:lsphp php\r\n"
              "}\r\n"
              PHP_END "\r\n",
-             lsapi ? "lsapi" : "fcgi",
-             uds ? "uds://tmp/lshttpd/lsphp.sock" : "127.0.0.1:9100",
-             lsapi ? "LSAPI_MAX_REQS=10000" : "PHP_FCGI_MAX_REQUESTS=0",
-             fdir, fdir, lsapi ? "lsphp.exe" : "php-cgi.exe",
-             lsapi ? "lsapi" : "fcgi");
+             proc, lsapi ? "lsapi" : "fcgi");
     swprintf(conf, MAX_PATH, L"%s\\conf\\httpd_config.conf", root);
     if (read_file(conf, &text, &len) != 0 || !text)
         return 1;
@@ -1341,7 +2009,7 @@ int ols_find_runtime(const char *exe, char *out, int outlen)
     if (MultiByteToWideChar(CP_UTF8, 0, exe, -1, wexe, 64) <= 0)
         return -1;
     node = _wcsicmp(wexe, L"node.exe") == 0;
-    n = SearchPathW(NULL, wexe, NULL, MAX_PATH, w, NULL);
+    n = ols_path_search(wexe, w) == 0 ? (DWORD)wcslen(w) : 0;
     if (n == 0 || n >= MAX_PATH || wcsstr(w, L"\\WindowsApps\\"))
     {
         w[0] = 0;

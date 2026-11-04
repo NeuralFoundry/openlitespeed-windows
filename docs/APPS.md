@@ -2,9 +2,21 @@
 
 OpenLiteSpeed starts Node.js and Python (WSGI) applications itself and passes requests to them. Static files in the `public` folder of the application are served directly.
 
+## Apps in the projects folder
+
+The simplest way is a site in the projects folder. In the dashboard, **New site** with **Node.js app** or **Python app** creates `name.test` with a small starter app, and **More > Run as a Node.js app** turns an existing folder with a `package.json` into an app. From the command line:
+
+```bat
+bin\openlitespeed.exe --new-site chat --node
+bin\openlitespeed.exe --site app reports python
+bin\openlitespeed.exe -s reload
+```
+
+The whole site is passed to the app, and files in its `public` folder are served directly. Node.js apps run with the default Node.js of the dashboard (`openlitespeed --node default <node.exe>`), Python apps with the Python found on the computer. `--site app <name> off` makes the folder a PHP site again.
+
 ## Setup
 
-In WebAdmin, add a context of type **App Server** to the site, or add it to `vhconf.conf`:
+For an app under a path of another site, add a context of type **App Server** in WebAdmin, or add it to `vhconf.conf`:
 
 ```text
 context /app/ {

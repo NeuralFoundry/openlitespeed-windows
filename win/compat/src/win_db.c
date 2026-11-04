@@ -635,6 +635,297 @@ int ols_db_wordpress(const wchar_t *root, const char *site, const wchar_t *dir)
     return 0;
 }
 
+static int db_ident(const char *s)
+{
+    static const char *const reserved[] = { "mysql", "information_schema", "performance_schema", "sys", "root" };
+    size_t n = s ? strlen(s) : 0, i;
+    if (n == 0 || n > 64)
+        return 0;
+    for (i = 0; i < n; ++i)
+        if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_'))
+            return 0;
+    for (i = 0; i < sizeof(reserved) / sizeof(reserved[0]); ++i)
+        if (_stricmp(s, reserved[i]) == 0)
+            return 0;
+    return 1;
+}
+
+static int run_io(const wchar_t *exe, wchar_t *cmd, HANDLE in, char **out, size_t cap, DWORD timeout)
+{
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    HANDLE rd = NULL, wr = NULL, nul = INVALID_HANDLE_VALUE;
+    DWORD code = 1, got;
+    size_t n = 0;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    if (out)
+    {
+        *out = NULL;
+        if (!CreatePipe(&rd, &wr, &sa, 0))
+            return -1;
+        SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    }
+    if (!in)
+        nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
+    else
+        SetHandleInformation(in, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+    si.hStdInput = in ? in : nul;
+    si.hStdOutput = out ? wr : GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    fflush(stdout);
+    fflush(stderr);
+    if (!CreateProcessW(exe, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
+    {
+        if (rd)
+            CloseHandle(rd);
+        if (wr)
+            CloseHandle(wr);
+        if (nul != INVALID_HANDLE_VALUE)
+            CloseHandle(nul);
+        return -1;
+    }
+    if (wr)
+        CloseHandle(wr);
+    if (nul != INVALID_HANDLE_VALUE)
+        CloseHandle(nul);
+    if (out && (*out = (char *)malloc(cap + 1)) != NULL)
+    {
+        char buf[4096];
+        while (ReadFile(rd, buf, sizeof(buf), &got, NULL) && got)
+        {
+            size_t take = got < cap - n ? got : cap - n;
+            memcpy(*out + n, buf, take);
+            n += take;
+        }
+        (*out)[n] = 0;
+    }
+    if (rd)
+        CloseHandle(rd);
+    if (WaitForSingleObject(pi.hProcess, timeout) == WAIT_TIMEOUT)
+    {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 5000);
+    }
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return (int)code;
+}
+
+static int query(const dbp_t *p, const char *sql, char **out)
+{
+    wchar_t exe[MAX_PATH], cmd[MAX_PATH * 2 + 2048], wsql[2048];
+    if (!tool(p, L"mariadb.exe", exe) || MultiByteToWideChar(CP_UTF8, 0, sql, -1, wsql, 2048) <= 0)
+        return -1;
+    swprintf(cmd, sizeof(cmd) / sizeof(cmd[0]),
+             L"\"%s\" --defaults-extra-file=\"%s\" --batch --skip-column-names --default-character-set=utf8mb4 -e \"%s\"",
+             exe, p->cnf, wsql);
+    return run_io(exe, cmd, NULL, out, 1 << 20, 120000);
+}
+
+static int db_list(const dbp_t *p)
+{
+    char *out = NULL, *line, *next;
+    int first = 1;
+    if (query(p,
+              "SELECT s.SCHEMA_NAME, COUNT(t.TABLE_NAME), COALESCE(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0), "
+              "(SELECT COUNT(*) FROM mysql.global_priv g WHERE g.User = s.SCHEMA_NAME AND g.Host IN ('localhost','127.0.0.1')) "
+              "FROM information_schema.SCHEMATA s LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME "
+              "WHERE s.SCHEMA_NAME NOT IN ('mysql','information_schema','performance_schema','sys') "
+              "GROUP BY s.SCHEMA_NAME ORDER BY s.SCHEMA_NAME",
+              &out)
+            != 0
+        || !out)
+    {
+        free(out);
+        fprintf(stderr, "could not read the database list\n");
+        return 1;
+    }
+    printf("[");
+    for (line = out; line && *line; line = next)
+    {
+        char *f[4], *e = strchr(line, '\n');
+        int i;
+        next = e ? e + 1 : NULL;
+        if (e)
+            *e = 0;
+        if (e && e > line && e[-1] == '\r')
+            e[-1] = 0;
+        f[0] = line;
+        for (i = 1; i < 4; ++i)
+            if ((f[i] = strchr(f[i - 1], '\t')) != NULL)
+                *f[i]++ = 0;
+            else
+                break;
+        if (i < 4)
+            continue;
+        printf("%s{\"name\":", first ? "" : ",");
+        ols_jstr(f[0]);
+        printf(",\"tables\":%ld,\"size\":%lld,\"user\":%s,\"managed\":%s}", strtol(f[1], NULL, 10),
+               _strtoi64(f[2], NULL, 10), strtol(f[3], NULL, 10) > 0 ? "true" : "false", db_ident(f[0]) ? "true" : "false");
+        first = 0;
+    }
+    printf("]\n");
+    free(out);
+    return 0;
+}
+
+static int user_exists(const dbp_t *p, const char *name)
+{
+    char sql[256], *out = NULL;
+    int r;
+    snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM mysql.global_priv WHERE User = '%s'", name);
+    if (query(p, sql, &out) != 0 || !out)
+    {
+        free(out);
+        return -1;
+    }
+    r = atoi(out) > 0;
+    free(out);
+    return r;
+}
+
+static int db_create(const dbp_t *p, const char *name, int with_user)
+{
+    char pw[25], sql[1024];
+    int n, r, u;
+    if (!db_ident(name))
+    {
+        fprintf(stderr, "use lowercase letters, digits and '_' for the database name\n");
+        return 2;
+    }
+    if (with_user && (u = user_exists(p, name)) != 0)
+    {
+        fprintf(stderr, u < 0 ? "could not check the database users\n"
+                              : "a database user with this name already exists; create the database without a user\n");
+        return u < 0 ? 1 : 2;
+    }
+    token(pw, 24);
+    if (with_user)
+        n = snprintf(sql, sizeof(sql),
+                     "CREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"
+                     "CREATE USER '%s'@'localhost' IDENTIFIED BY '%s';\nCREATE USER '%s'@'127.0.0.1' IDENTIFIED BY '%s';\n"
+                     "GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';\nGRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'127.0.0.1';\n"
+                     "FLUSH PRIVILEGES;\n",
+                     name, name, pw, name, pw, name, name, name, name);
+    else
+        n = snprintf(sql, sizeof(sql), "CREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n", name);
+    r = n > 0 && (size_t)n < sizeof(sql) ? client(p, L"mariadb.exe", L"--batch", sql) : -1;
+    OPENSSL_cleanse(sql, sizeof(sql));
+    if (r != 0)
+    {
+        OPENSSL_cleanse(pw, sizeof(pw));
+        fprintf(stderr, "could not create the database %s\n", name);
+        return 1;
+    }
+    printf("database %s created\n", name);
+    if (with_user)
+        printf("user %s\npassword %s\n", name, pw);
+    fflush(stdout);
+    OPENSSL_cleanse(pw, sizeof(pw));
+    return 0;
+}
+
+static int db_drop(const dbp_t *p, const char *name, int with_user)
+{
+    char sql[512];
+    int n;
+    if (!db_ident(name))
+    {
+        fprintf(stderr, "this database cannot be removed here\n");
+        return 2;
+    }
+    n = snprintf(sql, sizeof(sql), "DROP DATABASE `%s`;\n", name);
+    if (with_user)
+        n = snprintf(sql, sizeof(sql),
+                     "DROP DATABASE `%s`;\nDROP USER IF EXISTS '%s'@'localhost';\nDROP USER IF EXISTS '%s'@'127.0.0.1';\n"
+                     "FLUSH PRIVILEGES;\n",
+                     name, name, name);
+    if (n <= 0 || (size_t)n >= sizeof(sql) || client(p, L"mariadb.exe", L"--batch", sql) != 0)
+    {
+        fprintf(stderr, "could not remove the database %s\n", name);
+        return 1;
+    }
+    printf("database %s removed\n", name);
+    return 0;
+}
+
+static int sql_path(const char *arg, wchar_t *out)
+{
+    size_t n;
+    if (!arg || MultiByteToWideChar(CP_UTF8, 0, arg, -1, out, MAX_PATH) <= 0 || wcschr(out, L'"'))
+        return -1;
+    n = wcslen(out);
+    if (n < 7 || out[1] != L':' || out[2] != L'\\' || _wcsicmp(out + n - 4, L".sql") != 0)
+        return -1;
+    return 0;
+}
+
+static int db_export(const dbp_t *p, const char *name, const char *file)
+{
+    wchar_t exe[MAX_PATH], wf[MAX_PATH], wn[72], cmd[MAX_PATH * 4];
+    if (!db_ident(name) || sql_path(file, wf) != 0 || MultiByteToWideChar(CP_UTF8, 0, name, -1, wn, 72) <= 0)
+    {
+        fprintf(stderr, "choose a .sql file to export to\n");
+        return 2;
+    }
+    if (!tool(p, L"mariadb-dump.exe", exe))
+        return 1;
+    swprintf(cmd, MAX_PATH * 4,
+             L"\"%s\" --defaults-extra-file=\"%s\" --single-transaction --routines --triggers --events --hex-blob "
+             L"--default-character-set=utf8mb4 --result-file=\"%s\" %s",
+             exe, p->cnf, wf, wn);
+    if (run_io(exe, cmd, NULL, NULL, 0, 3600000) != 0)
+    {
+        DeleteFileW(wf);
+        fprintf(stderr, "could not export %s\n", name);
+        return 1;
+    }
+    printf("exported %s to %ls\n", name, wf);
+    return 0;
+}
+
+static int db_import(const dbp_t *p, const char *name, const char *file)
+{
+    wchar_t exe[MAX_PATH], wf[MAX_PATH], wn[72], cmd[MAX_PATH * 4];
+    char sql[160];
+    HANDLE in;
+    int r;
+    if (!db_ident(name) || sql_path(file, wf) != 0 || MultiByteToWideChar(CP_UTF8, 0, name, -1, wn, 72) <= 0)
+    {
+        fprintf(stderr, "choose a .sql file to import\n");
+        return 2;
+    }
+    if (!tool(p, L"mariadb.exe", exe))
+        return 1;
+    snprintf(sql, sizeof(sql), "CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n", name);
+    if (client(p, L"mariadb.exe", L"--batch", sql) != 0)
+    {
+        fprintf(stderr, "could not create the database %s\n", name);
+        return 1;
+    }
+    in = CreateFileW(wf, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    if (in == INVALID_HANDLE_VALUE)
+    {
+        fprintf(stderr, "cannot open %ls\n", wf);
+        return 1;
+    }
+    swprintf(cmd, MAX_PATH * 4, L"\"%s\" --defaults-extra-file=\"%s\" --batch --default-character-set=utf8mb4 %s", exe,
+             p->cnf, wn);
+    r = run_io(exe, cmd, in, NULL, 0, 3600000);
+    CloseHandle(in);
+    if (r != 0)
+    {
+        fprintf(stderr, "the import into %s stopped with an error\n", name);
+        return 1;
+    }
+    printf("imported %ls into %s\n", wf, name);
+    return 0;
+}
+
 int ols_db_main(int argc, char **argv)
 {
     dbp_t p;
@@ -708,7 +999,30 @@ int ols_db_main(int argc, char **argv)
         printf("MariaDB %s, port %d, %s\n", MDB_VERSION, port, alive(&p) ? "running" : "stopped");
         return 0;
     }
-    fprintf(stderr, "usage: openlitespeed --db install | fetch | start | stop | status\n");
+    if (strcmp(act, "list") == 0 || strcmp(act, "create") == 0 || strcmp(act, "drop") == 0 || strcmp(act, "export") == 0
+        || strcmp(act, "import") == 0)
+    {
+        int flag = argc >= 3 && strcmp(argv[2], "--user") == 0;
+        if (!alive(&p))
+        {
+            fprintf(stderr, "start MariaDB first\n");
+            return 3;
+        }
+        if (strcmp(act, "list") == 0)
+            return db_list(&p);
+        if (argc < 2)
+            goto usage;
+        if (strcmp(act, "create") == 0)
+            return db_create(&p, argv[1], !(argc >= 3 && strcmp(argv[2], "--no-user") == 0));
+        if (strcmp(act, "drop") == 0)
+            return db_drop(&p, argv[1], flag);
+        if (argc < 3)
+            goto usage;
+        return strcmp(act, "export") == 0 ? db_export(&p, argv[1], argv[2]) : db_import(&p, argv[1], argv[2]);
+    }
+usage:
+    fprintf(stderr, "usage: openlitespeed --db install | fetch | start | stop | status | list | create <name> [--no-user] |\n"
+                    "       drop <name> [--user] | export <name> <file.sql> | import <name> <file.sql>\n");
     return 2;
 }
 

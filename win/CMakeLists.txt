@@ -81,6 +81,8 @@ add_library(olscompat STATIC
     "${COMPAT}/src/win_update.c"
     "${COMPAT}/src/win_tunnel.c"
     "${COMPAT}/src/win_status.c"
+    "${COMPAT}/src/win_json.c"
+    "${COMPAT}/src/win_runtime.c"
 )
 target_include_directories(olscompat PRIVATE "${OLS_TOP}/win/common")
 target_link_libraries(olscompat PUBLIC wepoll ws2_32 mswsock bcrypt ntdll advapi32 userenv iphlpapi synchronization dbghelp shell32 crypt32 version)
@@ -164,7 +166,7 @@ target_include_directories(olspanel PRIVATE "${OLS_TOP}/win/common" "${OLS_TOP}/
 target_compile_definitions(olspanel PRIVATE "OLS_RELEASE=\"${OLS_RELEASE}\"")
 target_link_options(olspanel PRIVATE /MANIFEST:NO)
 target_link_libraries(olspanel "${OLS_TOP}/.deps/webview2/build/native/x64/WebView2LoaderStatic.lib"
-    user32 gdi32 shell32 advapi32 ole32 oleaut32 version dwmapi)
+    user32 gdi32 shell32 advapi32 ole32 oleaut32 version dwmapi ws2_32)
 set_property(SOURCE "${OLS_TOP}/win/panel/olspanel.rc" APPEND PROPERTY OBJECT_DEPENDS
     "${OLS_TOP}/win/panel/panel.html" "${OLS_TOP}/win/panel/olspanel.manifest")
 add_executable(lsrecaptcha "${OLS_TOP}/win/recaptcha/lsrecaptcha.c")

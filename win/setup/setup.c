@@ -1617,12 +1617,24 @@ static int php_used_elsewhere(const wchar_t *dir, const wchar_t *php)
 
 static void remove_lsphp(const wchar_t *dir)
 {
-    wchar_t php[MAX_PATH], target[MAX_PATH];
-    if (!conf_php_dir(dir, php))
-        return;
-    swprintf(target, MAX_PATH, L"%s\\lsphp.exe", php);
-    if (exists(target) && lsphp_is_ours(dir, target) && !php_used_elsewhere(dir, php))
-        DeleteFileW(target);
+    wchar_t php[MAX_PATH], target[MAX_PATH], ini[MAX_PATH], sect[16384], *e;
+    if (conf_php_dir(dir, php))
+    {
+        swprintf(target, MAX_PATH, L"%s\\lsphp.exe", php);
+        if (exists(target) && lsphp_is_ours(dir, target) && !php_used_elsewhere(dir, php))
+            DeleteFileW(target);
+    }
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", dir);
+    if (GetPrivateProfileSectionW(L"sitephp", sect, 16384, ini) > 0)
+        for (e = sect; *e; e += wcslen(e) + 1)
+        {
+            wchar_t *eq = wcschr(e, L'=');
+            if (!eq || !eq[1] || wcslen(eq + 1) >= MAX_PATH - 12 || !GetFullPathNameW(eq + 1, MAX_PATH, php, NULL))
+                continue;
+            swprintf(target, MAX_PATH, L"%s\\lsphp.exe", php);
+            if (exists(target) && lsphp_is_ours(dir, target) && !php_used_elsewhere(dir, php))
+                DeleteFileW(target);
+        }
 }
 
 static void delete_tree(const wchar_t *dir, const wchar_t *keep, const wchar_t *keep2)

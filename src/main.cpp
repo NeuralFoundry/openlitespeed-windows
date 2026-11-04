@@ -88,6 +88,12 @@ int main(int argc, char *argv[])
         {
             if (strcmp(argv[i], "--wordpress") == 0)
                 flavor = "wordpress";
+            else if (strcmp(argv[i], "--node") == 0)
+                flavor = "node";
+            else if (strcmp(argv[i], "--python") == 0)
+                flavor = "python";
+            else if (strcmp(argv[i], "--laravel") == 0)
+                flavor = "laravel";
             else
                 tld = argv[i];
         }
@@ -103,6 +109,16 @@ int main(int argc, char *argv[])
         return ols_tunnel_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--status") == 0)
         return ols_status_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--php") == 0)
+        return ols_php_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--node") == 0)
+        return ols_node_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--composer") == 0)
+        return ols_composer_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--site") == 0)
+        return ols_site_main(argc - 2, argv + 2);
+    if (argc >= 4 && strcmp(argv[1], "--set-port") == 0)
+        return ols_set_port(argv[2], argv[3]);
     if (argc >= 2
         && (strcmp(argv[1], "--update") == 0 || strcmp(argv[1], "--release-key") == 0
             || strcmp(argv[1], "--sign-release") == 0))
