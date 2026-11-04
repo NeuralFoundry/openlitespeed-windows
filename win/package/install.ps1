@@ -365,8 +365,12 @@ if (-not $AdminPassword) {
     $AdminPassword = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
     $generated = $true
 }
+$prevEncoding = $OutputEncoding
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
 $AdminPassword | & $Exe --admin-password (Join-Path $Root 'admin\conf\htpasswd') '-' admin
-if ($LASTEXITCODE -ne 0) { throw 'setting the admin password failed' }
+$adminRc = $LASTEXITCODE
+$OutputEncoding = $prevEncoding
+if ($adminRc -ne 0) { throw 'setting the admin password failed' }
 
 $withRoot = $Mode -ne 'standalone'
 $trayIni = Join-Path $Root 'conf\olstray.ini'

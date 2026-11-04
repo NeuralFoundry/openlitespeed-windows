@@ -120,6 +120,9 @@ int ols_set_admin_password(const char *htpasswd, const char *user, const char *p
         len = strlen(input);
         while (len > 0 && (input[len - 1] == '\n' || input[len - 1] == '\r'))
             input[--len] = 0;
+        if (len >= 3 && (unsigned char)input[0] == 0xEF && (unsigned char)input[1] == 0xBB
+            && (unsigned char)input[2] == 0xBF)
+            memmove(input, input + 3, len - 2);
         pass = input;
     }
     if (!user || !*user || strchr(user, ':') || !pass || strlen(pass) < 8)
