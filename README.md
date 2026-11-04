@@ -134,8 +134,8 @@ The full stack edition opens the dashboard from the Start menu, or with a double
 | Page | What you can do |
 |---|---|
 | Overview | Start and stop the web server, MariaDB and Cloudflare Tunnel, see requests per second and open connections |
-| Sites | Create and remove sites, pick the PHP version of each site, put a site online, open its folder or a terminal in it, run a folder as a Node.js or Python app |
-| PHP | Install PHP versions, choose the default, turn extensions on and off, change `php.ini` settings, install Composer |
+| Sites | Create and remove sites, pick the PHP version of each site, put a site online, open its folder, a terminal or VS Code in it, run a folder as a Node.js or Python app |
+| PHP | Install PHP versions, choose the default, turn extensions and Xdebug on and off, change `php.ini` settings, install Composer |
 | Node.js | Install Node.js versions, choose the one that runs the apps, restart an app and read its log |
 | Databases | Create a database and its user, export and import `.sql` files, remove a database, open phpMyAdmin |
 | Logs | Read the server, MariaDB, app and tunnel logs, filter the lines, follow new lines |
@@ -228,6 +228,14 @@ Each site can use its own PHP version: pick it in the PHP column of the Sites pa
 
 **Install** under Composer downloads `composer.phar` from getcomposer.org, checked against its SHA-256. The dashboard terminal has `composer` on the `PATH`, and Laravel sites are created with it.
 
+## Xdebug
+
+The switch in the Xdebug column of the PHP page, or `openlitespeed --php xdebug <folder> on`, turns on Xdebug for that PHP version. An Xdebug that already loads from the `ext` folder is used. Otherwise the official Windows build for that PHP version is downloaded from xdebug.org and checked against a SHA-256 kept in OpenLiteSpeed: Xdebug 3.5.3 for PHP 8.2 to 8.5, thread safe and non thread safe.
+
+Xdebug starts with every request and connects to a debugger on `127.0.0.1:9003`. Without a debugger the request goes on at once and nothing is written to the logs. The opcache JIT is off while Xdebug is on and comes back when Xdebug is turned off. The settings are kept at the end of `php.ini`, and the web server reloads so they apply.
+
+**VS Code:** **More > Open in VS Code** on the Sites page opens the site folder in VS Code when it is installed. Start a PHP debug session that listens on port 9003, for example with the PHP Debug extension, and open the site in the browser.
+
 ## Node.js
 
 **Install Node.js** on the Node.js page lists the current and the LTS versions from nodejs.org. A download is checked against `SHASUMS256.txt` and unpacked into `node\<version>`. The page also lists Node.js found in `Program Files`, Laragon, nvm, Volta and on the `PATH`. **Make default** chooses the version that runs the Node.js apps, and the apps are listed below with **Restart** and **Log**.
@@ -284,9 +292,11 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed --new-site <name> [--wordpress\|--laravel\|--node\|--python]` | Create a site in the projects folder: a PHP site, WordPress with its database, a Laravel project, a Node.js app or a Python app |
 | `openlitespeed --site php <site> <folder>\|default` | Use another PHP version for one site |
 | `openlitespeed --site app <site> node\|python\|off` | Run a site folder as a Node.js or Python app, or as a PHP site again |
+| `openlitespeed --php list` | The PHP versions on this computer as JSON, with the sites and the Xdebug state of each |
 | `openlitespeed --php available` / `install <8.x> [ts]` / `remove <folder>` | List and install the PHP versions from windows.php.net, remove a downloaded one |
 | `openlitespeed --php ext <folder>` / `ext-set <folder> <name> on\|off` | List the extensions of a PHP version, turn one on or off |
 | `openlitespeed --php ini <folder>` / `ini-set <folder> <key> <value>` | Read or change a common `php.ini` setting |
+| `openlitespeed --php xdebug <folder> on\|off\|status` | Turn Xdebug on or off for a PHP version, or show whether it is on |
 | `openlitespeed --node list\|available` / `install <major>` / `default <node.exe>` / `remove <node.exe>` | Manage the Node.js versions for the apps |
 | `openlitespeed --composer install` | Download Composer into `tools\composer` |
 | `openlitespeed --set-port http\|admin <port>` | Change the website or WebAdmin port |

@@ -164,9 +164,8 @@ static bool parse_string(const std::string &s, size_t &i, std::string &out)
     return false;
 }
 
-static bool parse(const std::string &s, Msg &m)
+static bool parse_at(const std::string &s, size_t &i, Msg &m)
 {
-    size_t i = 0;
     skip_ws(s, i);
     if (i >= s.size() || s[i++] != '{')
         return false;
@@ -175,7 +174,10 @@ static bool parse(const std::string &s, Msg &m)
         std::string key;
         skip_ws(s, i);
         if (i < s.size() && s[i] == '}')
+        {
+            ++i;
             return true;
+        }
         if (!parse_string(s, i, key))
             return false;
         skip_ws(s, i);
@@ -218,7 +220,36 @@ static bool parse(const std::string &s, Msg &m)
             ++i;
             continue;
         }
-        return i < s.size() && s[i] == '}';
+        if (i >= s.size() || s[i] != '}')
+            return false;
+        ++i;
+        return true;
+    }
+}
+
+static bool parse(const std::string &s, Msg &m)
+{
+    size_t i = 0;
+    return parse_at(s, i, m);
+}
+
+static std::vector<Msg> parse_list(const std::string &s)
+{
+    std::vector<Msg> v;
+    size_t i = 0;
+    skip_ws(s, i);
+    if (i >= s.size() || s[i++] != '[')
+        return v;
+    for (;;)
+    {
+        Msg m;
+        skip_ws(s, i);
+        if (i >= s.size() || s[i] == ']' || !parse_at(s, i, m))
+            return v;
+        v.push_back(m);
+        skip_ws(s, i);
+        if (i >= s.size() || s[i++] != ',')
+            return v;
     }
 }
 
@@ -738,6 +769,52 @@ static bool open_terminal(const std::wstring &cwd)
     return true;
 }
 
+static std::wstring vscode_exe()
+{
+    std::vector<std::wstring> c;
+    wchar_t buf[MAX_PATH];
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH))
+        c.push_back(std::wstring(buf) + L"\\Programs\\Microsoft VS Code\\Code.exe");
+    if (GetEnvironmentVariableW(L"ProgramFiles", buf, MAX_PATH))
+        c.push_back(std::wstring(buf) + L"\\Microsoft VS Code\\Code.exe");
+    for (HKEY h : { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE })
+    {
+        DWORD size = sizeof(buf);
+        if (RegGetValueW(h, L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Code.exe", NULL,
+                         RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, NULL, buf, &size) == ERROR_SUCCESS)
+        {
+            std::wstring p = buf;
+            if (p.size() > 2 && p.front() == L'"' && p.back() == L'"')
+                p = p.substr(1, p.size() - 2);
+            c.push_back(p);
+        }
+    }
+    for (const auto &p : c)
+    {
+        DWORD a = GetFileAttributesW(p.c_str());
+        if (a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY) && p.size() > 9
+            && _wcsicmp(p.c_str() + p.size() - 9, L"\\Code.exe") == 0)
+            return p;
+    }
+    return std::wstring();
+}
+
+static bool open_vscode(const std::wstring &dir)
+{
+    std::wstring exe = vscode_exe(), cmd;
+    STARTUPINFOW si = {};
+    PROCESS_INFORMATION pi = {};
+    if (exe.empty() || !quoted_ok(exe) || !quoted_ok(dir))
+        return false;
+    cmd = q(exe) + L" " + q(dir);
+    si.cb = sizeof(si);
+    if (!CreateProcessW(exe.c_str(), &cmd[0], NULL, NULL, FALSE, 0, NULL, dir.c_str(), &si, &pi))
+        return false;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
 static bool autorun_on()
 {
     HKEY k;
@@ -864,7 +941,7 @@ static Result handle(const Msg &m)
         size_t b = out.find('{');
         if (b == std::string::npos)
             return fail("The status could not be read.");
-        out.insert(b + 1, "\"version\":" + jesc(OLS_RELEASE) + ",");
+        out.insert(b + 1, "\"version\":" + jesc(OLS_RELEASE) + ",\"vscode\":" + (vscode_exe().empty() ? "false," : "true,"));
         while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
             out.pop_back();
         Result r;
@@ -874,6 +951,9 @@ static Result handle(const Msg &m)
     if (a == "php.list")
     {
         static wchar_t labels[MAX_PHP][MAX_PATH + 96], dirs[MAX_PHP][MAX_PATH];
+        std::vector<Msg> xd;
+        if (run(L"--php list", &out, NULL) == 0)
+            xd = parse_list(json_part(out));
         std::lock_guard<std::mutex> g(g_phplock);
         std::wstring cur = current_php();
         int n = panel_php_list(g_root, g_ini, cur.c_str(), labels, dirs, MAX_PHP);
@@ -888,11 +968,20 @@ static Result handle(const Msg &m)
             panel_php_info(i, &ma, &mi, &pa, &ts, &ls, src, 24);
             snprintf(ver, sizeof(ver), "%d.%d.%d", ma, mi, pa);
             g_php.push_back(dirs[i]);
+            std::string xs, xv;
+            for (const auto &e : xd)
+                if (_wcsicmp(wide(e.s("dir")).c_str(), dirs[i]) == 0)
+                {
+                    xs = e.s("xdebug");
+                    xv = e.s("xdebugVersion");
+                    break;
+                }
             j += (i ? "," : "") + std::string("{\"label\":") + jesc(utf8(labels[i])) + ",\"dir\":" + jesc(utf8(dirs[i]))
                  + ",\"current\":" + (_wcsicmp(dirs[i], cur.c_str()) == 0 ? "true" : "false") + ",\"version\":" + jesc(ver)
                  + ",\"ts\":" + (ts ? "true" : "false") + ",\"lsapi\":" + (ls ? "true" : "false")
                  + ",\"source\":" + jesc(utf8(src)) + ",\"ours\":"
-                 + (_wcsnicmp(dirs[i], ours.c_str(), ours.size()) == 0 ? "true" : "false") + "}";
+                 + (_wcsnicmp(dirs[i], ours.c_str(), ours.size()) == 0 ? "true" : "false") + ",\"xdebug\":" + jesc(xs)
+                 + ",\"xdebugVersion\":" + jesc(xv) + "}";
         }
         Result r;
         r.data = j + "]";
@@ -1018,13 +1107,18 @@ static Result handle(const Msg &m)
         r.data = json_part(out);
         return r;
     }
-    if (a == "site.folder" || a == "site.terminal")
+    if (a == "site.folder" || a == "site.terminal" || a == "site.vscode")
     {
         std::wstring dir;
         if (!site_dir(m.s("name"), dir))
             return fail("That site has no folder.");
         if (a == "site.folder")
             ShellExecuteW(NULL, L"explore", dir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        else if (a == "site.vscode")
+        {
+            if (!open_vscode(dir))
+                return fail("VS Code could not be opened.");
+        }
         else if (!open_terminal(dir))
             return fail("The terminal could not be opened.");
         return Result();
@@ -1285,6 +1379,18 @@ static Result handle(const Msg &m)
         if (code == 0)
             reload_if_running();
         return ran(code, out, "The extension could not be changed.");
+    }
+    if (a == "php.xdebug")
+    {
+        std::wstring dir;
+        if (!pick_php(m, dir))
+            return fail("Pick a PHP version from the list.");
+        code = run(L"--php xdebug " + q(dir) + (m.b("on") ? L" on" : L" off"), &out, NULL);
+        if (code != 0)
+            return fail(last_line(out, "Xdebug could not be changed."));
+        Result r;
+        r.data = jesc(last_line(out, ""));
+        return r;
     }
     if (a == "php.iniset")
     {

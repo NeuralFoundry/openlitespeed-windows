@@ -477,6 +477,7 @@ dialog.wide { width: min(760px, 92vw); }
   const wv = !preview && window.chrome && window.chrome.webview;
   let state = null, busy = 0, nextId = 1, page = "overview";
   let phpList = [], nodeList = [], dbList = null, logList = [], logId = "error", logText = "", settings = null;
+  const xdRun = new Set();
   const pending = new Map();
 
   function call(action, params = {}) {
@@ -796,6 +797,7 @@ dialog.wide { width: min(760px, 92vw); }
     if (site.type !== "proxy" && site.type !== "tool") {
       items.push({ label: "Open folder", fn: () => call("site.folder", { name: site.name }).catch(e => say(e.message, true)) });
       items.push({ label: "Open terminal here", fn: () => call("site.terminal", { name: site.name }).catch(e => say(e.message, true)) });
+      if (state.vscode && site.dir) items.push({ label: "Open in VS Code", fn: () => call("site.vscode", { name: site.name }).catch(e => say(e.message, true)) });
     }
     if (isApp) {
       items.push({ label: "Restart app", fn: () => act("Restarting " + site.domain, "app.restart", { name: site.name }, () => site.domain + " restarts within 10 seconds.") });
@@ -875,6 +877,19 @@ dialog.wide { width: min(760px, 92vw); }
         tr.append(td(p.lsapi ? "LSAPI" : "FastCGI", "muted nowrap"));
         tr.append(td(p.source, "muted nowrap"));
         tr.append(td(used ? used + (used === 1 ? " site" : " sites") : p.current ? "Other sites" : "", "muted nowrap"));
+        const xd = td(null, "nowrap");
+        if (p.xdebug) {
+          const wrap = el("div", "online"), on = p.xdebug === "on";
+          wrap.append(sw(on, "Xdebug for PHP " + p.version, () => {
+            xdRun.add(p.dir);
+            render();
+            act((on ? "Turning off Xdebug for PHP " : "Turning on Xdebug for PHP ") + p.version, "php.xdebug", { index: i, on: !on }, d => d ? d + "." : "")
+              .then(() => { xdRun.delete(p.dir); loadPhp(); });
+          }, xdRun.has(p.dir)));
+          if (p.xdebugVersion) wrap.append(el("span", "note", p.xdebugVersion));
+          xd.append(wrap);
+        }
+        tr.append(xd);
         const end = td(null, "end");
         if (!p.current) end.append(button("Make default", "small", () => act("Switching PHP", "php.set", { index: i }, () => "PHP " + p.version + " is the default.")));
         end.append(" ", menuButton([
@@ -891,7 +906,7 @@ dialog.wide { width: min(760px, 92vw); }
         tr.append(end);
         return tr;
       });
-      box.replaceChildren(table(["Version", "Runs as", "From", "Used by", ""], rows));
+      box.replaceChildren(table(["Version", "Runs as", "From", "Used by", "Xdebug", ""], rows));
     }
     $("composer-state").replaceChildren(document.createTextNode(state.composer ? "Composer is installed" : "Composer is not installed"),
       el("small", "", state.composer ? "Use it from the terminal, or create Laravel sites" : "Needed for Laravel sites and composer in the terminal"));
