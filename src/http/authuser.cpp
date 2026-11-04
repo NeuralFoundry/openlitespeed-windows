@@ -96,11 +96,14 @@ void AuthUser::updatePasswdEncMethod()
             setPasswd(buf, len);
             setEncMethod(ENCRYPT_SHA);
         }
+        else
+            setEncMethod(ENCRYPT_CRYPT);
     }
     else if (pass[0] == '$' && pass[1] == '2' && pass[3] == '$'
              && (pass[2] == 'y' || pass[2] == 'a' || pass[2] == 'b'))
         setEncMethod(ENCRYPT_BCRYPT);
-
+    else
+        setEncMethod(ENCRYPT_CRYPT);
 }
 
 

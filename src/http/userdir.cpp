@@ -480,12 +480,12 @@ int UserDir::authenticate(HttpSession *pSession, const char *pUserName,
         {
         case ENCRYPT_UNKNOWN:
         case ENCRYPT_PLAIN:
-            if (strcmp(pPasswd, pUser->getPasswd()) == 0)
-                return 0;
-        //fall through
         case ENCRYPT_CRYPT:
-            if (strcmp(pStored, crypt(pPasswd, pStored)) == 0)
+        {
+            const char *pCrypted = crypt(pPasswd, pStored);
+            if (pCrypted && strcmp(pStored, pCrypted) == 0)
                 return 0;
+        }
             LS_ERROR("[UserDir::authenticate] Failed in ENCRYPT_CRYPT type.");
             break;
         case ENCRYPT_MD5:
