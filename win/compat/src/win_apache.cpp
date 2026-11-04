@@ -14,6 +14,7 @@
 
 extern "C" int ols_import_apache(int argc, char **argv);
 extern "C" int ols_import_nginx(int argc, char **argv);
+extern "C" PSECURITY_DESCRIPTOR ols_private_sd(int inherit);
 
 namespace
 {
@@ -61,6 +62,74 @@ void add_unique(SV &v, const S &s)
         v.push_back(s);
 }
 
+bool clean(const S &v, bool tabs = false)
+{
+    if (v.size() > 7800 || v.find("<<<") != S::npos)
+        return false;
+    for (char c : v)
+        if (((unsigned char)c < 0x20 && !(tabs && c == '\t')) || c == 0x7f)
+            return false;
+    return v.empty() || (v[0] != '}' && v.back() != '{' && v.back() != '\\');
+}
+
+bool clean_all(const SV &v)
+{
+    for (auto &x : v)
+        if (!clean(x))
+            return false;
+    return true;
+}
+
+S shown(const S &v)
+{
+    S out;
+    for (char c : v)
+    {
+        unsigned char u = (unsigned char)c;
+        if (u < 0x20 || u == 0x7f)
+        {
+            char b[8];
+            snprintf(b, sizeof(b), "\\x%02x", u);
+            out += b;
+        }
+        else
+            out += c;
+    }
+    return out;
+}
+
+S brief(const S &v) { return shown(v.size() > 120 ? v.substr(0, 120) + "..." : v); }
+
+S cert_blocks(const S &pem)
+{
+    static const S b = "-----BEGIN CERTIFICATE-----", e = "-----END CERTIFICATE-----";
+    S out;
+    size_t p = 0;
+    while ((p = pem.find(b, p)) != S::npos)
+    {
+        size_t q = pem.find(e, p + b.size());
+        if (q == S::npos)
+            break;
+        S blk = pem.substr(p, q + e.size() - p);
+        if (blk.find("-----", b.size()) == q - p)
+            out += blk + "\n";
+        p = q + e.size();
+    }
+    return out;
+}
+
+bool valid_host(const S &h)
+{
+    if (h == "*")
+        return true;
+    if (h.empty() || h.size() > 255)
+        return false;
+    for (char c : h)
+        if (!(isalnum((unsigned char)c) || c == '.' || c == ':' || c == '-' || c == '_'))
+            return false;
+    return true;
+}
+
 std::wstring W(const S &s)
 {
     if (s.empty())
@@ -105,11 +174,16 @@ bool read_file(const S &path, S &out)
     return true;
 }
 
-bool write_file(const S &path, const S &data)
+bool write_file(const S &path, const S &data, bool priv = false)
 {
     std::wstring w = W(path), tmp = w + L"." + std::to_wstring(GetCurrentProcessId());
-    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), priv ? ols_private_sd(0) : NULL, FALSE};
+    if (priv && !sa.lpSecurityDescriptor)
+        return false;
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, priv ? &sa : NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     DWORD n = 0;
+    if (sa.lpSecurityDescriptor)
+        LocalFree(sa.lpSecurityDescriptor);
     if (h == INVALID_HANDLE_VALUE)
         return false;
     BOOL ok = data.empty() || (WriteFile(h, data.data(), (DWORD)data.size(), &n, NULL) && n == data.size());
@@ -534,9 +608,39 @@ struct Node
     S name, key, file, raw;
     SV args;
     int line = 0;
-    bool block = false;
+    bool block = false, unsafe = false;
+    S unsafeWhy;
+    SV dropped;
     Node *parent = nullptr;
     std::vector<std::unique_ptr<Node>> kids;
+
+    int depth() const
+    {
+        int d = 0;
+        for (const Node *n = parent; n; n = n->parent)
+            ++d;
+        return d;
+    }
+
+    Node *owner()
+    {
+        Node *n = this;
+        while (n->parent && !(n->block && (n->key == "virtualhost" || n->key == "server")))
+            n = n->parent;
+        return n;
+    }
+
+    void taint(const S &why, bool harmless)
+    {
+        Node *o = owner();
+        if (harmless)
+            o->dropped.push_back(why + ", not converted");
+        else if (!o->unsafe)
+        {
+            o->unsafe = true;
+            o->unsafeWhy = why;
+        }
+    }
 
     Node *add(const S &n, const SV &a, const S &r, const S &f, int l, bool b)
     {
@@ -600,8 +704,9 @@ struct Parser
     S root, version = "2.4.62";
     std::map<S, S> defines;
     std::set<S> mods;
-    SV files, missing;
+    SV files, missing, badSites;
     std::set<S> chain;
+    int budget = 4000;
 
     Parser()
     {
@@ -710,7 +815,10 @@ struct Parser
     void include(const S &arg, bool optional, Node *parent, int depth)
     {
         if (depth > 16)
+        {
+            parent->taint(shown(arg) + "  includes nested too deeply", false);
             return;
+        }
         S p = resolve(root, arg);
         SV list;
         glob(p, list);
@@ -725,6 +833,12 @@ struct Parser
         S key = lower(norm(path)), text;
         if (chain.count(key))
             return;
+        if (budget <= 0)
+        {
+            parent->taint(shown(path) + "  too many included files", false);
+            return;
+        }
+        --budget;
         if (!read_file(path, text))
         {
             missing.push_back(path);
@@ -734,6 +848,23 @@ struct Parser
         chain.insert(key);
         parse_text(text, norm(path), parent, depth);
         chain.erase(key);
+    }
+
+    static bool harmless(const S &k)
+    {
+        static const char *list[] = {
+            "header", "requestheader", "errordocument", "directoryindex", "servername", "serveralias", "serveradmin",
+            "customlog", "transferlog", "errorlog", "loglevel", "logformat", "adddefaultcharset", "addcharset",
+            "expiresactive", "expiresbytype", "expiresdefault", "fileetag", "browsermatch", "browsermatchnocase",
+            "setenvif", "setenvifnocase", "keepalive", "keepalivetimeout", "maxkeepaliverequests", "timeout",
+            "servertokens", "serversignature", "protocols", "authname", "define", "addoutputfilterbytype",
+            "sslprotocol", "sslciphersuite", "sslhonorcipherorder", "sslsessiontickets", "sslusestapling",
+            "sslcompression", "ssloptions", "usecanonicalname", "hostnamelookups", "enablesendfile", "enablemmap",
+        };
+        for (const char *x : list)
+            if (k == x)
+                return true;
+        return false;
     }
 
     void parse_text(const S &text, const S &path, Node *parent, int depth)
@@ -780,6 +911,7 @@ struct Parser
                 continue;
             line = expand(line);
             Frame top = st.back();
+            S where = base_name(path) + ":" + std::to_string(start);
             if (starts(line, "</"))
             {
                 if (st.size() > 1)
@@ -797,6 +929,14 @@ struct Parser
                     st.push_back({nullptr, false});
                 else if (is_cond(key))
                     st.push_back({top.node, cond(key, args)});
+                else if (!clean(line, true) || !clean_all(args) || top.node->depth() > 48)
+                {
+                    st.push_back({nullptr, false});
+                    if (key == "virtualhost")
+                        badSites.push_back(where + "  " + brief(line) + "  contains control characters or <<<");
+                    else
+                        top.node->taint(where + "  " + brief(line) + "  contains control characters or <<<, or is nested too deeply", false);
+                }
                 else
                     st.push_back({top.node->add(name, args, line, path, start, true), true});
                 continue;
@@ -807,6 +947,11 @@ struct Parser
             S name = line.substr(0, sp);
             SV args = sp == S::npos ? SV() : split_args(line.substr(sp + 1));
             S key = lower(name);
+            if (!clean(line, true) || !clean_all(args))
+            {
+                top.node->taint(where + "  " + brief(line) + "  contains control characters or <<<", harmless(key));
+                continue;
+            }
             if (key == "include" || key == "includeoptional")
             {
                 for (auto &a : args)
@@ -937,6 +1082,7 @@ struct Member
     SV aliases;
     S docroot, cert, key, chain, admin;
     bool clientCert = false;
+    S skip;
 };
 
 struct Site
@@ -994,7 +1140,7 @@ struct Importer
     std::map<int, bool> listenHttps;
     std::map<S, S> logFormats;
     S phpHandler = "lsapi:lsphp", olsPhpDir, apachePhpDir, apachePhpHow;
-    SV report;
+    SV report, bad;
     int realmSeq = 0, procSeq = 0;
     std::set<S> htSeen;
     S kind = "apache", label = "Apache", listenerBase = "Apache";
@@ -1529,7 +1675,12 @@ struct Importer
             else if (key == "rewritecond" || key == "rewriterule")
                 c.rewrite.push_back(k->raw);
             else if (key == "errordocument" && a.size() >= 2)
-                c.errors[a[0]] = a[1];
+            {
+                if (a[0].size() == 3 && a[0].find_first_not_of("0123456789") == S::npos)
+                    c.errors[a[0]] = a[1];
+                else
+                    c.notes.push_back(k->where() + "  " + k->raw + "  not converted");
+            }
             else if (key == "if" || key == "elseif" || key == "else")
             {
                 if (risky(k.get()))
@@ -1946,7 +2097,7 @@ struct Importer
         return out + pad + "}\n";
     }
 
-    static S kv(const S &k, const S &v, int ind)
+    static S line(const S &k, const S &v, int ind)
     {
         S pad(ind, ' ');
         S key = k;
@@ -1955,13 +2106,40 @@ struct Importer
         return pad + key + v + "\n";
     }
 
+    S kv(const S &k, const S &v, int ind)
+    {
+        if (!clean(v))
+        {
+            add_unique(bad, k + " " + brief(v));
+            return S();
+        }
+        return line(k, v, ind);
+    }
+
+    S head(const S &k, const S &v)
+    {
+        if (!clean(v))
+        {
+            add_unique(bad, k + " " + brief(v));
+            return k + " {\n";
+        }
+        return k + " " + v + " {\n";
+    }
+
     S heredoc(const S &k, const SV &lines, int ind)
     {
         S pad(ind, ' ');
         S tag = "END_" + k;
-        S out = kv(k, "<<<" + tag, ind);
+        S out = line(k, "<<<" + tag, ind);
         for (auto &l : lines)
+        {
+            if (!clean(l, true) || ieq(trim(l).substr(0, tag.size()), tag))
+            {
+                add_unique(bad, k + " " + brief(l));
+                continue;
+            }
             out += l + "\n";
+        }
         return out + pad + tag + "\n";
     }
 
@@ -1999,7 +2177,7 @@ struct Importer
 
     S render_ctx(const Ctx &c)
     {
-        S out = "context " + c.uri + " {\n";
+        S out = head("context", c.uri);
         if (c.cgi)
             out += kv("type", "cgi", 2);
         if (!c.location.empty())
@@ -2015,7 +2193,10 @@ struct Importer
         {
             out += "  phpIniOverride  {\n";
             for (auto &p : c.php)
-                out += p + "\n";
+                if (clean(p) && !istarts(p, "include"))
+                    out += p + "\n";
+                else
+                    add_unique(bad, "phpIniOverride " + brief(p));
             out += "  }\n";
         }
         if (!c.rewrite.empty())
@@ -2106,6 +2287,11 @@ struct Importer
             S host;
             int port;
             split_addr(addr, host, port);
+            if (!valid_host(host) || port < 0 || port > 65535)
+            {
+                m.skip = "address " + brief(addr) + " is not valid";
+                continue;
+            }
             std::vector<int> ports;
             if (port > 0)
                 ports.push_back(port);
@@ -2387,7 +2573,7 @@ struct Importer
             site.notes.push_back(n->where() + "  " + n->raw + "  folder does not exist, using the server log");
             return S();
         }
-        S out = kind + " " + path + " {\n" + kv("useServer", "0", 2);
+        S out = head(kind, path) + kv("useServer", "0", 2);
         if (kind == "errorlog")
             out += kv("logLevel", level, 2);
         else
@@ -2517,7 +2703,7 @@ struct Importer
                     S host;
                     int port;
                     split_addr(k->args[0], host, port);
-                    if (port <= 0)
+                    if (port <= 0 || port > 65535 || !valid_host(host))
                         continue;
                     add_unique(listenHosts[port], host);
                     listenHttps[port] = k->args.size() > 1 ? ieq(k->args[1], "https") : port == 443;
@@ -2603,9 +2789,15 @@ struct Importer
         site.docroot = prim->docroot.empty() ? real_path(resolve(parser.root, main_value("documentroot"))) : prim->docroot;
         site.file = prim->n->where();
         site.admin = prim->admin;
+        bad.clear();
         if (!is_dir(site.docroot))
         {
             site.skipWhy = "document root " + site.docroot + " does not exist";
+            return;
+        }
+        if (!clean(site.docroot))
+        {
+            site.skipWhy = "the document root path contains control characters or <<<";
             return;
         }
         bool hasHttp = false;
@@ -2650,6 +2842,11 @@ struct Importer
                 if (!is_dir(d))
                 {
                     site.notes.push_back(k->where() + "  " + k->raw + "  target is not a folder, not converted");
+                    continue;
+                }
+                if (!clean(d) || !clean(u))
+                {
+                    site.notes.push_back(k->where() + "  " + k->raw + "  target path contains control characters or <<<, not converted");
                     continue;
                 }
                 roots.push_back({u, d, k->key == "scriptalias", SV()});
@@ -3088,7 +3285,7 @@ struct Importer
             add_unique(site.notes, n);
 
         S conf;
-        conf += mark() + ": " + site.file + "\n";
+        conf += mark() + ": " + shown(site.file) + "\n";
         conf += kv("docRoot", site.docroot + "/", 0);
         if (!site.admin.empty())
             conf += kv("adminEmails", site.admin, 0);
@@ -3130,14 +3327,14 @@ struct Importer
         {
             S target = e.second;
             if (starts(target, "/") || istarts(target, "http://") || istarts(target, "https://"))
-                conf += "\nerrorPage " + e.first + " {\n" + kv("url", target, 2) + "}\n";
+                conf += "\n" + head("errorPage", e.first) + kv("url", target, 2) + "}\n";
             else
                 site.notes.push_back("ErrorDocument " + e.first + " with a text message is not converted");
         }
 
         for (auto &r : realms)
         {
-            conf += "\nrealm " + r.second[0] + " {\n  userDB  {\n" + kv("location", r.second[1], 4) + "  }\n";
+            conf += "\n" + head("realm", r.second[0]) + "  userDB  {\n" + kv("location", r.second[1], 4) + "  }\n";
             if (!r.second[2].empty())
                 conf += "  groupDB  {\n" + kv("location", r.second[2], 4) + "  }\n";
             conf += "}\n";
@@ -3147,7 +3344,7 @@ struct Importer
         if (!fcgi.empty())
         {
             S name = "apache-php-" + std::to_string(++procSeq);
-            conf += "\nextprocessor " + name + " {\n" + kv("type", "fcgi", 2) + kv("address", fcgi, 2)
+            conf += "\n" + head("extprocessor", name) + kv("type", "fcgi", 2) + kv("address", fcgi, 2)
                   + kv("maxConns", "35", 2) + kv("initTimeout", "60", 2) + kv("retryTimeout", "0", 2)
                   + kv("persistConn", "1", 2) + kv("respBuffer", "0", 2) + kv("autoStart", "0", 2) + "}\n";
             handler = "fcgi:" + name;
@@ -3184,7 +3381,7 @@ struct Importer
             if (nm.empty())
             {
                 nm = "apache-proxy-" + std::to_string(++procSeq);
-                conf += "\nextprocessor " + nm + " {\n" + kv("type", "proxy", 2) + kv("address", hostport, 2)
+                conf += "\n" + head("extprocessor", nm) + kv("type", "proxy", 2) + kv("address", hostport, 2)
                       + kv("maxConns", "100", 2) + kv("initTimeout", "60", 2) + kv("retryTimeout", "0", 2)
                       + kv("respBuffer", "0", 2) + "}\n";
             }
@@ -3255,15 +3452,19 @@ struct Importer
             S certFile = site.cert, keyFile = site.key.empty() ? site.cert : site.key;
             if (!site.chain.empty())
             {
-                S a, b;
-                if (read_file(site.cert, a) && read_file(site.chain, b))
+                S a, b, chainFile = site.chain;
+                site.chain.clear();
+                if (read_file(site.cert, a) && read_file(chainFile, b) && !(a = cert_blocks(a)).empty()
+                    && !(b = cert_blocks(b)).empty())
                 {
-                    site.converted.push_back("certificate chain from " + site.chain);
+                    site.converted.push_back("certificate chain from " + chainFile);
                     site.warnings.push_back("certificate and chain were combined into conf/vhosts/" + site.vhname
                                             + "/cert-chain.pem; import again after renewing the certificate");
                     certFile = "$SERVER_ROOT/conf/vhosts/" + site.vhname + "/cert-chain.pem";
-                    site.chain = a + (ends(a, "\n") ? "" : "\n") + b;
+                    site.chain = a + b;
                 }
+                else
+                    site.warnings.push_back("certificate chain " + chainFile + " has no certificates, not used");
             }
             conf += "\nvhssl  {\n" + kv("keyFile", keyFile, 2) + kv("certFile", certFile, 2) + kv("certChain", "1", 2)
                   + "}\n";
@@ -3305,6 +3506,11 @@ struct Importer
                                  || k->key == "filesmatch" || k->key == "directorymatch" || k->key == "locationmatch"))
                     stack.push_back(k.get());
             }
+        }
+        if (!bad.empty())
+        {
+            site.skipWhy = "unsafe text in its configuration: " + bad[0];
+            return;
         }
         site.conf = conf;
     }
@@ -3464,7 +3670,7 @@ struct Importer
         std::vector<bool> drop(lines.size(), false);
         int depth = 0;
         S heredoc;
-        bool dropping = false, inListener = false;
+        bool dropping = false, inListener = false, inImport = false;
         for (size_t k = 0; k < lines.size(); ++k)
         {
             S t = trim(lines[k]);
@@ -3487,6 +3693,9 @@ struct Importer
             if (t == import_begin() || t == import_end() || t == maps_begin() || t == maps_end())
             {
                 drop[k] = true;
+                if (t == import_begin() && k > 0 && trim(lines[k - 1]).empty())
+                    drop[k - 1] = true;
+                inImport = t == import_begin() || t == maps_begin();
                 continue;
             }
             SV tok = t.empty() || t[0] == '#' ? SV() : split_args(t);
@@ -3502,7 +3711,7 @@ struct Importer
             else if (inListener && depth == 1 && tok.size() >= 2 && ieq(tok[0], "map") && has(vhs, tok[1]))
                 drop[k] = true;
             size_t hd = t.find("<<<");
-            if (hd != S::npos && t[0] != '#')
+            if (hd != S::npos && t[0] != '#' && !inImport && !dropping)
                 heredoc = trim(t.substr(hd + 3));
             if (opens)
                 ++depth;
@@ -3668,7 +3877,7 @@ struct Importer
                 {
                     fprintf(stderr, "several Apache configurations found, pass one of them:\n");
                     for (auto &f : found)
-                        fprintf(stderr, "  %s\n", f.c_str());
+                        fprintf(stderr, "  %s\n", shown(f).c_str());
                 }
                 return 2;
             }
@@ -3677,7 +3886,7 @@ struct Importer
             apacheConf = norm(confArg);
         if (!is_file(apacheConf))
         {
-            fprintf(stderr, "%s not found\n", apacheConf.c_str());
+            fprintf(stderr, "%s not found\n", shown(apacheConf).c_str());
             return 2;
         }
         parser.root = parent_dir(parent_dir(apacheConf));
@@ -3685,7 +3894,7 @@ struct Importer
         parser.parse(apacheConf, &top, 0);
         if (parser.files.empty())
         {
-            fprintf(stderr, "cannot read %s\n", apacheConf.c_str());
+            fprintf(stderr, "cannot read %s\n", shown(apacheConf).c_str());
             return 1;
         }
         load_php_info();
@@ -3731,11 +3940,21 @@ struct Importer
         bool mainClient = client_cert(&top);
 
         std::vector<Site> sites;
-        SV skippedTop;
+        SV skippedTop = parser.badSites;
         for (auto *v : vnodes)
         {
+            if (v->unsafe || top.unsafe)
+            {
+                skippedTop.push_back(v->where() + "  not imported: " + (v->unsafe ? v->unsafeWhy : top.unsafeWhy));
+                continue;
+            }
             Member m;
             member_from(v, m);
+            if (!m.skip.empty())
+            {
+                skippedTop.push_back(v->where() + "  " + m.skip);
+                continue;
+            }
             if (m.name.empty())
             {
                 skippedTop.push_back(v->where() + "  <VirtualHost " + join(v->args, " ") + ">  has no ServerName");
@@ -3791,6 +4010,8 @@ struct Importer
                     continue;
                 }
             }
+            for (auto &d : v->dropped)
+                add_unique(site->notes, d);
             site->members.push_back(m);
         }
         size_t nsites = sites.size();
@@ -3817,13 +4038,17 @@ struct Importer
 
     void print_header()
     {
-        printf("Apache configuration: %s (%d file%s)\n", apacheConf.c_str(), (int)parser.files.size(),
+        printf("Apache configuration: %s (%d file%s)\n", shown(apacheConf).c_str(), (int)parser.files.size(),
                parser.files.size() == 1 ? "" : "s");
         for (auto &m : parser.missing)
-            printf("  missing: %s\n", m.c_str());
+            printf("  missing: %s\n", shown(m).c_str());
+        for (auto &d : top.dropped)
+            printf("  note: %s\n", shown(d).c_str());
+        if (top.unsafe)
+            printf("  not imported: %s\n", shown(top.unsafeWhy).c_str());
         if (!apachePhpDir.empty())
         {
-            printf("Apache PHP: %s (%s)\n", apachePhpDir.c_str(), apachePhpHow.c_str());
+            printf("Apache PHP: %s (%s)\n", shown(apachePhpDir).c_str(), apachePhpHow.c_str());
             if (!olsPhpDir.empty() && !ieq(norm(apachePhpDir), norm(olsPhpDir)))
                 printf("  OpenLiteSpeed uses %s. To switch: openlitespeed --set-php \"%s\"\n", olsPhpDir.c_str(),
                        apachePhpDir.c_str());
@@ -4022,35 +4247,35 @@ struct Importer
             }
             for (auto &b : s.httpsBinds)
                 ports.push_back("https " + (b.host == "*" ? std::to_string(b.port) : bind_text(b)));
-            printf("%s%s  ->  %s  [%s]\n", s.name.c_str(), s.httpPart ? " (HTTP)" : "", s.docroot.c_str(),
+            printf("%s%s  ->  %s  [%s]\n", shown(s.name).c_str(), s.httpPart ? " (HTTP)" : "", shown(s.docroot).c_str(),
                    join(ports, ", ").c_str());
             SV extra(s.domains.begin() + (s.domains.empty() ? 0 : 1), s.domains.end());
             if (!extra.empty())
-                printf("  also: %s\n", join(extra, ", ").c_str());
+                printf("  also: %s\n", shown(join(extra, ", ")).c_str());
             if (!s.converted.empty())
-                printf("  converted: %s\n", join(s.converted, ", ").c_str());
+                printf("  converted: %s\n", shown(join(s.converted, ", ")).c_str());
             for (auto &w : s.warnings)
-                printf("  warning: %s\n", w.c_str());
+                printf("  warning: %s\n", shown(w).c_str());
             for (auto &n : s.notes)
-                printf("  note: %s\n", n.c_str());
-            size_t shown = 0;
+                printf("  note: %s\n", shown(n).c_str());
+            size_t listed = 0;
             for (auto &k : s.skipped)
             {
-                if (shown++ == 0)
+                if (listed++ == 0)
                     printf("  not converted:\n");
-                if (shown > 12)
+                if (listed > 12)
                 {
                     printf("    ... and %d more\n", (int)(s.skipped.size() - 12));
                     break;
                 }
-                printf("    %s\n", k.c_str());
+                printf("    %s\n", shown(k).c_str());
             }
             printf("\n");
         }
         if (!skippedTop.empty())
             printf("Skipped:\n");
         for (auto &k : skippedTop)
-            printf("  %s\n", k.c_str());
+            printf("  %s\n", shown(k).c_str());
         if (!skippedTop.empty())
             printf("\n");
         if (port80 && defaultPort != 80)
@@ -4098,30 +4323,13 @@ struct Importer
             }
             return r;
         };
-        for (auto &s : sites)
-        {
-            if (!s.imported)
-                continue;
-            S dir = olsRoot + "/conf/vhosts/" + s.vhname, prev, conf = fix_nl(s.conf);
-            if (read_file(dir + "/vhconf.conf", prev) && prev != conf)
-            {
-                write_file(dir + "/vhconf.conf.bak", prev);
-                printf("%s: the previous vhconf.conf was saved as vhconf.conf.bak\n", s.vhname.c_str());
-            }
-            if (!make_dirs(dir) || !write_file(dir + "/vhconf.conf", conf))
-            {
-                fprintf(stderr, "cannot write %s/vhconf.conf\n", dir.c_str());
-                return 1;
-            }
-            if (!s.chain.empty() && s.chain.find("-----BEGIN") != S::npos)
-                write_file(dir + "/cert-chain.pem", s.chain);
-        }
+        bad.clear();
         S block = import_begin() + "\n";
         for (auto &s : sites)
         {
             if (!s.imported)
                 continue;
-            block += "virtualhost " + s.vhname + " {\n" + kv("vhRoot", s.docroot + "/", 4)
+            block += head("virtualhost", s.vhname) + kv("vhRoot", s.docroot + "/", 4)
                    + kv("configFile", "conf/vhosts/" + s.vhname + "/vhconf.conf", 4) + kv("allowSymbolLink", "1", 4)
                    + kv("enableScript", "1", 4) + kv("restrained", "0", 4) + "}\n\n";
         }
@@ -4129,7 +4337,7 @@ struct Importer
         {
             S addr = l.host == "*" ? "*:" + std::to_string(l.port)
                                    : (l.host.find(':') != S::npos ? "[" + l.host + "]" : l.host) + ":" + std::to_string(l.port);
-            block += "listener " + l.name + " {\n" + kv("address", addr, 4)
+            block += head("listener", l.name) + kv("address", addr, 4)
                    + kv("secure", l.secure ? "1" : "0", 4);
             if (l.secure)
                 block += kv("keyFile", l.key, 4) + kv("certFile", l.cert, 4) + kv("certChain", "1", 4);
@@ -4181,6 +4389,32 @@ struct Importer
         if (!out.empty() && !ends(out, "\n"))
             out += nl;
         out += nl + fix_nl(block);
+        if (!bad.empty())
+        {
+            fprintf(stderr, "not imported, unsafe text in the server configuration: %s\n", bad[0].c_str());
+            return 1;
+        }
+        for (auto &s : sites)
+        {
+            if (!s.imported)
+                continue;
+            S dir = olsRoot + "/conf/vhosts/" + s.vhname, prev, conf = fix_nl(s.conf);
+            if (read_file(dir + "/vhconf.conf", prev) && prev != conf)
+            {
+                write_file(dir + "/vhconf.conf.bak", prev);
+                printf("%s: the previous vhconf.conf was saved as vhconf.conf.bak\n", s.vhname.c_str());
+            }
+            if (!make_dirs(dir) || !write_file(dir + "/vhconf.conf", conf))
+            {
+                fprintf(stderr, "cannot write %s/vhconf.conf\n", dir.c_str());
+                return 1;
+            }
+            if (!s.chain.empty() && !write_file(dir + "/cert-chain.pem", s.chain, true))
+            {
+                fprintf(stderr, "cannot write %s/cert-chain.pem\n", dir.c_str());
+                return 1;
+            }
+        }
         write_file(httpdConf + ".bak", text);
         if (!write_file(httpdConf, out))
         {
@@ -4225,15 +4459,55 @@ struct NgxParser
         }
     }
 
+    std::set<S> chain;
+    SV badSites;
+    int budget = 4000;
+
+    static bool harmless(const S &k)
+    {
+        static const char *list[] = {
+            "add_header", "index", "error_page", "server_name", "access_log", "error_log", "log_format", "charset",
+            "expires", "gzip", "gzip_types", "gzip_vary", "gzip_comp_level", "gzip_proxied", "gzip_min_length",
+            "gzip_disable", "proxy_set_header", "proxy_hide_header", "fastcgi_param", "fastcgi_index",
+            "fastcgi_split_path_info", "client_max_body_size", "keepalive_timeout", "sendfile", "tcp_nopush",
+            "tcp_nodelay", "ssl_protocols", "ssl_ciphers", "ssl_prefer_server_ciphers", "ssl_session_cache",
+            "ssl_session_timeout", "ssl_session_tickets", "ssl_ecdh_curve", "server_tokens", "default_type", "etag",
+            "log_not_found", "limit_rate", "real_ip_header", "set_real_ip_from", "map", "types", "geo",
+            "split_clients", "upstream",
+        };
+        for (const char *x : list)
+            if (k == x)
+                return true;
+        return false;
+    }
+
     void parse(const S &path, Node *parent, int depth)
     {
-        S text;
-        if (depth > 16 || !read_file(path, text))
+        S text, key = lower(real_file(path));
+        if (depth > 16 || budget <= 0)
+        {
+            parent->taint(shown(path) + "  includes nested too deeply or too many included files", false);
+            return;
+        }
+        if (chain.count(key))
+        {
+            missing.push_back(path + " (included by itself)");
+            return;
+        }
+        --budget;
+        if (!read_file(path, text))
         {
             missing.push_back(path);
             return;
         }
         files.push_back(path);
+        chain.insert(key);
+        parse_text(text, path, parent, depth);
+        chain.erase(key);
+    }
+
+    void parse_text(const S &text, const S &path, Node *parent, int depth)
+    {
         std::vector<Node *> stack{parent};
         SV toks;
         int line = 1, tokLine = 1;
@@ -4272,7 +4546,42 @@ struct NgxParser
                     continue;
                 Node *cur = stack.back();
                 SV args(toks.begin() + 1, toks.end());
-                if (c == ';' && lower(toks[0]) == "include" && !args.empty())
+                S head = lower(toks[0]), where = base_name(path) + ":" + std::to_string(tokLine);
+                if (!cur)
+                {
+                    if (c == '{')
+                        stack.push_back(nullptr);
+                    toks.clear();
+                    continue;
+                }
+                if (c == ';' && head == "return" && !args.empty() && args[0].size() == 3
+                    && args[0].find_first_not_of("0123456789") == S::npos && !clean_all(toks))
+                {
+                    if (atoi(args[0].c_str()) >= 400)
+                        cur->add(toks[0], SV{args[0]}, toks[0] + " " + args[0], path, tokLine, false);
+                    else if (atoi(args[0].c_str()) < 300)
+                        cur->taint(where + "  " + brief(join(toks, " ")) + "  contains control characters or <<<", true);
+                    else
+                        cur->taint(where + "  " + brief(join(toks, " ")) + "  contains control characters or <<<", false);
+                    toks.clear();
+                    continue;
+                }
+                if (!clean_all(toks) || (c == '{' && cur->depth() > 48))
+                {
+                    if (c == '{')
+                    {
+                        stack.push_back(nullptr);
+                        if (head == "server")
+                            badSites.push_back(where + "  " + brief(join(toks, " ")) + "  contains control characters or <<<, or is nested too deeply");
+                        else
+                            cur->taint(where + "  " + brief(join(toks, " ")) + "  contains control characters or <<<, or is nested too deeply", harmless(head));
+                    }
+                    else
+                        cur->taint(where + "  " + brief(join(toks, " ")) + "  contains control characters or <<<", harmless(head));
+                    toks.clear();
+                    continue;
+                }
+                if (c == ';' && head == "include" && !args.empty())
                 {
                     S pat = resolve(confDir, args[0]);
                     SV got;
@@ -4471,6 +4780,11 @@ struct NginxImporter : Importer
                     b.host = "*";
                 if (ieq(b.host, "localhost"))
                     b.host = "127.0.0.1";
+                if (!valid_host(b.host) || b.port < 0 || b.port > 65535)
+                {
+                    m.skip = "listen " + brief(a) + " is not a valid address";
+                    continue;
+                }
                 for (size_t i = 1; i < k->args.size(); ++i)
                     if (k->args[i] == "ssl")
                         m.ssl = true;
@@ -4831,6 +5145,17 @@ struct NginxImporter : Importer
                 endAllow = r.first;
                 break;
             }
+            if (!ip_token(r.second))
+            {
+                warns.push_back(where + "  " + S(r.first ? "allow " : "deny ") + brief(r.second)
+                                + (r.first ? "  not converted" : "  not converted, access denied"));
+                if (!r.first)
+                {
+                    a.denied = true;
+                    return a;
+                }
+                continue;
+            }
             S ip = ols_ip(r.second);
             bool shadowed = false;
             for (auto &o : r.first ? denies : allows)
@@ -4860,17 +5185,50 @@ struct NginxImporter : Importer
     {
         const Node *n;
         S mod, path, root;
-        int depth;
+        int depth, parent;
     };
 
+    struct Rules
+    {
+        std::vector<std::pair<bool, S>> acc;
+        S authName, userFile;
+        bool authOff = false, internal = false;
+    };
+
+    static void scan_rules(const Node *scope, const Rules &base, Rules &r)
+    {
+        bool accSet = false;
+        r = base;
+        r.internal = false;
+        for (auto &k : scope->kids)
+        {
+            if ((k->key == "allow" || k->key == "deny") && !k->args.empty())
+            {
+                if (!accSet)
+                    r.acc.clear();
+                accSet = true;
+                r.acc.push_back({k->key == "allow", k->args[0]});
+            }
+            else if (k->key == "auth_basic" && !k->args.empty())
+            {
+                r.authOff = ieq(k->args[0], "off");
+                r.authName = r.authOff ? S() : k->args[0];
+            }
+            else if (k->key == "auth_basic_user_file" && !k->args.empty())
+                r.userFile = k->args[0];
+            else if (k->key == "internal")
+                r.internal = true;
+        }
+    }
+
     void collect_locs(const Node *scope, const S &root, int depth, std::vector<Loc> &out,
-                      std::map<S, const Node *> &named)
+                      std::map<S, const Node *> &named, int parent)
     {
         for (auto &k : scope->kids)
         {
             if (k->key != "location" || !k->block || k->args.empty())
                 continue;
-            Loc l{k.get(), "", "", root, depth};
+            Loc l{k.get(), "", "", root, depth, parent};
             if (k->args.size() >= 2)
             {
                 l.mod = k->args[0];
@@ -4896,7 +5254,7 @@ struct NginxImporter : Importer
                 if (x->key == "root" && !x->args.empty())
                     l.root = real_path(resolve(prefix, x->args[0]));
             out.push_back(l);
-            collect_locs(k.get(), l.root, depth + 1, out, named);
+            collect_locs(k.get(), l.root, depth + 1, out, named, (int)out.size() - 1);
         }
     }
 
@@ -4963,7 +5321,7 @@ struct NginxImporter : Importer
         std::vector<Loc> locs;
         std::map<S, const Node *> named;
         S serverRoot = prim->docroot;
-        collect_locs(srv, serverRoot, 0, locs, named);
+        collect_locs(srv, serverRoot, 0, locs, named, -1);
         S docroot = serverRoot;
         if (docroot.empty())
             for (auto &l : locs)
@@ -4977,6 +5335,12 @@ struct NginxImporter : Importer
             site.skipWhy = "document root " + docroot + " does not exist";
             return;
         }
+        if (!clean(docroot))
+        {
+            site.skipWhy = "the document root path contains control characters or <<<";
+            return;
+        }
+        bad.clear();
         for (auto &l : locs)
             if (l.root.empty())
                 l.root = docroot;
@@ -4993,27 +5357,10 @@ struct NginxImporter : Importer
         SV caret;
         std::vector<std::pair<int, SV>> locRules;
 
-        auto scan_common = [&](const Node *k, Ctx &c, bool &need, std::vector<std::pair<bool, S>> &acc,
-                               S &authName, S &userFile, bool &authOff) {
-            if (k->key == "allow" || k->key == "deny")
-            {
-                if (!k->args.empty())
-                    acc.push_back({k->key == "allow", k->args[0]});
+        auto scan_common = [&](const Node *k, Ctx &c, bool &need) {
+            if (k->key == "allow" || k->key == "deny" || k->key == "auth_basic" || k->key == "auth_basic_user_file"
+                || k->key == "internal")
                 return true;
-            }
-            if (k->key == "auth_basic" && !k->args.empty())
-            {
-                if (ieq(k->args[0], "off"))
-                    authOff = true;
-                else
-                    authName = k->args[0];
-                return true;
-            }
-            if (k->key == "auth_basic_user_file" && !k->args.empty())
-            {
-                userFile = real_file(resolve(confDir, k->args[0]));
-                return true;
-            }
             if (k->key == "add_header" && k->args.size() >= 2)
             {
                 c.headers.push_back("Header add " + k->args[0] + " " + quote_arg(k->args[1]));
@@ -5022,34 +5369,54 @@ struct NginxImporter : Importer
             }
             return false;
         };
-        auto finish_access = [&](Ctx &c, bool &need, const std::vector<std::pair<bool, S>> &acc,
-                                 const S &authName, const S &userFile, bool authOff, const S &where) {
-            if (!acc.empty())
-            {
-                c.acc = access_of(acc, warns, where);
-                need = need || !c.acc.open();
-            }
-            if (!authName.empty() && !userFile.empty() && !authOff)
+        auto apply_rules = [&](Ctx &c, const Rules &r, const S &where) {
+            c.acc = r.acc.empty() ? Access() : access_of(r.acc, warns, where);
+            c.realm.clear();
+            c.authName.clear();
+            if (!r.authOff && !r.authName.empty() && !r.userFile.empty())
             {
                 Conf cf;
-                cf.userFile = userFile;
-                c.realm = realm_for(cf, realms, site);
-                c.authName = authName;
-                c.acc.required = "valid-user";
-                need = true;
+                cf.userFile = real_file(resolve(confDir, r.userFile));
+                if (!clean(cf.userFile) || !is_file(cf.userFile))
+                {
+                    add_unique(notes, where + "  password file " + brief(cf.userFile) + " not found, access denied");
+                    c.acc.denied = true;
+                }
+                else
+                {
+                    c.realm = realm_for(cf, realms, site);
+                    c.authName = clean(r.authName) ? r.authName : S("Restricted");
+                    c.acc.required = "valid-user";
+                }
+            }
+            if (r.internal)
+            {
+                c.acc = Access();
+                c.acc.denied = true;
+                c.realm.clear();
             }
         };
+        auto same_access = [](const Ctx &a, const Ctx &b) {
+            return a.acc == b.acc && a.realm == b.realm && a.authName == b.authName;
+        };
 
-        Ctx rootCtx;
+        Rules srvAcc;
+        scan_rules(srv, Rules(), srvAcc);
+        std::vector<Rules> locEff(locs.size());
+        for (size_t i = 0; i < locs.size(); ++i)
+            scan_rules(locs[i].n, locs[i].parent >= 0 ? locEff[locs[i].parent] : srvAcc, locEff[i]);
+        Ctx rootCtx, rootEff;
         rootCtx.uri = "/";
-        bool rootNeed = false;
+        apply_rules(rootCtx, srvAcc, srv->where());
+        rootEff = rootCtx;
+        for (size_t i = 0; i < locs.size(); ++i)
+            if (locs[i].mod.empty() && locs[i].path == "/" && locs[i].parent < 0)
+                apply_rules(rootEff, locEff[i], locs[i].n->where());
+        bool rootNeed = !rootCtx.acc.open() || !rootCtx.realm.empty();
         {
-            std::vector<std::pair<bool, S>> acc;
-            S authName, userFile;
-            bool authOff = false;
             for (auto &k : srv->kids)
             {
-                if (scan_common(k.get(), rootCtx, rootNeed, acc, authName, userFile, authOff))
+                if (scan_common(k.get(), rootCtx, rootNeed))
                     continue;
                 if (k->key == "index" && !k->args.empty())
                     rootIndex = k->args;
@@ -5062,7 +5429,8 @@ struct NginxImporter : Importer
                         notes.push_back(k->where() + "  " + k->raw + "  not converted");
                     else
                         for (size_t i = 0; i + 1 < k->args.size(); ++i)
-                            errors[k->args[i]] = target;
+                            if (k->args[i].size() == 3 && k->args[i].find_first_not_of("0123456789") == S::npos)
+                                errors[k->args[i]] = target;
                 }
                 else if (k->key == "return")
                 {
@@ -5084,7 +5452,6 @@ struct NginxImporter : Importer
                 else if (!ngx_known(k->key))
                     site.skipped.push_back(k->where() + "  " + k->raw);
             }
-            finish_access(rootCtx, rootNeed, acc, authName, userFile, authOff, srv->where());
         }
 
         int seq = 0;
@@ -5095,13 +5462,11 @@ struct NginxImporter : Importer
                 notes.push_back(n->where() + "  nested location " + l.path + " is converted as a location of its own");
             Ctx c;
             bool need = false, locPhp = false, isRegex = l.mod == "~" || l.mod == "~*";
-            std::vector<std::pair<bool, S>> acc;
-            S authName, userFile, alias;
-            bool authOff = false;
+            S alias;
             SV rules;
             for (auto &k : n->kids)
             {
-                if (scan_common(k.get(), c, need, acc, authName, userFile, authOff))
+                if (scan_common(k.get(), c, need))
                     continue;
                 if (k->key == "alias" && !k->args.empty())
                 {
@@ -5173,7 +5538,8 @@ struct NginxImporter : Importer
                 else if (!ngx_known(k->key))
                     site.skipped.push_back(k->where() + "  " + k->raw);
             }
-            finish_access(c, need, acc, authName, userFile, authOff, n->where());
+            apply_rules(c, locEff[seq], n->where());
+            need = need || !same_access(c, rootEff);
             if (!alias.empty())
                 c.location = alias;
             else if (!ieq(l.root, docroot))
@@ -5214,12 +5580,15 @@ struct NginxImporter : Importer
                     rootIndex = c.index;
                 c.autoIndex = -1;
                 c.index.clear();
-                if (!c.acc.open() || !c.realm.empty() || !c.headers.empty() || !c.location.empty())
-                {
-                    c.uri = "/";
-                    rootCtx = c;
-                    rootNeed = true;
-                }
+                rootCtx.acc = c.acc;
+                rootCtx.realm = c.realm;
+                rootCtx.authName = c.authName;
+                if (!c.headers.empty())
+                    rootCtx.headers = c.headers;
+                if (!c.location.empty())
+                    rootCtx.location = c.location;
+                rootNeed = !rootCtx.acc.open() || !rootCtx.realm.empty() || !rootCtx.headers.empty()
+                        || !rootCtx.location.empty();
                 continue;
             }
             if (!need)
@@ -5248,7 +5617,7 @@ struct NginxImporter : Importer
         }
 
         S conf;
-        conf += mark() + ": " + site.file + "\n";
+        conf += mark() + ": " + shown(site.file) + "\n";
         conf += kv("docRoot", site.docroot + "/", 0);
         conf += kv("enableGzip", "1", 0);
         conf += kv("enableBr", "1", 0);
@@ -5260,10 +5629,10 @@ struct NginxImporter : Importer
         for (auto &e : errors)
         {
             if (starts(e.second, "/") || istarts(e.second, "http://") || istarts(e.second, "https://"))
-                conf += "\nerrorPage " + e.first + " {\n" + kv("url", e.second, 2) + "}\n";
+                conf += "\n" + head("errorPage", e.first) + kv("url", e.second, 2) + "}\n";
         }
         for (auto &r : realms)
-            conf += "\nrealm " + r.second[0] + " {\n  userDB  {\n" + kv("location", r.second[1], 4) + "  }\n}\n";
+            conf += "\n" + head("realm", r.second[0]) + "  userDB  {\n" + kv("location", r.second[1], 4) + "  }\n}\n";
         if (php)
         {
             conf += "\nscriptHandler  {\n" + kv("add", phpHandler + " php", 2) + "}\n";
@@ -5287,7 +5656,7 @@ struct NginxImporter : Importer
             if (nm.empty())
             {
                 nm = "nginx-proxy-" + std::to_string(++procSeq);
-                conf += "\nextprocessor " + nm + " {\n" + kv("type", "proxy", 2) + kv("address", hostport, 2)
+                conf += "\n" + head("extprocessor", nm) + kv("type", "proxy", 2) + kv("address", hostport, 2)
                       + kv("maxConns", "100", 2) + kv("initTimeout", "60", 2) + kv("retryTimeout", "0", 2)
                       + kv("respBuffer", "0", 2) + "}\n";
             }
@@ -5406,6 +5775,11 @@ struct NginxImporter : Importer
             add_unique(site.notes, n);
         for (auto &w : warns)
             add_unique(site.warnings, w);
+        if (!bad.empty())
+        {
+            site.skipWhy = "unsafe text in its configuration: " + bad[0];
+            return;
+        }
         site.conf = conf;
     }
 
@@ -5450,7 +5824,7 @@ struct NginxImporter : Importer
                 {
                     fprintf(stderr, "several nginx configurations found, pass one of them:\n");
                     for (auto &f : found)
-                        fprintf(stderr, "  %s\n", f.c_str());
+                        fprintf(stderr, "  %s\n", shown(f).c_str());
                 }
                 return 2;
             }
@@ -5459,7 +5833,7 @@ struct NginxImporter : Importer
             nginxConf = norm(confArg);
         if (!is_file(nginxConf))
         {
-            fprintf(stderr, "%s not found\n", nginxConf.c_str());
+            fprintf(stderr, "%s not found\n", shown(nginxConf).c_str());
             return 2;
         }
         confDir = parent_dir(nginxConf);
@@ -5468,7 +5842,7 @@ struct NginxImporter : Importer
         np.parse(nginxConf, &top, 0);
         if (np.files.empty())
         {
-            fprintf(stderr, "cannot read %s\n", nginxConf.c_str());
+            fprintf(stderr, "cannot read %s\n", shown(nginxConf).c_str());
             return 1;
         }
         load_php_info();
@@ -5497,12 +5871,22 @@ struct NginxImporter : Importer
         std::vector<const Node *> snodes;
         servers(&top, snodes);
         std::vector<Site> sites;
-        SV skippedTop;
+        SV skippedTop = np.badSites;
         for (auto *v : snodes)
         {
+            if (v->unsafe || top.unsafe)
+            {
+                skippedTop.push_back(v->where() + "  not imported: " + (v->unsafe ? v->unsafeWhy : top.unsafeWhy));
+                continue;
+            }
             Member m;
             SV notes;
             member_of(v, m, notes);
+            if (!m.skip.empty())
+            {
+                skippedTop.push_back(v->where() + "  " + m.skip);
+                continue;
+            }
             if (m.name.empty())
             {
                 skippedTop.push_back(v->where() + "  server block without a server_name");
@@ -5537,6 +5921,8 @@ struct NginxImporter : Importer
             }
             for (auto &n : notes)
                 add_unique(site->notes, n);
+            for (auto &d : v->dropped)
+                add_unique(site->notes, d);
             if (m.ssl && (m.cert.empty() || !is_file(m.cert) || (!m.key.empty() && !is_file(m.key))))
             {
                 site->warnings.push_back("HTTPS not imported: certificate file "
@@ -5566,10 +5952,14 @@ struct NginxImporter : Importer
         }
         return emit(sites, skippedTop, text, base, listeners, existingDomains, vhnames, oldVh, adminPort,
                     [&](Site &s) { build(s); }, [&]() {
-                        printf("nginx configuration: %s (%d file%s)\n", nginxConf.c_str(), (int)np.files.size(),
+                        printf("nginx configuration: %s (%d file%s)\n", shown(nginxConf).c_str(), (int)np.files.size(),
                                np.files.size() == 1 ? "" : "s");
                         for (auto &m : np.missing)
-                            printf("  missing: %s\n", m.c_str());
+                            printf("  missing: %s\n", shown(m).c_str());
+                        for (auto &d : top.dropped)
+                            printf("  note: %s\n", shown(d).c_str());
+                        if (top.unsafe)
+                            printf("  not imported: %s\n", shown(top.unsafeWhy).c_str());
                     });
     }
 };
@@ -5591,7 +5981,7 @@ extern "C" int ols_import_nginx(int argc, char **argv)
             removeMode = true;
         else if (argv[i][0] == '-' && argv[i][1] == '-')
         {
-            fprintf(stderr, "unknown option %s\n", argv[i]);
+            fprintf(stderr, "unknown option %s\n", shown(argv[i]).c_str());
             return 2;
         }
         else
@@ -5627,7 +6017,7 @@ extern "C" int ols_import_apache(int argc, char **argv)
             removeMode = true;
         else if (argv[i][0] == '-' && argv[i][1] == '-')
         {
-            fprintf(stderr, "unknown option %s\n", argv[i]);
+            fprintf(stderr, "unknown option %s\n", shown(argv[i]).c_str());
             return 2;
         }
         else
