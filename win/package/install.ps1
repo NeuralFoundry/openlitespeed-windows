@@ -249,8 +249,21 @@ function Port-Free([int]$port) {
     } catch { return $false }
 }
 
+function Protect-Root {
+    if (Get-Service OpenLiteSpeed -ErrorAction SilentlyContinue) { return }
+    if ((Get-Acl -LiteralPath $Root).AreAccessRulesProtected) { return }
+    $acl = New-Object Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in 'S-1-5-18', 'S-1-5-32-544', [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+            (New-Object Security.Principal.SecurityIdentifier $sid), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+    }
+    Set-Acl -LiteralPath $Root -AclObject $acl
+}
+
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
+try { Protect-Root } catch { Say "Warning: could not limit $Root to your account: $($_.Exception.Message)" }
 
 $up2 = Split-Path (Split-Path $Root)
 $up1 = Split-Path $Root

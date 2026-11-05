@@ -119,7 +119,7 @@ OpenLiteSpeed-1.9.4-win64-setup.exe --silent --mode standalone --download-php 8.
 | `--service` / `--no-tray` | Install the Windows service / do not start the tray app |
 | `--log <file>` | Log file, `%TEMP%\OpenLiteSpeed-setup.log` by default, includes the admin password |
 
-The same files are available as a zip with `install.ps1` for scripted deployments:
+The same files are available as a zip with `install.ps1` for scripted deployments. Like setup, it limits the install folder to your account, administrators and the system when the folder still takes its permissions from the folder above:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1 -Mode standalone -DownloadPhp 8.4 -Edition full
