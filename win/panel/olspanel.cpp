@@ -680,6 +680,140 @@ static bool pick_file(bool save, const std::wstring &name, std::wstring &out)
     return true;
 }
 
+static bool save_as(const std::wstring &name, std::wstring &out)
+{
+    ComPtr<IFileDialog> d;
+    ComPtr<IShellItem> it;
+    COMDLG_FILTERSPEC f[] = { { L"All files", L"*.*" } };
+    DWORD opt = 0;
+    PWSTR p = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d))))
+        return false;
+    d->SetFileTypes(1, f);
+    d->SetFileName(name.c_str());
+    d->GetOptions(&opt);
+    d->SetOptions(opt | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR | FOS_OVERWRITEPROMPT);
+    if (FAILED(d->Show(g_wnd)) || FAILED(d->GetResult(&it)) || FAILED(it->GetDisplayName(SIGDN_FILESYSPATH, &p)) || !p)
+        return false;
+    out = p;
+    CoTaskMemFree(p);
+    return true;
+}
+
+static const char s_b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static std::string b64_encode(const std::string &in)
+{
+    std::string o;
+    size_t i;
+    o.reserve((in.size() + 2) / 3 * 4);
+    for (i = 0; i + 2 < in.size(); i += 3)
+    {
+        unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8) | (unsigned char)in[i + 2];
+        o += s_b64[v >> 18];
+        o += s_b64[(v >> 12) & 63];
+        o += s_b64[(v >> 6) & 63];
+        o += s_b64[v & 63];
+    }
+    if (i < in.size())
+    {
+        unsigned v = (unsigned char)in[i] << 16;
+        if (i + 1 < in.size())
+            v |= (unsigned char)in[i + 1] << 8;
+        o += s_b64[v >> 18];
+        o += s_b64[(v >> 12) & 63];
+        o += i + 1 < in.size() ? s_b64[(v >> 6) & 63] : '=';
+        o += '=';
+    }
+    return o;
+}
+
+static bool b64_decode(const std::string &in, std::string &out)
+{
+    unsigned v = 0;
+    int bits = 0;
+    out.clear();
+    out.reserve(in.size() / 4 * 3);
+    for (char c : in)
+    {
+        const char *f = c ? strchr(s_b64, c) : NULL;
+        if (c == '=')
+            break;
+        if (!f)
+            return false;
+        v = (v << 6) | (unsigned)(f - s_b64);
+        bits += 6;
+        if (bits >= 8)
+        {
+            bits -= 8;
+            out += (char)((v >> bits) & 0xff);
+        }
+    }
+    return true;
+}
+
+static std::wstring argq(const std::wstring &a)
+{
+    std::wstring o = L"\"";
+    size_t bs = 0;
+    for (wchar_t c : a)
+    {
+        if (c == L'\\')
+        {
+            ++bs;
+            continue;
+        }
+        o.append(c == L'"' ? bs * 2 + 1 : bs, L'\\');
+        bs = 0;
+        o += c;
+    }
+    o.append(bs * 2, L'\\');
+    return o + L"\"";
+}
+
+static bool mail_id_ok(const std::string &id)
+{
+    if (id.size() != 24 || id[8] != 'T' || id[15] != '-')
+        return false;
+    for (size_t i = 0; i < id.size(); ++i)
+    {
+        if (i == 8 || i == 15)
+            continue;
+        char c = id[i];
+        if (i < 15 ? !(c >= '0' && c <= '9') : !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+            return false;
+    }
+    return true;
+}
+
+static bool job_name_ok(const std::string &n)
+{
+    if (n.empty() || n.size() > 32)
+        return false;
+    for (char c : n)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'))
+            return false;
+    return true;
+}
+
+static bool site_runtime(const std::string &name, std::wstring &php, std::wstring &node)
+{
+    std::string out;
+    if (run(L"--status", &out, NULL) != 0)
+        return false;
+    size_t p = out.find("\"sites\":[");
+    if (p == std::string::npos)
+        return false;
+    for (const auto &m : parse_list(out.substr(p + 8)))
+        if (m.s("name") == name)
+        {
+            php = wide(m.s("php"));
+            node = wide(m.s("node"));
+            return true;
+        }
+    return false;
+}
+
 static bool pick_folder(const std::wstring &start, std::wstring &out)
 {
     ComPtr<IFileOpenDialog> d;
@@ -714,16 +848,20 @@ static int recycle(const std::wstring &dir)
     return r == 0 && GetFileAttributesW(dir.c_str()) == INVALID_FILE_ATTRIBUTES ? 1 : 0;
 }
 
-static bool open_terminal(const std::wstring &cwd)
+static bool open_terminal(const std::wstring &cwd, std::wstring php = std::wstring(), std::wstring node = std::wstring())
 {
     wchar_t sys[MAX_PATH];
-    std::wstring php = current_php(), node = ini_str(L"node", L"bin", L""), path, env, exe, cmd;
+    std::wstring path, env, exe, cmd;
     std::vector<std::wstring> add;
     STARTUPINFOW si = {};
     PROCESS_INFORMATION pi = {};
     wchar_t title[] = L"OpenLiteSpeed";
     if (GetSystemDirectoryW(sys, MAX_PATH) == 0)
         return false;
+    if (php.empty())
+        php = current_php();
+    if (node.empty())
+        node = ini_str(L"node", L"bin", L"");
     if (!php.empty())
         add.push_back(php);
     if (!node.empty() && node.size() > 9)
@@ -866,6 +1004,20 @@ static std::vector<LogFile> log_files()
     v.push_back({ "stderr", "Web server output", r + L"\\logs\\stderr.log" });
     v.push_back({ "mariadb", "MariaDB", r + L"\\logs\\mariadb.err" });
     v.push_back({ "webadmin", "WebAdmin", r + L"\\admin\\logs\\error.log" });
+    f = FindFirstFileW((r + L"\\logs\\jobs\\*.log").c_str(), &fd);
+    if (f != INVALID_HANDLE_VALUE)
+    {
+        do
+        {
+            std::wstring fn = fd.cFileName;
+            std::string n = utf8(fn.substr(0, fn.size() - 4));
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && n.size() <= 100
+                && n.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") == std::string::npos)
+                v.push_back({ "job:" + n, n + " job", r + L"\\logs\\jobs\\" + fn });
+        }
+        while (FindNextFileW(f, &fd));
+        FindClose(f);
+    }
     if (GetPrivateProfileSectionW(L"apps", sect, 16384, g_ini) > 0)
         for (wchar_t *e = sect; *e; e += wcslen(e) + 1)
         {
@@ -1119,9 +1271,55 @@ static Result handle(const Msg &m)
             if (!open_vscode(dir))
                 return fail("VS Code could not be opened.");
         }
-        else if (!open_terminal(dir))
-            return fail("The terminal could not be opened.");
+        else
+        {
+            std::wstring php, node;
+            site_runtime(m.s("name"), php, node);
+            if (!open_terminal(dir, php, node))
+                return fail("The terminal could not be opened.");
+        }
         return Result();
+    }
+    if (a == "mail.list" || a == "job.list")
+    {
+        if ((code = run(a == "mail.list" ? L"--mail list" : L"--job list", &out, NULL)) != 0 || json_part(out).empty())
+            return fail(last_line(out, a == "mail.list" ? "The mail could not be listed." : "The jobs could not be listed."));
+        Result r;
+        r.data = json_part(out);
+        return r;
+    }
+    if (a == "mail.read")
+    {
+        std::string id = m.s("mail");
+        if (!mail_id_ok(id))
+            return fail("That mail is not available.");
+        std::wstring f = std::wstring(g_root) + L"\\data\\mail\\" + wide(id) + L".eml";
+        WIN32_FILE_ATTRIBUTE_DATA fa;
+        if (!GetFileAttributesExW(f.c_str(), GetFileExInfoStandard, &fa) || fa.nFileSizeHigh || fa.nFileSizeLow > (27u << 20))
+            return fail("That mail is not available.");
+        Result r;
+        r.data = jesc(b64_encode(read_shared(f, 0)));
+        return r;
+    }
+    if (a == "mail.save")
+    {
+        std::string n = m.s("name"), d = m.s("data"), bytes;
+        std::wstring file;
+        for (char &c : n)
+            if (strchr("\\/:*?\"<>|", c) || (unsigned char)c < 0x20)
+                c = '_';
+        if (n.empty() || n.size() > 200)
+            n = "attachment";
+        if (!b64_decode(d, bytes))
+            return fail("The attachment could not be read.");
+        if (!save_as(wide(n), file))
+            return Result();
+        HANDLE h = CreateFileW(file.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        DWORD w = 0;
+        bool ok = h != INVALID_HANDLE_VALUE && WriteFile(h, bytes.data(), (DWORD)bytes.size(), &w, NULL) && w == bytes.size();
+        if (h != INVALID_HANDLE_VALUE)
+            CloseHandle(h);
+        return ok ? Result() : fail("The attachment could not be saved.");
     }
     if (a == "terminal")
     {
@@ -1380,6 +1578,62 @@ static Result handle(const Msg &m)
             reload_if_running();
         return ran(code, out, "The extension could not be changed.");
     }
+    if (a == "mail.set")
+    {
+        code = run(m.b("on") ? L"--mail on" : L"--mail off", &out, NULL);
+        if (code != 0)
+            return fail(last_line(out, "The mail catcher could not be changed."));
+        Result r;
+        r.data = jesc(last_line(out, ""));
+        return r;
+    }
+    if (a == "mail.remove" || a == "mail.clear")
+    {
+        std::string id = m.s("mail");
+        if (a == "mail.remove" && !mail_id_ok(id))
+            return fail("That mail is not available.");
+        return ran(run(a == "mail.remove" ? L"--mail remove " + wide(id) : L"--mail clear", &out, NULL), out,
+                   "The mail could not be removed.");
+    }
+    if (a == "job.add" || a == "job.do" || a == "job.autostart")
+    {
+        std::string site = m.s("site"), n = m.s("name"), op = m.s("op"), cmd = m.s("command");
+        std::wstring args;
+        if (!name_ok(site) || !job_name_ok(n))
+            return fail("Use lowercase letters, digits and '-' for the job name.");
+        if (a == "job.add")
+        {
+            if (cmd.empty() || cmd.size() > 4000 || cmd.find_first_of("\r\n") != std::string::npos)
+                return fail("Enter the command on one line.");
+            args = L"--job add " + wide(site) + L" " + wide(n) + L" " + argq(wide(cmd));
+        }
+        else if (a == "job.autostart")
+            args = L"--job autostart " + wide(site) + L" " + wide(n) + (m.b("on") ? L" on" : L" off");
+        else if (op == "start" || op == "stop" || op == "restart" || op == "remove")
+            args = L"--job " + wide(op) + L" " + wide(site) + L" " + wide(n);
+        else
+            return fail("That is not a job action.");
+        code = run(args, &out, NULL);
+        if (code != 0)
+            return fail(last_line(out, "The job could not be changed."));
+        Result r;
+        r.data = jesc(last_line(out, ""));
+        return r;
+    }
+    if (a == "site.node")
+    {
+        std::wstring exe, sd;
+        std::string n = m.s("name");
+        long long i = m.n("index");
+        if (!site_dir(n, sd))
+            return fail("That site has no folder.");
+        if (i >= 0 && !pick_node(m, exe))
+            return fail("Pick a Node.js version from the list.");
+        code = run(L"--site node " + wide(n) + L" " + (i >= 0 ? q(exe) : std::wstring(L"default")), &out, NULL);
+        if (code == 0)
+            reload_if_running();
+        return ran(code, out, "The Node.js version of the site could not be changed.");
+    }
     if (a == "php.xdebug")
     {
         std::wstring dir;
@@ -1438,7 +1692,8 @@ static Result handle(const Msg &m)
         DWORD at = GetFileAttributesW(dir.c_str());
         if (at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_REPARSE_POINT))
             return fail("This site folder is a link. Remove it in File Explorer.");
-        std::wstring wn = wide(n), kind = ini_str(L"apps", wn.c_str(), L""), php = ini_str(L"sitephp", wn.c_str(), L"");
+        std::wstring wn = wide(n), kind = ini_str(L"apps", wn.c_str(), L""), php = ini_str(L"sitephp", wn.c_str(), L""),
+                     node = ini_str(L"sitenode", wn.c_str(), L"");
         run(L"--tunnel stop " + wn, NULL, NULL);
         code = run(L"--site forget " + wn, &out, NULL);
         if (code != 0)
@@ -1459,6 +1714,8 @@ static Result handle(const Msg &m)
                 WritePrivateProfileStringW(L"apps", wn.c_str(), kind.c_str(), g_ini);
             if (!php.empty())
                 WritePrivateProfileStringW(L"sitephp", wn.c_str(), php.c_str(), g_ini);
+            if (!node.empty())
+                WritePrivateProfileStringW(L"sitenode", wn.c_str(), node.c_str(), g_ini);
             run(L"--site resync", NULL, NULL);
             reload_if_running();
             return fail("The site folder could not be moved to the Recycle Bin. Close programs that use it and try again.");

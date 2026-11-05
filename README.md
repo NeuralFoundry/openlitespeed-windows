@@ -134,10 +134,11 @@ The full stack edition opens the dashboard from the Start menu, or with a double
 | Page | What you can do |
 |---|---|
 | Overview | Start and stop the web server, MariaDB and Cloudflare Tunnel, see requests per second and open connections |
-| Sites | Create and remove sites, pick the PHP version of each site, put a site online, open its folder, a terminal or VS Code in it, run a folder as a Node.js or Python app |
+| Sites | Create and remove sites, pick the PHP or Node.js version of each site, put a site online, open its folder, a terminal or VS Code in it, run a folder as a Node.js or Python app, run background jobs |
 | PHP | Install PHP versions, choose the default, turn extensions and Xdebug on and off, change `php.ini` settings, install Composer |
 | Node.js | Install Node.js versions, choose the one that runs the apps, restart an app and read its log |
 | Databases | Create a database and its user, export and import `.sql` files, remove a database, open phpMyAdmin |
+| Mail | Turn the mail catcher on and off, read the caught mail with its HTML part and attachments |
 | Logs | Read the server, MariaDB, app and tunnel logs, filter the lines, follow new lines |
 | Settings | Start with Windows, the projects folder, trusted HTTPS, the HTTP and WebAdmin ports and the WebAdmin password |
 
@@ -236,6 +237,16 @@ Xdebug starts with every request and connects to a debugger on `127.0.0.1:9003`.
 
 **VS Code:** **More > Open in VS Code** on the Sites page opens the site folder in VS Code when it is installed. Start a PHP debug session that listens on port 9003, for example with the PHP Debug extension, and open the site in the browser.
 
+## Mail catcher
+
+The switch on the Mail page, or `openlitespeed --mail on`, catches every mail that the local sites send, so nothing leaves the computer. PHP `mail()` goes to OpenLiteSpeed through `sendmail_path` in the `php.ini` of the PHP versions that OpenLiteSpeed runs, and apps that send through SMTP use host `127.0.0.1`, port 1025, no encryption and any user name and password. New Laravel sites get these settings in `.env`.
+
+The mail is kept in `data\mail`, readable by your account only, up to the newest 1000 messages. The Mail page shows each message with its text and HTML parts and lets you save the attachments. The HTML part runs without scripts and loads nothing from the internet.
+
+## Background jobs
+
+**Background jobs** in the **More** menu of a site, or `openlitespeed --job add <site> <name> <command>`, runs a long running command such as `php artisan queue:work`, `php artisan schedule:work` or `npm run dev` in the site folder, with the PHP and Node.js versions of that site first on the `PATH`. Jobs start and stop with the web server. A job that ends is started again after 1, 2, 4 and up to 60 seconds, and after 10 restarts in 10 minutes it stays stopped. Stopping a job ends every process it started. The output goes to `logs\jobs\<site>-<name>.log`, which the Logs page shows. With the Windows service, the service account runs the jobs and the mail catcher, as it runs PHP.
+
 ## Node.js
 
 **Install Node.js** on the Node.js page lists the current and the LTS versions from nodejs.org. A download is checked against `SHASUMS256.txt` and unpacked into `node\<version>`. The page also lists Node.js found in `Program Files`, Laragon, nvm, Volta and on the `PATH`. **Make default** chooses the version that runs the Node.js apps, and the apps are listed below with **Restart** and **Log**.
@@ -246,6 +257,8 @@ Xdebug starts with every request and connects to a debugger on `127.0.0.1:9003`.
 </picture>
 
 A Node.js app needs no changes: `app.listen(3000)` is moved to the address the server gives it. See [docs/APPS.md](docs/APPS.md).
+
+Each site can use its own Node.js: pick it in the Version column of the Sites page, or run `openlitespeed --site node <site> <node.exe>`. Without a choice, a `.nvmrc` or `.node-version` file that names a major version such as `20` picks the newest installed Node.js 20, and otherwise the default runs the site. Background jobs and the terminal of the site use the same version.
 
 ## Moving from Apache
 
@@ -292,6 +305,7 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed --new-site <name> [--wordpress\|--laravel\|--node\|--python]` | Create a site in the projects folder: a PHP site, WordPress with its database, a Laravel project, a Node.js app or a Python app |
 | `openlitespeed --site php <site> <folder>\|default` | Use another PHP version for one site |
 | `openlitespeed --site app <site> node\|python\|off` | Run a site folder as a Node.js or Python app, or as a PHP site again |
+| `openlitespeed --site node <site> <node.exe>\|default` | Use another Node.js version for one site |
 | `openlitespeed --php list` | The PHP versions on this computer as JSON, with the sites and the Xdebug state of each |
 | `openlitespeed --php available` / `install <8.x> [ts]` / `remove <folder>` | List and install the PHP versions from windows.php.net, remove a downloaded one |
 | `openlitespeed --php ext <folder>` / `ext-set <folder> <name> on\|off` | List the extensions of a PHP version, turn one on or off |
@@ -308,6 +322,11 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed --db export <name> <file.sql>` / `import <name> <file.sql>` | Export a database to a file or import a file into it |
 | `openlitespeed --tunnel start <site>` / `stop <site>` / `stop --all` / `status` | Put a site online with Cloudflare Tunnel or take it offline |
 | `openlitespeed --tunnel token` / `run` / `run-stop` / `token clear` | Save a tunnel token from standard input, connect or disconnect your own domain, forget the token |
+| `openlitespeed --mail on\|off\|status` | Turn the mail catcher on or off, or show whether it runs |
+| `openlitespeed --mail list` / `remove <id>` / `clear` | List the caught mail as JSON, remove one message or all of them |
+| `openlitespeed --mail sendmail [-t] [-i] [-f <from>] [<recipient>...]` | Store a message from standard input, like sendmail |
+| `openlitespeed --job list` / `add <site> <name> <command>` / `remove <site> <name>` | List, add or remove the background jobs of the sites |
+| `openlitespeed --job start\|stop\|restart <site> <name>` / `autostart <site> <name> on\|off` | Control a job, choose whether it starts with the web server |
 | `openlitespeed --status` | Server, PHP, sites, database and tunnels as JSON |
 | `openlitespeed --admin-password admin\conf\htpasswd <password>` | Set the WebAdmin password |
 

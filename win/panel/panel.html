@@ -248,6 +248,23 @@ dialog.wide { width: min(760px, 92vw); }
 .secret { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .secret code { font: 13px var(--code); background: var(--raise); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; flex: 1; overflow: auto; white-space: nowrap; }
 .avail td { padding-block: 7px; }
+.smtp { display: flex; gap: 22px; flex-wrap: wrap; }
+.smtp code { font: 13px var(--code); }
+tr.pick { cursor: pointer; }
+tr.pick:hover td { background: var(--sel); }
+td.clip { max-width: 0; width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mailhead { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0 0 12px; font-size: 13px; }
+.mailhead span { color: var(--muted); }
+.mailhead b { font-weight: 400; overflow-wrap: anywhere; }
+.seg { display: flex; gap: 6px; margin-bottom: 8px; }
+.seg .btn[aria-pressed="true"] { background: var(--sel); font-weight: 600; }
+iframe.mailhtml { width: 100%; height: 52vh; border: 1px solid var(--rule); border-radius: 8px; background: #fff; }
+pre.mailtext { margin: 0; height: 52vh; overflow: auto; font: 12.5px/1.5 var(--code); white-space: pre-wrap; word-break: break-word; background: var(--raise); border: 1px solid var(--rule); border-radius: 8px; padding: 10px; }
+.atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.jobform { display: grid; grid-template-columns: 170px 130px 1fr auto; gap: 8px; align-items: end; margin-top: 12px; }
+.jobform .field { margin: 0; }
+.jobform input, .jobform select { border: 1px solid var(--rule); background: var(--raise); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+td code { font: 12px var(--code); overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -260,6 +277,7 @@ dialog.wide { width: min(760px, 92vw); }
     <button data-page="php"><span class="dot"></span>PHP<span class="count" id="nav-php"></span></button>
     <button data-page="node"><span class="dot"></span>Node.js<span class="count" id="nav-node"></span></button>
     <button data-page="db"><span class="dot" id="nav-db"></span>Databases</button>
+    <button data-page="mail"><span class="dot" id="nav-mail"></span>Mail<span class="count" id="nav-mailcount"></span></button>
     <button data-page="logs"><span class="dot"></span>Logs</button>
     <button data-page="settings"><span class="dot"></span>Settings</button>
   </nav>
@@ -332,6 +350,16 @@ dialog.wide { width: min(760px, 92vw); }
     <div class="card pad" id="db-conn"></div>
     <h3 class="sub" id="db-sub">Databases</h3>
     <div class="card list" id="db-list"></div>
+  </section>
+
+  <section class="page" id="p-mail" hidden>
+    <div class="head"><h2>Mail</h2><button class="btn" id="btn-mailclear">Clear all</button></div>
+    <div class="card pad">
+      <div class="row"><div class="label" id="mail-label">Mail catcher<small id="mail-note"></small></div><button class="switch" role="switch" aria-checked="false" aria-labelledby="mail-label" id="mail-switch"></button></div>
+      <div class="row"><div class="label">SMTP for apps<small>No encryption, any user name and password</small></div><div class="smtp"><span>Host <code>127.0.0.1</code></span><span>Port <code id="mail-port"></code></span></div></div>
+    </div>
+    <h3 class="sub">Messages</h3>
+    <div class="card list" id="mail-list"></div>
   </section>
 
   <section class="page" id="p-logs" hidden>
@@ -437,6 +465,27 @@ dialog.wide { width: min(760px, 92vw); }
   <div class="dlg-acts"><button class="btn quiet" id="ini-notepad">Edit php.ini</button><span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="ini-ok">Save</button></div>
 </dialog>
 
+<dialog id="dlg-mail" class="wide">
+  <h3 id="mv-subject"></h3>
+  <div class="mailhead" id="mv-head"></div>
+  <div class="seg" id="mv-seg"></div>
+  <div id="mv-body"></div>
+  <div class="atts" id="mv-atts"></div>
+  <div class="dlg-acts"><button class="btn danger" id="mv-remove">Remove</button><span style="flex:1"></span><button class="btn primary" data-close>Close</button></div>
+</dialog>
+
+<dialog id="dlg-jobs" class="wide">
+  <h3>Background jobs of <span id="jobs-site"></span></h3>
+  <div class="card list" id="jobs-list"></div>
+  <div class="jobform">
+    <div class="field"><label for="job-preset">Add</label><select id="job-preset"><option value="queue">Laravel queue worker</option><option value="scheduler">Laravel scheduler</option><option value="vite">Vite dev server</option><option value="custom">Custom</option></select></div>
+    <div class="field"><label for="job-name">Name</label><input type="text" id="job-name" maxlength="32" autocomplete="off" spellcheck="false"></div>
+    <div class="field"><label for="job-cmd">Command</label><input type="text" id="job-cmd" maxlength="4000" autocomplete="off" spellcheck="false"></div>
+    <button class="btn primary" id="job-add">Add</button>
+  </div>
+  <div class="dlg-acts"><button class="btn primary" data-close>Close</button></div>
+</dialog>
+
 <dialog id="dlg-nodeinstall">
   <h3>Install Node.js</h3>
   <p>Official builds from nodejs.org, checked against their SHA-256.</p>
@@ -476,7 +525,7 @@ dialog.wide { width: min(760px, 92vw); }
   const preview = window.__preview || null;
   const wv = !preview && window.chrome && window.chrome.webview;
   let state = null, busy = 0, nextId = 1, page = "overview";
-  let phpList = [], nodeList = [], dbList = null, logList = [], logId = "error", logText = "", settings = null;
+  let phpList = [], nodeList = [], dbList = null, logList = [], logId = "error", logText = "", settings = null, mailList = [], jobList = [];
   const xdRun = new Set();
   const pending = new Map();
 
@@ -678,6 +727,8 @@ dialog.wide { width: min(760px, 92vw); }
     $("nav-sites").textContent = n ? String(n) : "";
     $("nav-php").textContent = s.php && s.php.version ? s.php.version : "";
     $("nav-node").textContent = s.node && s.node.version ? s.node.version : "";
+    $("nav-mail").className = "dot" + (s.mail && s.mail.on ? (s.mail.running ? " on" : " off") : "");
+    $("nav-mailcount").textContent = s.mail && s.mail.count ? String(s.mail.count) : "";
     $("folder-path").textContent = s.www || "";
   }
 
@@ -791,6 +842,29 @@ dialog.wide { width: min(760px, 92vw); }
     return sel;
   }
 
+  function nodeOptions(site) {
+    const sel = el("select"), verOf = exe => { const n = nodeList.find(x => sameDir(x.exe, exe)); return n ? n.version : ""; };
+    sel.setAttribute("aria-label", "Node.js for " + site.domain);
+    const auto = site.nodeFrom === "nvmrc";
+    const dv = auto ? verOf(site.node) : state.node && state.node.version;
+    const def = el("option", "", (auto ? "From .nvmrc" : "Default") + (dv ? " (" + dv + ")" : ""));
+    def.value = "-1";
+    sel.append(def);
+    nodeList.forEach((n, i) => {
+      const o = el("option", "", n.version + (n.source && n.source !== "OpenLiteSpeed" ? " · " + n.source : ""));
+      o.value = String(i);
+      o.title = n.exe;
+      if (site.nodeFrom === "site" && sameDir(n.exe, site.node)) o.selected = true;
+      sel.append(o);
+    });
+    sel.disabled = busy > 0 && !preview;
+    sel.addEventListener("change", () => {
+      const index = parseInt(sel.value, 10);
+      act("Switching Node.js for " + site.domain, "site.node", { name: site.name, index }, () => site.domain + " uses " + (index < 0 ? "the automatic Node.js choice" : "Node.js " + nodeList[index].version) + ".");
+    });
+    return sel;
+  }
+
   function siteMenu(site) {
     const isApp = site.type === "node" || site.type === "python", php = ["folder", "wordpress", "laravel"].includes(site.type);
     const items = [];
@@ -798,6 +872,7 @@ dialog.wide { width: min(760px, 92vw); }
       items.push({ label: "Open folder", fn: () => call("site.folder", { name: site.name }).catch(e => say(e.message, true)) });
       items.push({ label: "Open terminal here", fn: () => call("site.terminal", { name: site.name }).catch(e => say(e.message, true)) });
       if (state.vscode && site.dir) items.push({ label: "Open in VS Code", fn: () => call("site.vscode", { name: site.name }).catch(e => say(e.message, true)) });
+      items.push({ label: "Background jobs", fn: () => openJobs(site) });
     }
     if (isApp) {
       items.push({ label: "Restart app", fn: () => act("Restarting " + site.domain, "app.restart", { name: site.name }, () => site.domain + " restarts within 10 seconds.") });
@@ -836,7 +911,7 @@ dialog.wide { width: min(760px, 92vw); }
       tr.append(td(site.domain, "name"));
       tr.append(td(site.type === "proxy" ? "App on port " + site.port : kindName[site.type] || site.type, "muted nowrap"));
       const php = ["folder", "wordpress", "laravel"].includes(site.type);
-      tr.append(td(php ? phpOptions(site) : el("span", "muted", "—")));
+      tr.append(td(php ? phpOptions(site) : site.type === "node" ? nodeOptions(site) : el("span", "muted", "—")));
       const a = td(addr(siteUrl(site.domain)), "grow");
       if (f && site.tunnel && site.tunnelUrl) {
         const pub = el("div", "public"), pa = addr(site.tunnelUrl);
@@ -860,7 +935,7 @@ dialog.wide { width: min(760px, 92vw); }
       tr.append(td(siteMenu(site), "end"));
       return tr;
     });
-    list.replaceChildren(table(["Site", "Kind", "PHP", "Address"].concat(f ? ["Online"] : []).concat([""]), rows));
+    list.replaceChildren(table(["Site", "Kind", "Version", "Address"].concat(f ? ["Online"] : []).concat([""]), rows));
   }
 
   function renderPhp() {
@@ -992,6 +1067,182 @@ dialog.wide { width: min(760px, 92vw); }
     })));
   }
 
+  function renderMail() {
+    const m = state.mail || { on: false, running: false, port: 1025, count: 0 };
+    $("mail-switch").setAttribute("aria-checked", !!m.on);
+    $("mail-note").textContent = !m.on ? "Mail from PHP and apps is sent as usual" : m.running ? "Every mail that the sites send is kept here" : "On, but not running: the port may be busy";
+    $("mail-port").textContent = String(m.port);
+    $("btn-mailclear").disabled = !mailList.length;
+    const box = $("mail-list");
+    if (!mailList.length) { box.replaceChildren(empty(m.on ? "No mail yet. Mail that the sites send shows up here." : "Turn on the mail catcher to keep the mail that the sites send.")); return; }
+    box.replaceChildren(table(["Received", "From", "To", "Subject", "Size"], mailList.map(x => {
+      const tr = el("tr", "pick");
+      tr.tabIndex = 0;
+      tr.append(td(new Date(x.date).toLocaleString(), "muted nowrap"), td(x.from, "nowrap"), td(x.to.join(", "), "muted nowrap"));
+      const sub = td(x.subject || "(no subject)", "clip");
+      if (x.attachments) sub.append(el("span", "tag", String(x.attachments) + (x.attachments === 1 ? " file" : " files")));
+      tr.append(sub, td(size(x.size), "muted nowrap"));
+      tr.addEventListener("click", () => openMail(x));
+      tr.addEventListener("keydown", e => { if (e.key === "Enter") openMail(x); });
+      return tr;
+    })));
+  }
+
+  function binStr(b64) { return atob(b64); }
+  function bytesOf(bin) { const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i) & 255; return u; }
+  function textOf(bin, cs) {
+    const u = bytesOf(bin);
+    try { return new TextDecoder((cs || "utf-8").trim().toLowerCase()).decode(u); } catch (e) { return new TextDecoder("windows-1252").decode(u); }
+  }
+  function splitHead(bin) {
+    let i = bin.search(/\r?\n\r?\n/), head = i < 0 ? bin : bin.slice(0, i), body = "";
+    if (i >= 0) body = bin.slice(i).replace(/^\r?\n\r?\n/, "");
+    if (/^\r?\n/.test(bin)) { head = ""; body = bin.replace(/^\r?\n/, ""); }
+    const h = {};
+    head.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/).forEach(l => {
+      const c = l.indexOf(":");
+      if (c > 0) { const k = l.slice(0, c).trim().toLowerCase(); if (!(k in h)) h[k] = l.slice(c + 1).trim(); }
+    });
+    return { h, body };
+  }
+  function param(v, key) {
+    const m = (v || "").match(new RegExp(";\\s*" + key + "\\*?=\\s*(\"([^\"]*)\"|[^;\\s]*)", "i"));
+    if (!m) return "";
+    let r = m[2] !== undefined ? m[2] : m[1];
+    const x = r.match(/^([^']*)'[^']*'(.*)$/);
+    if (x) { try { r = textOf(unescape(x[2]), x[1] || "utf-8"); } catch (e) {} }
+    return words(r);
+  }
+  function words(v) {
+    return (v || "").replace(/(=\?[^?]+\?[bBqQ]\?[^?]*\?=)\s+(?==\?)/g, "$1").replace(/=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/g, (all, cs, enc, t) => {
+      try {
+        const bin = enc.toUpperCase() === "B" ? atob(t) : t.replace(/_/g, " ").replace(/=([0-9A-Fa-f]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
+        return textOf(bin, cs.split("*")[0]);
+      } catch (e) { return all; }
+    });
+  }
+  function body(part) {
+    const cte = (part.h["content-transfer-encoding"] || "").toLowerCase();
+    if (cte === "base64") { try { return atob(part.body.replace(/[^A-Za-z0-9+/=]/g, "")); } catch (e) { return ""; } }
+    if (cte === "quoted-printable") return part.body.replace(/=\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
+    return part.body;
+  }
+  function walk(part, out, depth) {
+    const ct = part.h["content-type"] || "text/plain", type = ct.split(";")[0].trim().toLowerCase();
+    const disp = (part.h["content-disposition"] || "").split(";")[0].trim().toLowerCase();
+    if (type.startsWith("multipart/") && depth < 8) {
+      const b = param(ct, "boundary");
+      if (!b) return;
+      const pieces = part.body.split(new RegExp("(?:^|\\r?\\n)--" + b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:--)?[ \\t]*(?=\\r?\\n|$)"));
+      pieces.slice(1).forEach(x => { if (x.replace(/\s/g, "")) walk(splitHead(x.replace(/^\r?\n/, "")), out, depth + 1); });
+      return;
+    }
+    const name = param(part.h["content-disposition"], "filename") || param(ct, "name");
+    const data = body(part), cid = (part.h["content-id"] || "").replace(/^<|>$/g, "");
+    if (cid && type.startsWith("image/")) out.cid[cid] = "data:" + type + ";base64," + btoa(data);
+    if (disp === "attachment" || type === "message/rfc822" || (disp !== "inline" && name && !type.startsWith("text/"))) out.att.push({ name: name || "attachment", type, data });
+    else if (type === "text/html" && !out.html) out.html = textOf(data, param(ct, "charset"));
+    else if (type === "text/plain" && !out.text) out.text = textOf(data, param(ct, "charset"));
+  }
+
+  let mailView = null;
+  async function openMail(x) {
+    let raw;
+    try { raw = binStr(await call("mail.read", { mail: x.id })); } catch (e) { say(e.message, true); return; }
+    const top = splitHead(raw), out = { html: "", text: "", att: [], cid: {} };
+    walk(top, out, 0);
+    mailView = x;
+    $("mv-subject").textContent = words(top.h.subject) || "(no subject)";
+    const head = $("mv-head");
+    head.replaceChildren();
+    [["From", words(top.h.from)], ["To", words(top.h.to) || x.to.join(", ")], ["Cc", words(top.h.cc)], ["Date", top.h.date || new Date(x.date).toLocaleString()]].forEach(([k, v]) => {
+      if (v) head.append(el("span", "", k), el("b", "", v));
+    });
+    const seg = $("mv-seg"), bodyBox = $("mv-body");
+    const showHtml = () => {
+      const f = el("iframe", "mailhtml");
+      f.setAttribute("sandbox", "");
+      f.setAttribute("referrerpolicy", "no-referrer");
+      f.title = "HTML part";
+      const html = out.html.replace(/cid:([^"'\s)>]+)/gi, (m, id) => out.cid[id] || m);
+      f.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; font-src data:">' + html;
+      bodyBox.replaceChildren(f);
+    };
+    const showText = () => bodyBox.replaceChildren(el("pre", "mailtext", out.text || (out.html ? out.html.replace(/<[^>]*>/g, "") : "")));
+    seg.replaceChildren();
+    const modes = (out.html ? [["HTML", showHtml]] : []).concat(out.text || !out.html ? [["Text", showText]] : []);
+    modes.forEach(([label, fn], i) => {
+      const b = button(label, "small", () => { seg.querySelectorAll("button").forEach(z => z.setAttribute("aria-pressed", z === b)); fn(); });
+      b.setAttribute("aria-pressed", i === 0);
+      seg.append(b);
+    });
+    seg.hidden = modes.length < 2;
+    modes[0][1]();
+    const atts = $("mv-atts");
+    atts.replaceChildren();
+    out.att.forEach(a => atts.append(button("Save " + a.name + " (" + size(a.data.length) + ")", "small", () => act("Saving " + a.name, "mail.save", { name: a.name, data: btoa(a.data) }))));
+    $("dlg-mail").showModal();
+  }
+  $("mv-remove").addEventListener("click", async () => {
+    if (!mailView) return;
+    $("dlg-mail").close();
+    if (await act("Removing the mail", "mail.remove", { mail: mailView.id }, () => "The mail was removed.") !== null) loadMail();
+  });
+
+  const presets = { queue: ["queue", "php artisan queue:work"], scheduler: ["scheduler", "php artisan schedule:work"], vite: ["vite", "npm run dev"], custom: ["", ""] };
+  let jobsSite = null;
+  function openJobs(site) {
+    jobsSite = site;
+    $("jobs-site").textContent = site.domain;
+    $("job-preset").value = site.type === "laravel" ? "queue" : site.pkg || site.type === "node" ? "vite" : "custom";
+    fillPreset();
+    paintJobs();
+    $("dlg-jobs").showModal();
+    loadJobs();
+  }
+  function fillPreset() {
+    const p = presets[$("job-preset").value] || presets.custom;
+    $("job-name").value = p[0];
+    $("job-cmd").value = p[1];
+  }
+  $("job-preset").addEventListener("change", fillPreset);
+  function paintJobs() {
+    const box = $("jobs-list"), mine = jobList.filter(j => jobsSite && j.site === jobsSite.name);
+    if (!mine.length) { box.replaceChildren(empty("No background jobs yet.")); return; }
+    box.replaceChildren(table(["Job", "Command", "State", "Starts with server", ""], mine.map(j => {
+      const tr = el("tr"), end = td(null, "end");
+      const state = j.running ? "Running, pid " + j.pid : j.restarts >= 10 ? "Stopped after " + j.restarts + " restarts" : j.restarts ? "Waiting to restart (" + j.restarts + ")" : "Stopped";
+      tr.append(td(j.name, "name"), td(el("code", "", j.command)), td(state, "muted nowrap"));
+      tr.append(td(sw(j.autostart, "Start " + j.name + " with the server", () => jobAct("job.autostart", { name: j.name, on: !j.autostart }, "Changing " + j.name))));
+      if (j.running) end.append(button("Stop", "small", () => jobAct("job.do", { name: j.name, op: "stop" }, "Stopping " + j.name)), " ",
+        button("Restart", "small", () => jobAct("job.do", { name: j.name, op: "restart" }, "Restarting " + j.name)));
+      else end.append(button("Start", "small", () => jobAct("job.do", { name: j.name, op: "start" }, "Starting " + j.name)));
+      end.append(" ", button("Log", "small", () => { $("dlg-jobs").close(); logId = "job:" + j.site + "-" + j.name; show("logs"); }),
+        " ", button("Remove", "small danger", async () => {
+          $("dlg-jobs").close();
+          const r = await ask({ title: "Remove the job " + j.name + "?", text: "It is stopped first. The log stays in logs\\jobs.", ok: "Remove", danger: true });
+          if (r) await jobAct("job.do", { name: j.name, op: "remove" }, "Removing " + j.name);
+          if (jobsSite) $("dlg-jobs").showModal();
+        }));
+      tr.append(end);
+      return tr;
+    })));
+  }
+  async function jobAct(action, params, label) {
+    await act(label, action, Object.assign({ site: jobsSite.name }, params), d => d ? d + "." : "");
+    await loadJobs();
+  }
+  async function loadJobs() {
+    try { jobList = (await call("job.list")) || []; } catch (e) { say(e.message, true); }
+    paintJobs();
+  }
+  $("job-add").addEventListener("click", () => {
+    const name = $("job-name").value.trim(), command = $("job-cmd").value.trim();
+    if (!/^[a-z0-9-]{1,32}$/.test(name)) { say("Use lowercase letters, digits and '-' for the job name.", true); return; }
+    if (!command) { say("Enter the command.", true); return; }
+    jobAct("job.add", { name, command }, "Adding " + name);
+  });
+
   function renderLogs() {
     const nav = $("log-nav");
     nav.replaceChildren();
@@ -1033,6 +1284,7 @@ dialog.wide { width: min(760px, 92vw); }
     else if (page === "php") renderPhp();
     else if (page === "node") renderNode();
     else if (page === "db") renderDb();
+    else if (page === "mail") renderMail();
     else if (page === "logs") renderLogs();
     else if (page === "settings") renderSettings();
   }
@@ -1049,6 +1301,10 @@ dialog.wide { width: min(760px, 92vw); }
 
   async function loadPhp() {
     try { phpList = (await call("php.list")) || []; } catch (e) { say(e.message, true); }
+    render();
+  }
+  async function loadMail() {
+    try { mailList = (await call("mail.list")) || []; } catch (e) { say(e.message, true); }
     render();
   }
   async function loadNode() {
@@ -1086,6 +1342,8 @@ dialog.wide { width: min(760px, 92vw); }
     document.querySelectorAll("section.page").forEach(s => { s.hidden = s.id !== "p-" + p; });
     render();
     if (p === "sites" || p === "php") loadPhp();
+    if (p === "sites") loadNode();
+    if (p === "mail") loadMail();
     if (p === "node") loadNode();
     if (p === "db") loadDb();
     if (p === "logs") loadLogs();
@@ -1328,6 +1586,14 @@ dialog.wide { width: min(760px, 92vw); }
   $("btn-phpinstall").addEventListener("click", openPhpInstall);
   $("btn-nodeinstall").addEventListener("click", openNodeInstall);
   $("btn-dbnew").addEventListener("click", openDbNew);
+  $("mail-switch").addEventListener("click", () => {
+    const on = !(state.mail && state.mail.on);
+    act(on ? "Turning on the mail catcher" : "Turning off the mail catcher", "mail.set", { on }, d => d ? d + "." : "").then(loadMail);
+  });
+  $("btn-mailclear").addEventListener("click", async () => {
+    if (await ask({ title: "Remove all mail?", text: mailList.length + (mailList.length === 1 ? " message is" : " messages are") + " deleted.", ok: "Remove all", danger: true }))
+      act("Removing the mail", "mail.clear", {}, () => "The mail was removed.").then(loadMail);
+  });
   $("btn-composer").addEventListener("click", () => act(state.composer ? "Updating Composer" : "Installing Composer", "composer.install", {}, () => "Composer is installed."));
   $("web-switch").addEventListener("click", () => {
     const on = state.server.running;
@@ -1376,6 +1642,8 @@ dialog.wide { width: min(760px, 92vw); }
   if (preview) {
     phpList = (preview.data && preview.data["php.list"]) || [];
     nodeList = (preview.data && preview.data["node.list"]) || [];
+    mailList = (preview.data && preview.data["mail.list"]) || [];
+    jobList = (preview.data && preview.data["job.list"]) || [];
     dbList = (preview.data && preview.data["db.list"]) || [];
     logList = (preview.data && preview.data["log.list"]) || [];
     settings = (preview.data && preview.data.settings) || null;
@@ -1388,6 +1656,7 @@ dialog.wide { width: min(760px, 92vw); }
       const a = document.activeElement;
       if (a && (a.tagName === "SELECT" || a.tagName === "INPUT")) return;
       refresh();
+      if (page === "mail") loadMail();
       if (page === "logs" && $("log-follow").getAttribute("aria-checked") === "true") loadLog();
     }, 3000);
   } else {
