@@ -1256,6 +1256,8 @@ static DWORD WINAPI install_thread(void *arg)
         reg_set(k, L"InstallLocation", g_dir);
         swprintf(cmd, 4096, L"\"%s\" --uninstall", self);
         reg_set(k, L"UninstallString", cmd);
+        swprintf(cmd, 4096, L"\"%s\" --uninstall --silent", self);
+        reg_set(k, L"QuietUninstallString", cmd);
         reg_set(k, L"DisplayIcon", self);
         RegSetValueExW(k, L"NoModify", 0, REG_DWORD, (const BYTE *)&one, 4);
         RegSetValueExW(k, L"NoRepair", 0, REG_DWORD, (const BYTE *)&one, 4);
