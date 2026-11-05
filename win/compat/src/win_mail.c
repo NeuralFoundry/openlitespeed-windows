@@ -1341,7 +1341,7 @@ int ols_mail_laravel_env(const wchar_t *root, const wchar_t *dir)
     static const char *const keys[] = { "MAIL_MAILER=", "MAIL_HOST=", "MAIL_PORT=" };
     wchar_t ini[MAX_PATH], env[MAX_PATH];
     char *t = NULL, *out, *p, vals[3][32];
-    size_t len, cap, o = 0;
+    size_t len, cap, o = 0, lines = 1;
     int seen[3] = { 0, 0, 0 }, k, r;
     ml_ini(root, ini);
     if (!GetPrivateProfileIntW(L"mail", L"on", 0, ini))
@@ -1352,7 +1352,9 @@ int ols_mail_laravel_env(const wchar_t *root, const wchar_t *dir)
     strcpy(vals[0], "smtp");
     strcpy(vals[1], "127.0.0.1");
     snprintf(vals[2], sizeof(vals[2]), "%d", ml_port(ini));
-    cap = len + 256;
+    for (p = t; *p; ++p)
+        lines += *p == '\n';
+    cap = len + lines * 16 + 256;
     if ((out = (char *)malloc(cap)) == NULL)
     {
         free(t);
