@@ -2008,7 +2008,12 @@ static void start_webview(HWND hwnd)
                                   g_view->add_FrameNavigationStarting(
                                       Callback<ICoreWebView2NavigationStartingEventHandler>(
                                           [](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *e) -> HRESULT {
-                                              e->put_Cancel(TRUE);
+                                              LPWSTR uri = nullptr;
+                                              bool doc = SUCCEEDED(e->get_Uri(&uri)) && uri && wcscmp(uri, L"about:srcdoc") == 0;
+                                              if (uri)
+                                                  CoTaskMemFree(uri);
+                                              if (!doc)
+                                                  e->put_Cancel(TRUE);
                                               return S_OK;
                                           })
                                           .Get(),

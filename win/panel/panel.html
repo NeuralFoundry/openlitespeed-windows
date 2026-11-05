@@ -1164,7 +1164,7 @@ td code { font: 12px var(--code); overflow-wrap: anywhere; }
       f.setAttribute("sandbox", "");
       f.setAttribute("referrerpolicy", "no-referrer");
       f.title = "HTML part";
-      const html = out.html.replace(/cid:([^"'\s)>]+)/gi, (m, id) => out.cid[id] || m);
+      const html = out.html.replace(/<(link|i?frame|frameset|object|embed)(?=[\s\/>])/gi, "<x-$1").replace(/cid:([^"'\s)>]+)/gi, (m, id) => out.cid[id] || m);
       f.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; font-src data:">' + html;
       bodyBox.replaceChildren(f);
     };
