@@ -325,7 +325,7 @@ Run the commands in the install folder as `bin\openlitespeed.exe`.
 | `openlitespeed --tunnel start <site>` / `stop <site>` / `stop --all` / `status` | Put a site online with Cloudflare Tunnel or take it offline |
 | `openlitespeed --tunnel token` / `run` / `run-stop` / `token clear` | Save a tunnel token from standard input, connect or disconnect your own domain, forget the token |
 | `openlitespeed --mail on\|off\|status` | Turn the mail catcher on or off, or show whether it runs |
-| `openlitespeed --mail list` / `remove <id>` / `clear` | List the caught mail as JSON, remove one message or all of them |
+| `openlitespeed --mail list` / `remove <id>` / `save <id> <n> <file>` / `clear` | List the caught mail as JSON, remove one message, save attachment `n` (from 0) of a message to a file, or remove all messages |
 | `openlitespeed --mail sendmail [-t] [-i] [-f <from>] [<recipient>...]` | Store a message from standard input, like sendmail |
 | `openlitespeed --job list` / `add <site> <name> <command>` / `remove <site> <name>` | List, add or remove the background jobs of the sites |
 | `openlitespeed --job start\|stop\|restart <site> <name>` / `autostart <site> <name> on\|off` | Control a job, choose whether it starts with the web server |

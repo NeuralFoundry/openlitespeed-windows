@@ -728,30 +728,6 @@ static std::string b64_encode(const std::string &in)
     return o;
 }
 
-static bool b64_decode(const std::string &in, std::string &out)
-{
-    unsigned v = 0;
-    int bits = 0;
-    out.clear();
-    out.reserve(in.size() / 4 * 3);
-    for (char c : in)
-    {
-        const char *f = c ? strchr(s_b64, c) : NULL;
-        if (c == '=')
-            break;
-        if (!f)
-            return false;
-        v = (v << 6) | (unsigned)(f - s_b64);
-        bits += 6;
-        if (bits >= 8)
-        {
-            bits -= 8;
-            out += (char)((v >> bits) & 0xff);
-        }
-    }
-    return true;
-}
-
 static std::wstring attach_name(std::string n)
 {
     for (char &c : n)
@@ -764,25 +740,6 @@ static std::wstring attach_name(std::string n)
         if (c == 0x200e || c == 0x200f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069))
             c = L'_';
     return w;
-}
-
-static bool save_marked(const std::wstring &file, const std::string &bytes)
-{
-    static const char zone[] = "[ZoneTransfer]\r\nZoneId=3\r\n";
-    HANDLE h = CreateFileW(file.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    DWORD w = 0;
-    bool ok = h != INVALID_HANDLE_VALUE && WriteFile(h, bytes.data(), (DWORD)bytes.size(), &w, NULL) && w == bytes.size();
-    if (h != INVALID_HANDLE_VALUE)
-        CloseHandle(h);
-    if (!ok)
-        return false;
-    h = CreateFileW((file + L":Zone.Identifier").c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h != INVALID_HANDLE_VALUE)
-    {
-        WriteFile(h, zone, sizeof(zone) - 1, &w, NULL);
-        CloseHandle(h);
-    }
-    return true;
 }
 
 static std::wstring argq(const std::wstring &a)
@@ -1343,13 +1300,19 @@ static Result handle(const Msg &m)
     }
     if (a == "mail.save")
     {
-        std::string bytes;
+        std::string id = m.s("mail");
+        long long i = m.n("index");
         std::wstring file;
-        if (!b64_decode(m.s("data"), bytes))
-            return fail("The attachment could not be read.");
+        if (!mail_id_ok(id) || i < 0 || i > 9999)
+            return fail("That attachment is not available.");
         if (!save_as(attach_name(m.s("name")), file))
             return Result();
-        return save_marked(file, bytes) ? Result() : fail("The attachment could not be saved.");
+        code = run(L"--mail save " + wide(id) + L" " + std::to_wstring(i) + L" " + argq(file), &out, NULL);
+        if (code != 0)
+            return fail(last_line(out, "The attachment could not be saved."));
+        Result r;
+        r.data = jesc(last_line(out, ""));
+        return r;
     }
     if (a == "terminal")
     {
@@ -1900,7 +1863,13 @@ static void dispatch(const std::string &json)
 {
     Msg m;
     if (json.size() > 16384 || !parse(json, m) || m.n("id") < 0)
+    {
+        size_t p = json.rfind("\"id\":");
+        long long id = p == std::string::npos ? -1 : strtoll(json.c_str() + p + 5, NULL, 10);
+        if (id > 0)
+            post_reply("{\"id\":" + std::to_string(id) + ",\"ok\":false,\"error\":" + jesc("The request was not accepted.") + "}");
         return;
+    }
     std::thread([m]() {
         long long id = m.n("id");
         Result r;

@@ -734,7 +734,7 @@ static int hdr_get(const char *h, const char *he, const char *name, char *out, s
     return 0;
 }
 
-static void param_get(const char *v, const char *key, char *out, size_t n)
+static size_t param_get(const char *v, const char *key, char *out, size_t n)
 {
     size_t kl = strlen(key), i = 0;
     const char *p = v;
@@ -744,14 +744,11 @@ static void param_get(const char *v, const char *key, char *out, size_t n)
         ++p;
         while (*p == ' ' || *p == '\t')
             ++p;
-        if (_strnicmp(p, key, kl) == 0 && (p[kl] == '=' || p[kl] == '*'))
+        if (_strnicmp(p, key, kl) == 0 && (p[kl] == '=' || (p[kl] == '*' && p[kl + 1] == '=')))
         {
-            p += kl;
-            while (*p && *p != '=')
+            p += kl + (p[kl] == '*' ? 2 : 1);
+            while (*p == ' ' || *p == '\t')
                 ++p;
-            if (*p != '=')
-                return;
-            ++p;
             if (*p == '"')
             {
                 ++p;
@@ -762,12 +759,18 @@ static void param_get(const char *v, const char *key, char *out, size_t n)
                 while (*p && *p != ';' && *p != ' ' && *p != '\t' && i + 1 < n)
                     out[i++] = *p++;
             out[i] = 0;
-            if (!out[0])
-                strcpy(out, "-");
-            return;
+            return i;
         }
     }
+    return 0;
 }
+
+typedef struct
+{
+    int want;
+    const char *b, *e;
+    char cte[64];
+} attpick_t;
 
 static void mime_type(const char *v, char *out, size_t n)
 {
@@ -779,7 +782,7 @@ static void mime_type(const char *v, char *out, size_t n)
     out[i] = 0;
 }
 
-static void mime_walk(const char *p, const char *e, int *html, int *att, int depth)
+static void mime_walk(const char *p, const char *e, int *html, int *att, int depth, attpick_t *pick)
 {
     const char *he, *body = hdr_body(p, e, &he);
     char ct[512], disp[512], type[96], dtype[32], name[256], bnd[200];
@@ -792,22 +795,42 @@ static void mime_walk(const char *p, const char *e, int *html, int *att, int dep
         const char *q = body, *start = NULL;
         size_t bl;
         char delim[210];
-        param_get(ct, "boundary", bnd, sizeof(bnd));
-        if (!bnd[0] || depth > 8)
+        if (!param_get(ct, "boundary", bnd, sizeof(bnd)) || depth > 8)
             return;
         bl = (size_t)snprintf(delim, sizeof(delim), "--%s", bnd);
         while (q < e)
         {
-            const char *eol = (const char *)memchr(q, '\n', (size_t)(e - q));
+            const char *eol = (const char *)memchr(q, '\n', (size_t)(e - q)), *r, *pe;
+            int last = 0;
             if (!eol)
                 eol = e;
             if ((size_t)(eol - q) >= bl && memcmp(q, delim, bl) == 0)
             {
-                if (start)
-                    mime_walk(start, q, html, att, depth + 1);
-                if ((size_t)(eol - q) >= bl + 2 && q[bl] == '-' && q[bl + 1] == '-')
-                    return;
-                start = eol < e ? eol + 1 : e;
+                r = q + bl;
+                if (eol - r >= 2 && r[0] == '-' && r[1] == '-')
+                {
+                    r += 2;
+                    last = 1;
+                }
+                while (r < eol && (*r == ' ' || *r == '\t'))
+                    ++r;
+                if (r < eol && *r == '\r' && r + 1 == eol)
+                    ++r;
+                if (r == eol)
+                {
+                    if (start)
+                    {
+                        pe = q;
+                        if (pe > start && pe[-1] == '\n')
+                            --pe;
+                        if (pe > start && pe[-1] == '\r')
+                            --pe;
+                        mime_walk(start, pe, html, att, depth + 1, pick);
+                    }
+                    if (last)
+                        return;
+                    start = eol < e ? eol + 1 : e;
+                }
             }
             q = eol + 1;
         }
@@ -818,7 +841,15 @@ static void mime_walk(const char *p, const char *e, int *html, int *att, int dep
         param_get(ct, "name", name, sizeof(name));
     if (strcmp(dtype, "attachment") == 0 || strcmp(type, "message/rfc822") == 0
         || (strcmp(dtype, "inline") != 0 && name[0] && strncmp(type, "text/", 5) != 0))
+    {
+        if (pick && *att == pick->want)
+        {
+            pick->b = body;
+            pick->e = e;
+            hdr_get(p, he, "Content-Transfer-Encoding", pick->cte, sizeof(pick->cte));
+        }
         ++*att;
+    }
     else if (strcmp(type, "text/html") == 0)
         *html = 1;
 }
@@ -1200,7 +1231,7 @@ static void ml_item(const wchar_t *dir, const char *id, int first)
     hdr_get(t, he, "Subject", raw, sizeof(raw));
     hdr_decode(raw, dec, sizeof(dec));
     ols_jstr(dec);
-    mime_walk(t, t + len, &html, &att, 0);
+    mime_walk(t, t + len, &html, &att, 0, NULL);
     printf(",\"size\":%llu,\"html\":%s,\"attachments\":%d}", (unsigned long long)len, html ? "true" : "false", att);
     free(t);
 }
@@ -1237,6 +1268,86 @@ static int ml_remove(const wchar_t *root, const char *id)
         return GetLastError() == ERROR_FILE_NOT_FOUND ? 2 : 1;
     }
     printf("removed %s\n", id);
+    return 0;
+}
+
+static size_t qp_dec(const char *s, size_t n, char *out)
+{
+    size_t i = 0, o = 0;
+    while (i < n)
+    {
+        if (s[i] == '=' && i + 1 < n && s[i + 1] == '\n')
+            i += 2;
+        else if (s[i] == '=' && i + 2 < n && s[i + 1] == '\r' && s[i + 2] == '\n')
+            i += 3;
+        else if (s[i] == '=' && i + 2 < n && hexv(s[i + 1]) >= 0 && hexv(s[i + 2]) >= 0)
+        {
+            out[o++] = (char)(hexv(s[i + 1]) * 16 + hexv(s[i + 2]));
+            i += 3;
+        }
+        else
+            out[o++] = s[i++];
+    }
+    return o;
+}
+
+static int ml_save(const wchar_t *root, const char *id, const char *idx, const char *file)
+{
+    static const char zone[] = "[ZoneTransfer]\r\nZoneId=3\r\n";
+    wchar_t dir[MAX_PATH], path[MAX_PATH], out[MAX_PATH], zf[MAX_PATH + 20];
+    char *t = NULL, *buf, *end, cte[32];
+    size_t len = 0, n, o;
+    int html = 0, att = 0, r;
+    long want = idx && *idx ? strtol(idx, &end, 10) : -1;
+    attpick_t pick;
+    if (!ml_id_ok(id) || want < 0 || want > 9999 || *end)
+    {
+        fprintf(stderr, "use a mail id from openlitespeed --mail list and an attachment number from 0\n");
+        return 2;
+    }
+    if (!file[0] || MultiByteToWideChar(CP_UTF8, 0, file, -1, out, MAX_PATH) <= 0)
+    {
+        fprintf(stderr, "use a file name of at most %d characters\n", MAX_PATH - 1);
+        return 2;
+    }
+    ml_dir(root, dir);
+    ml_path(dir, id, L".eml", path);
+    if (ml_read(path, &t, &len) != 0)
+    {
+        fprintf(stderr, "there is no mail %s\n", id);
+        return 2;
+    }
+    memset(&pick, 0, sizeof(pick));
+    pick.want = (int)want;
+    mime_walk(t, t + len, &html, &att, 0, &pick);
+    if (!pick.b || (buf = (char *)malloc((size_t)(pick.e - pick.b) + 1)) == NULL)
+    {
+        free(t);
+        fprintf(stderr, pick.b ? "out of memory\n" : "mail %s has no attachment %ld\n", id, want);
+        return pick.b ? 1 : 2;
+    }
+    n = (size_t)(pick.e - pick.b);
+    mime_type(pick.cte, cte, sizeof(cte));
+    if (strcmp(cte, "base64") == 0)
+        o = b64_dec(pick.b, n, (unsigned char *)buf);
+    else if (strcmp(cte, "quoted-printable") == 0)
+        o = qp_dec(pick.b, n, buf);
+    else
+    {
+        memcpy(buf, pick.b, n);
+        o = n;
+    }
+    r = ols_write_wfile(out, buf, o, 0);
+    free(buf);
+    free(t);
+    if (r != 0)
+    {
+        fprintf(stderr, "cannot write %ls (error %lu)\n", out, GetLastError());
+        return 1;
+    }
+    swprintf(zf, MAX_PATH + 20, L"%s:Zone.Identifier", out);
+    ols_write_wfile(zf, zone, sizeof(zone) - 1, 0);
+    printf("saved %ls\n", out);
     return 0;
 }
 
@@ -1424,6 +1535,8 @@ int ols_mail_main(int argc, char **argv)
         return ml_list(root);
     if (strcmp(act, "remove") == 0 && argc >= 2)
         return ml_remove(root, argv[1]);
+    if (strcmp(act, "save") == 0 && argc >= 4)
+        return ml_save(root, argv[1], argv[2], argv[3]);
     if (strcmp(act, "clear") == 0)
         return ml_clear(root);
     if (strcmp(act, "status") == 0)
@@ -1489,7 +1602,7 @@ int ols_mail_main(int argc, char **argv)
         printf("Mail catcher off\n");
         return 0;
     }
-    fprintf(stderr, "usage: openlitespeed --mail on | off | status | list | remove <id> | clear |\n"
+    fprintf(stderr, "usage: openlitespeed --mail on | off | status | list | remove <id> | save <id> <n> <file> | clear |\n"
                     "       sendmail [-t] [-i] [-f <from>] [<recipient>...]\n");
     return 2;
 }
