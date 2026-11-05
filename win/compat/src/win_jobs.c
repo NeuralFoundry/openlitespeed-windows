@@ -371,18 +371,13 @@ static int jb_spawn(runjob_t *j)
     PROCESS_INFORMATION pi;
     HANDLE rd = NULL, wr = NULL, nul;
     const char *from;
-    size_t n;
     int ok;
     jb_ini(s_root, ini);
     if (jb_site_dir(s_root, j->site, dir) != 0 || GetSystemDirectoryW(sys, MAX_PATH) == 0)
         return -1;
-    if (ols_site_php(ini, j->site, sp, MAX_PATH) == 0 && GetFullPathNameW(sp, MAX_PATH, php, NULL))
-    {
-        n = wcslen(php);
-        while (n > 3 && php[n - 1] == L'\\')
-            php[--n] = 0;
-    }
-    else if (ols_php_current(s_root, php) != 0)
+    if (ols_site_php(s_root, ini, j->site, sp, MAX_PATH) == 0)
+        wcscpy(php, sp);
+    else if (ols_php_current(s_root, sp) != 0 || !ols_php_usable(s_root, sp, php))
         php[0] = 0;
     if (php[0] && GetFileAttributesW(php) == INVALID_FILE_ATTRIBUTES)
         php[0] = 0;

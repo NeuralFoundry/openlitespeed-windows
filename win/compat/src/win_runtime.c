@@ -1,4 +1,6 @@
 #include "compat_internal.h"
+#include <aclapi.h>
+#include <sddl.h>
 #include <openssl/sha.h>
 #include "phpdetect.h"
 
@@ -408,6 +410,8 @@ int ols_php_current(const wchar_t *root, wchar_t *dir)
     return dir[0] ? 0 : -1;
 }
 
+static int s_pdone, s_svc = -1;
+
 static void php_detect_all(const wchar_t *root)
 {
     wchar_t laragon[MAX_PATH], xampp[MAX_PATH], ini[MAX_PATH], extra[MAX_PATH], cur[MAX_PATH];
@@ -422,6 +426,111 @@ static void php_detect_all(const wchar_t *root)
     if (ols_php_current(root, cur) == 0)
         phpd_add(cur, L"Current", root);
     qsort(phpd_list, phpd_count, sizeof(phpd_t), phpd_cmp);
+    s_pdone = 1;
+}
+
+static int rt_dir_open1(const wchar_t *dir)
+{
+    static const wchar_t *const wide_sids[] = { L"S-1-1-0", L"S-1-5-11", L"S-1-5-32-545", L"S-1-5-4", L"S-1-5-6", L"S-1-5-80-0" };
+    const DWORD wr = FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_DELETE_CHILD | DELETE | WRITE_DAC | WRITE_OWNER
+                     | GENERIC_WRITE | GENERIC_ALL;
+    PSECURITY_DESCRIPTOR sd = NULL;
+    PACL dacl = NULL;
+    ACL_SIZE_INFORMATION ai;
+    BYTE svc[SECURITY_MAX_SID_SIZE];
+    DWORD sn = sizeof(svc), dn = 64, i, k;
+    wchar_t dom[64];
+    SID_NAME_USE use;
+    int hasvc = LookupAccountNameW(NULL, L"NT SERVICE\\OpenLiteSpeed", svc, &sn, dom, &dn, &use), r = 0;
+    if (GetNamedSecurityInfoW(dir, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, NULL, NULL, &dacl, NULL, &sd) != ERROR_SUCCESS)
+        return 0;
+    if (!dacl)
+        r = 1;
+    else if (GetAclInformation(dacl, &ai, sizeof(ai), AclSizeInformation))
+        for (i = 0; i < ai.AceCount && !r; ++i)
+        {
+            ACCESS_ALLOWED_ACE *a;
+            PSID s;
+            if (!GetAce(dacl, i, (void **)&a) || a->Header.AceType != ACCESS_ALLOWED_ACE_TYPE || !(a->Mask & wr))
+                continue;
+            s = (PSID)&a->SidStart;
+            r = hasvc && EqualSid(s, (PSID)svc);
+            for (k = 0; k < sizeof(wide_sids) / sizeof(wide_sids[0]) && !r; ++k)
+            {
+                PSID w = NULL;
+                if (ConvertStringSidToSidW(wide_sids[k], &w))
+                {
+                    r = EqualSid(s, w);
+                    LocalFree(w);
+                }
+            }
+        }
+    LocalFree(sd);
+    return r;
+}
+
+int ols_dir_open(const wchar_t *dir)
+{
+    wchar_t ext[MAX_PATH];
+    swprintf(ext, MAX_PATH, L"%s\\ext", dir);
+    return rt_dir_open1(dir) || (rt_exists(ext) && rt_dir_open1(ext));
+}
+
+int ols_php_usable(const wchar_t *root, const wchar_t *dir, wchar_t *full)
+{
+    int i;
+    size_t n;
+    if (!dir || !dir[0] || !GetFullPathNameW(dir, MAX_PATH, full, NULL))
+        return 0;
+    n = wcslen(full);
+    while (n > 3 && (full[n - 1] == L'\\' || full[n - 1] == L'/'))
+        full[--n] = 0;
+    if (!s_pdone)
+    {
+        php_detect_all(root);
+        s_pdone = 1;
+    }
+    if (s_svc < 0)
+        s_svc = ols_service_mode() != 0;
+    for (i = 0; i < phpd_count; ++i)
+        if (_wcsicmp(phpd_list[i].dir, full) == 0)
+            return !s_svc || (wcscmp(phpd_list[i].source, L"Current") != 0 && wcscmp(phpd_list[i].source, L"Custom") != 0)
+                   || !ols_dir_open(full);
+    return 0;
+}
+
+void ols_php_warn_open(const wchar_t *root)
+{
+    static wchar_t dirs[PHPD_MAX + 2][MAX_PATH];
+    wchar_t ini[MAX_PATH], sect[16384], *e, full[MAX_PATH], base[MAX_PATH];
+    size_t bl;
+    int nd = 0, i, k;
+    if (ols_php_current(root, dirs[0]) == 0 && GetFullPathNameW(dirs[0], MAX_PATH, full, NULL))
+        wcscpy(dirs[nd++], full);
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    if (GetPrivateProfileSectionW(L"sitephp", sect, 16384, ini) > 0)
+        for (e = sect; *e && nd < PHPD_MAX + 2; e += wcslen(e) + 1)
+        {
+            wchar_t *eq = wcschr(e, L'=');
+            if (eq && GetFullPathNameW(eq + 1, MAX_PATH, full, NULL))
+                wcscpy(dirs[nd++], full);
+        }
+    swprintf(base, MAX_PATH, L"%s\\", root);
+    bl = wcslen(base);
+    for (i = 0; i < nd; ++i)
+    {
+        size_t n = wcslen(dirs[i]);
+        while (n > 3 && dirs[i][n - 1] == L'\\')
+            dirs[i][--n] = 0;
+        for (k = 0; k < i && _wcsicmp(dirs[k], dirs[i]) != 0; ++k)
+            ;
+        if (k < i || _wcsnicmp(dirs[i], base, bl) == 0 || !rt_exists(dirs[i]) || !ols_dir_open(dirs[i]))
+            continue;
+        fprintf(stderr,
+                "warning: users who are not administrators can change %ls, and the service runs PHP from it; use a PHP "
+                "version installed by OpenLiteSpeed or remove their write access to that folder\n",
+                dirs[i]);
+    }
 }
 
 int ols_php_known(const wchar_t *root, const wchar_t *dir, wchar_t *full)
@@ -1787,7 +1896,7 @@ int ols_php_mail_sync(const wchar_t *root, int on, int *changed)
 
 typedef struct
 {
-    const wchar_t *ini;
+    const wchar_t *root, *ini;
     int def, count[PHPD_MAX];
 } phpuse_t;
 
@@ -1804,7 +1913,7 @@ static void php_count_site(void *ctx, const char *tmpl, const char *member, cons
             ++u->count[u->def];
         return;
     }
-    if (strncmp(tmpl, "devsites-", 9) != 0 || ols_site_php(u->ini, member, sp, MAX_PATH) != 0
+    if (strncmp(tmpl, "devsites-", 9) != 0 || ols_site_php(u->root, u->ini, member, sp, MAX_PATH) != 0
         || !GetFullPathNameW(sp, MAX_PATH, full, NULL))
         return;
     n = wcslen(full);
@@ -1820,7 +1929,7 @@ static void php_count_site(void *ctx, const char *tmpl, const char *member, cons
 
 static int php_list(const wchar_t *root)
 {
-    wchar_t ini[MAX_PATH], cur[MAX_PATH];
+    wchar_t ini[MAX_PATH], cur[MAX_PATH], full[MAX_PATH];
     phpuse_t u;
     char ver[32], src[24];
     int i, j, st;
@@ -1829,6 +1938,7 @@ static int php_list(const wchar_t *root)
     php_detect_all(root);
     swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
     memset(&u, 0, sizeof(u));
+    u.root = root;
     u.ini = ini;
     u.def = -1;
     for (i = 0; i < phpd_count && cur[0]; ++i)
@@ -1851,7 +1961,7 @@ static int php_list(const wchar_t *root)
         ols_jstr(src);
         printf(",\"xdebug\":\"%s\",\"xdebugVersion\":", st == 2 ? "on" : st == 1 ? "off" : "missing");
         ols_jstr(ver);
-        printf("}");
+        printf(",\"usable\":%s}", ols_php_usable(root, p->dir, full) ? "true" : "false");
     }
     printf("]\n");
     return 0;
@@ -2043,14 +2153,15 @@ int ols_site_node(const wchar_t *root, const wchar_t *ini, const char *site, con
     if (!s_ndone)
         node_detect(root);
     if (site && MultiByteToWideChar(CP_UTF8, 0, site, -1, wn, 64) > 0
-        && GetPrivateProfileStringW(L"sitenode", wn, L"", v, MAX_PATH, ini) && v[0] && GetFullPathNameW(v, MAX_PATH, full, NULL)
-        && rt_exists(full))
-    {
-        wcsncpy(out, full, n - 1);
-        out[n - 1] = 0;
-        *from = "site";
-        return 0;
-    }
+        && GetPrivateProfileStringW(L"sitenode", wn, L"", v, MAX_PATH, ini) && v[0] && GetFullPathNameW(v, MAX_PATH, full, NULL))
+        for (i = 0; i < s_nnode; ++i)
+            if (_wcsicmp(s_node[i].exe, full) == 0)
+            {
+                wcsncpy(out, s_node[i].exe, n - 1);
+                out[n - 1] = 0;
+                *from = "site";
+                return 0;
+            }
     if (dir && dir[0] && (major = node_wanted_major(dir)) > 0)
         for (i = 0; i < s_nnode; ++i)
             if (s_node[i].major == major)

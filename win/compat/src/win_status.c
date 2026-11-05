@@ -205,7 +205,7 @@ static void site_json(void *ctx, const char *tmpl, const char *member, const cha
         swprintf(f, MAX_PATH, L"%s\\%s\\package.json", o->www, wn);
         pkg = GetFileAttributesW(f) != INVALID_FILE_ATTRIBUTES;
         if (strncmp(tmpl, "devsites-", 9) == 0)
-            ols_site_php(o->ini, member, sp, MAX_PATH);
+            ols_site_php(o->root, o->ini, member, sp, MAX_PATH);
     }
     if (strcmp(type, "tool") != 0 && strcmp(type, "proxy") != 0)
     {

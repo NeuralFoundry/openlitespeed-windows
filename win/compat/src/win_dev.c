@@ -567,7 +567,7 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
     for (i = 0; i < nsp; ++i)
     {
         spg[i] = -1;
-        if (!ols_php_known(root, spv[i], full) || (cur[0] && _wcsicmp(full, cur) == 0))
+        if (!ols_php_usable(root, spv[i], full) || (cur[0] && _wcsicmp(full, cur) == 0))
             continue;
         for (g = 0; g < ng && _wcsicmp(gdir[g], full) != 0; ++g)
             ;
@@ -1202,14 +1202,19 @@ static int write_app_starter(const wchar_t *dir, const char *name, const char *t
     return n > 0 && (size_t)n < sizeof(text) ? write_file(f, text, (size_t)n) : -1;
 }
 
-int ols_site_php(const wchar_t *ini, const char *site, wchar_t *dir, size_t n)
+int ols_site_php(const wchar_t *root, const wchar_t *ini, const char *site, wchar_t *dir, size_t n)
 {
-    wchar_t wn[64];
+    wchar_t wn[64], v[MAX_PATH];
     dir[0] = 0;
-    if (MultiByteToWideChar(CP_UTF8, 0, site, -1, wn, 64) <= 0)
+    if (n < MAX_PATH || MultiByteToWideChar(CP_UTF8, 0, site, -1, wn, 64) <= 0)
         return -1;
-    GetPrivateProfileStringW(L"sitephp", wn, L"", dir, (DWORD)n, ini);
-    return dir[0] ? 0 : -1;
+    GetPrivateProfileStringW(L"sitephp", wn, L"", v, MAX_PATH, ini);
+    if (!v[0] || !ols_php_usable(root, v, dir))
+    {
+        dir[0] = 0;
+        return -1;
+    }
+    return 0;
 }
 
 int ols_site_main(int argc, char **argv)

@@ -829,22 +829,33 @@ static bool job_name_ok(const std::string &n)
     return true;
 }
 
-static bool site_runtime(const std::string &name, std::wstring &php, std::wstring &node)
+static void term_runtime(const std::string &name, std::wstring &php, std::wstring &node)
 {
     std::string out;
-    if (run(L"--status", &out, NULL) != 0)
-        return false;
-    size_t p = out.find("\"sites\":[");
-    if (p == std::string::npos)
-        return false;
-    for (const auto &m : parse_list(out.substr(p + 8)))
-        if (m.s("name") == name)
+    size_t p;
+    php.clear();
+    node.clear();
+    if (run(L"--status", &out, NULL) == 0)
+    {
+        if (!name.empty() && (p = out.find("\"sites\":[")) != std::string::npos)
+            for (const auto &m : parse_list(out.substr(p + 8)))
+                if (m.s("name") == name)
+                {
+                    php = wide(m.s("php"));
+                    node = wide(m.s("node"));
+                }
+        if (node.empty() && (p = out.find("\"node\":{")) != std::string::npos)
         {
-            php = wide(m.s("php"));
-            node = wide(m.s("node"));
-            return true;
+            Msg m;
+            size_t i = p + 7;
+            if (parse_at(out, i, m))
+                node = wide(m.s("exe"));
         }
-    return false;
+    }
+    if (php.empty() && run(L"--php list", &out, NULL) == 0)
+        for (const auto &m : parse_list(json_part(out)))
+            if (m.b("default") && m.b("usable"))
+                php = wide(m.s("dir"));
 }
 
 static bool pick_folder(const std::wstring &start, std::wstring &out)
@@ -881,7 +892,7 @@ static int recycle(const std::wstring &dir)
     return r == 0 && GetFileAttributesW(dir.c_str()) == INVALID_FILE_ATTRIBUTES ? 1 : 0;
 }
 
-static bool open_terminal(const std::wstring &cwd, std::wstring php = std::wstring(), std::wstring node = std::wstring())
+static bool open_terminal(const std::wstring &cwd, const std::wstring &php, const std::wstring &node)
 {
     wchar_t sys[MAX_PATH];
     std::wstring path, env, exe, cmd;
@@ -891,10 +902,6 @@ static bool open_terminal(const std::wstring &cwd, std::wstring php = std::wstri
     wchar_t title[] = L"OpenLiteSpeed";
     if (GetSystemDirectoryW(sys, MAX_PATH) == 0)
         return false;
-    if (php.empty())
-        php = current_php();
-    if (node.empty())
-        node = ini_str(L"node", L"bin", L"");
     if (!php.empty())
         add.push_back(php);
     if (!node.empty() && node.size() > 9)
@@ -1307,7 +1314,7 @@ static Result handle(const Msg &m)
         else
         {
             std::wstring php, node;
-            site_runtime(m.s("name"), php, node);
+            term_runtime(m.s("name"), php, node);
             if (!open_terminal(dir, php, node))
                 return fail("The terminal could not be opened.");
         }
@@ -1346,8 +1353,9 @@ static Result handle(const Msg &m)
     }
     if (a == "terminal")
     {
-        std::wstring www = www_dir();
-        if (!open_terminal(plain_dir(www) ? www : std::wstring(g_root)))
+        std::wstring www = www_dir(), php, node;
+        term_runtime(std::string(), php, node);
+        if (!open_terminal(plain_dir(www) ? www : std::wstring(g_root), php, node))
             return fail("The terminal could not be opened.");
         return Result();
     }

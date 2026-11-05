@@ -149,6 +149,7 @@ static int svc_wait(SC_HANDLE svc, DWORD want, int seconds)
 static int control_service(SC_HANDLE svc, const char *cmd)
 {
     SERVICE_STATUS ss;
+    wchar_t root[MAX_PATH];
     DWORD state = svc_state(svc, NULL);
     int stop = strcmp(cmd, "stop") == 0 || strcmp(cmd, "restart") == 0;
     int start = strcmp(cmd, "start") == 0 || strcmp(cmd, "restart") == 0;
@@ -222,6 +223,8 @@ static int control_service(SC_HANDLE svc, const char *cmd)
             return 1;
         }
         printf("started (service)\n");
+        if (root_path(root, MAX_PATH) == 0)
+            ols_php_warn_open(root);
     }
     return 0;
 }
@@ -859,5 +862,6 @@ int ols_win_service_install(int install)
         return 1;
     }
     printf("service installed: %ls (runs as %ls)\n", OLS_SERVICE_NAME, OLS_SERVICE_ACCOUNT);
+    ols_php_warn_open(root);
     return 0;
 }

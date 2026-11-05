@@ -91,7 +91,7 @@ Download `OpenLiteSpeed-1.9.4-win64-setup.exe` from [Releases](https://github.co
 
 Running setup again switches the edition. Switching to the web server only keeps your databases. The full stack edition runs with the tray app, so the Windows service option is for the web server only edition.
 
-Setup limits the install folder to your account, administrators and the system, so other users of the computer cannot change the programs or the configuration.
+Setup limits the install folder to your account, administrators and the system, so other users of the computer cannot change the programs or the configuration. It does not change the folders of Laragon and XAMPP, whose PHP folders other users can often change; with the Windows service that lets them run code as the service account, so the service install warns about such PHP folders.
 
 | Setup type | Install folder | Projects folder | Started by |
 |---|---|---|---|
