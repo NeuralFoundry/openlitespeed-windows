@@ -752,6 +752,39 @@ static bool b64_decode(const std::string &in, std::string &out)
     return true;
 }
 
+static std::wstring attach_name(std::string n)
+{
+    for (char &c : n)
+        if (strchr("\\/:*?\"<>|", c) || (unsigned char)c < 0x20)
+            c = '_';
+    if (n.empty() || n.size() > 200)
+        n = "attachment";
+    std::wstring w = wide(n);
+    for (wchar_t &c : w)
+        if (c == 0x200e || c == 0x200f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069))
+            c = L'_';
+    return w;
+}
+
+static bool save_marked(const std::wstring &file, const std::string &bytes)
+{
+    static const char zone[] = "[ZoneTransfer]\r\nZoneId=3\r\n";
+    HANDLE h = CreateFileW(file.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    DWORD w = 0;
+    bool ok = h != INVALID_HANDLE_VALUE && WriteFile(h, bytes.data(), (DWORD)bytes.size(), &w, NULL) && w == bytes.size();
+    if (h != INVALID_HANDLE_VALUE)
+        CloseHandle(h);
+    if (!ok)
+        return false;
+    h = CreateFileW((file + L":Zone.Identifier").c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE)
+    {
+        WriteFile(h, zone, sizeof(zone) - 1, &w, NULL);
+        CloseHandle(h);
+    }
+    return true;
+}
+
 static std::wstring argq(const std::wstring &a)
 {
     std::wstring o = L"\"";
@@ -1303,23 +1336,13 @@ static Result handle(const Msg &m)
     }
     if (a == "mail.save")
     {
-        std::string n = m.s("name"), d = m.s("data"), bytes;
+        std::string bytes;
         std::wstring file;
-        for (char &c : n)
-            if (strchr("\\/:*?\"<>|", c) || (unsigned char)c < 0x20)
-                c = '_';
-        if (n.empty() || n.size() > 200)
-            n = "attachment";
-        if (!b64_decode(d, bytes))
+        if (!b64_decode(m.s("data"), bytes))
             return fail("The attachment could not be read.");
-        if (!save_as(wide(n), file))
+        if (!save_as(attach_name(m.s("name")), file))
             return Result();
-        HANDLE h = CreateFileW(file.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-        DWORD w = 0;
-        bool ok = h != INVALID_HANDLE_VALUE && WriteFile(h, bytes.data(), (DWORD)bytes.size(), &w, NULL) && w == bytes.size();
-        if (h != INVALID_HANDLE_VALUE)
-            CloseHandle(h);
-        return ok ? Result() : fail("The attachment could not be saved.");
+        return save_marked(file, bytes) ? Result() : fail("The attachment could not be saved.");
     }
     if (a == "terminal")
     {
