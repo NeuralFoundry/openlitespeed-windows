@@ -1217,7 +1217,7 @@ td code { font: 12px var(--code); overflow-wrap: anywhere; }
       if (j.running) end.append(button("Stop", "small", () => jobAct("job.do", { name: j.name, op: "stop" }, "Stopping " + j.name)), " ",
         button("Restart", "small", () => jobAct("job.do", { name: j.name, op: "restart" }, "Restarting " + j.name)));
       else end.append(button("Start", "small", () => jobAct("job.do", { name: j.name, op: "start" }, "Starting " + j.name)));
-      end.append(" ", button("Log", "small", () => { $("dlg-jobs").close(); logId = "job:" + j.site + "-" + j.name; show("logs"); }),
+      end.append(" ", button("Log", "small", () => { $("dlg-jobs").close(); logId = "job:" + j.site + "." + j.name; show("logs"); }),
         " ", button("Remove", "small danger", async () => {
           $("dlg-jobs").close();
           const r = await ask({ title: "Remove the job " + j.name + "?", text: "It is stopped first. The log stays in logs\\jobs.", ok: "Remove", danger: true });

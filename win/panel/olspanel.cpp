@@ -1012,7 +1012,7 @@ static std::vector<LogFile> log_files()
             std::wstring fn = fd.cFileName;
             std::string n = utf8(fn.substr(0, fn.size() - 4));
             if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && n.size() <= 100
-                && n.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") == std::string::npos)
+                && n.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-.") == std::string::npos)
                 v.push_back({ "job:" + n, n + " job", r + L"\\logs\\jobs\\" + fn });
         }
         while (FindNextFileW(f, &fd));

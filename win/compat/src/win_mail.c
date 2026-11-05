@@ -626,63 +626,6 @@ static int ml_run(const wchar_t *root)
     return 0;
 }
 
-static int ml_sendmail(const wchar_t *root, int argc, char **argv)
-{
-    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
-    char from[256] = "", (*rcpt)[256] = (char (*)[256])calloc(MAIL_RCPTS, 256), *buf;
-    size_t cap = 65536, len = 0;
-    DWORD got;
-    int i, nrcpt = 0, r;
-    if (!rcpt || (buf = (char *)malloc(cap)) == NULL)
-        return 1;
-    for (i = 0; i < argc; ++i)
-    {
-        const char *a = argv[i];
-        if ((strcmp(a, "-f") == 0 || strcmp(a, "-F") == 0) && i + 1 < argc)
-        {
-            if (a[1] == 'f')
-                snprintf(from, sizeof(from), "%s", argv[i + 1]);
-            ++i;
-        }
-        else if (strncmp(a, "-f", 2) == 0)
-            snprintf(from, sizeof(from), "%s", a + 2);
-        else if (a[0] != '-' && nrcpt < MAIL_RCPTS)
-            snprintf(rcpt[nrcpt++], 256, "%s", a);
-    }
-    while (ReadFile(in, buf + len, (DWORD)(cap - len), &got, NULL) && got)
-    {
-        len += got;
-        if (len > MAIL_LIMIT)
-        {
-            fprintf(stderr, "the message is larger than 25 MB\n");
-            free(buf);
-            free(rcpt);
-            return 1;
-        }
-        if (len == cap)
-        {
-            char *g = (char *)realloc(buf, cap * 2);
-            if (!g)
-            {
-                free(buf);
-                free(rcpt);
-                return 1;
-            }
-            buf = g;
-            cap *= 2;
-        }
-    }
-    r = ml_store(root, buf, len, from, rcpt, nrcpt, NULL);
-    free(buf);
-    free(rcpt);
-    if (r != 0)
-    {
-        fprintf(stderr, "the message could not be stored\n");
-        return 1;
-    }
-    return 0;
-}
-
 static int ml_read(const wchar_t *path, char **out, size_t *len)
 {
     HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
@@ -1060,6 +1003,144 @@ static int addr_split(const char *v, char (*out)[512], int max)
         }
     }
     return n;
+}
+
+static void addr_bare(const char *in, char *out, size_t n)
+{
+    const char *lt = strrchr(in, '<'), *gt;
+    size_t i = 0;
+    if (lt && (gt = strchr(lt, '>')) != NULL)
+        for (++lt; lt < gt && i + 1 < n; ++lt)
+            out[i++] = *lt;
+    else
+    {
+        while (*in == ' ' || *in == '\t')
+            ++in;
+        while (*in && *in != ' ' && *in != '\t' && i + 1 < n)
+            out[i++] = *in++;
+    }
+    out[i] = 0;
+}
+
+static size_t strip_bcc(char *buf, size_t len)
+{
+    const char *he;
+    char *p, *e, *nl;
+    hdr_body(buf, buf + len, &he);
+    for (p = buf; p < he;)
+    {
+        nl = (char *)memchr(p, '\n', (size_t)(he - p));
+        e = nl ? nl + 1 : (char *)he;
+        while (e < he && (*e == ' ' || *e == '\t'))
+        {
+            nl = (char *)memchr(e, '\n', (size_t)(he - e));
+            e = nl ? nl + 1 : (char *)he;
+        }
+        if (e - p > 4 && _strnicmp(p, "Bcc:", 4) == 0)
+        {
+            memmove(p, e, len - (size_t)(e - buf) + 1);
+            len -= (size_t)(e - p);
+            he -= e - p;
+            continue;
+        }
+        p = e;
+    }
+    return len;
+}
+
+static int ml_sendmail(const wchar_t *root, int argc, char **argv)
+{
+    static const char *const hdrs[] = { "To", "Cc", "Bcc" };
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    wchar_t ini[MAX_PATH];
+    char from[256] = "", (*rcpt)[256] = (char (*)[256])calloc(MAIL_RCPTS, 256), *buf, raw[8192], one[256];
+    char (*list)[512] = (char (*)[512])calloc(MAIL_RCPTS, 512);
+    size_t cap = 65536, len = 0;
+    const char *he;
+    DWORD got;
+    int i, j, k, n, nrcpt = 0, t = 0, r;
+    if (!rcpt || !list || (buf = (char *)malloc(cap)) == NULL)
+        return 1;
+    for (i = 0; i < argc; ++i)
+    {
+        const char *a = argv[i];
+        if (strcmp(a, "-bs") == 0)
+        {
+            ml_ini(root, ini);
+            fprintf(stderr, "sendmail -bs is not supported; send through SMTP to 127.0.0.1 port %d\n", ml_port(ini));
+            free(buf);
+            free(rcpt);
+            free(list);
+            return 2;
+        }
+        if (strcmp(a, "-t") == 0)
+            t = 1;
+        else if ((strcmp(a, "-f") == 0 || strcmp(a, "-F") == 0) && i + 1 < argc)
+        {
+            if (a[1] == 'f')
+                snprintf(from, sizeof(from), "%s", argv[i + 1]);
+            ++i;
+        }
+        else if (strncmp(a, "-f", 2) == 0)
+            snprintf(from, sizeof(from), "%s", a + 2);
+        else if (a[0] != '-' && nrcpt < MAIL_RCPTS)
+            snprintf(rcpt[nrcpt++], 256, "%s", a);
+    }
+    while (ReadFile(in, buf + len, (DWORD)(cap - len), &got, NULL) && got)
+    {
+        len += got;
+        if (len > MAIL_LIMIT)
+        {
+            fprintf(stderr, "the message is larger than 25 MB\n");
+            free(buf);
+            free(rcpt);
+            free(list);
+            return 1;
+        }
+        if (len == cap)
+        {
+            char *g = (char *)realloc(buf, cap * 2);
+            if (!g)
+            {
+                free(buf);
+                free(rcpt);
+                free(list);
+                return 1;
+            }
+            buf = g;
+            cap *= 2;
+        }
+    }
+    buf[len] = 0;
+    if (t || !nrcpt)
+    {
+        hdr_body(buf, buf + len, &he);
+        for (k = 0; k < 3; ++k)
+        {
+            if (!hdr_get(buf, he, hdrs[k], raw, sizeof(raw)))
+                continue;
+            n = addr_split(raw, list, MAIL_RCPTS);
+            for (i = 0; i < n && nrcpt < MAIL_RCPTS; ++i)
+            {
+                addr_bare(list[i], one, sizeof(one));
+                for (j = 0; j < nrcpt && _stricmp(rcpt[j], one) != 0; ++j)
+                    ;
+                if (one[0] && j == nrcpt)
+                    strcpy(rcpt[nrcpt++], one);
+            }
+        }
+        len = strip_bcc(buf, len);
+    }
+    r = ml_store(root, buf, len, from, rcpt, nrcpt, NULL);
+    free(buf);
+    free(rcpt);
+    free(list);
+    if (r != 0)
+    {
+        fprintf(stderr, "the message could not be stored\n");
+        return 1;
+    }
+    return 0;
 }
 
 static void ml_item(const wchar_t *dir, const char *id, int first)

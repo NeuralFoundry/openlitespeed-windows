@@ -91,7 +91,22 @@ static void jb_logpath(const wchar_t *root, const char *site, const char *name, 
     wchar_t ws[64], wn[40];
     MultiByteToWideChar(CP_UTF8, 0, site, -1, ws, 64);
     MultiByteToWideChar(CP_UTF8, 0, name, -1, wn, 40);
-    swprintf(out, MAX_PATH, L"%s\\logs\\jobs\\%s-%s.log", root, ws, wn);
+    swprintf(out, MAX_PATH, L"%s\\logs\\jobs\\%s.%s.log", root, ws, wn);
+}
+
+static void jb_old_log(const wchar_t *root, const char *site, const char *name, const wchar_t *log)
+{
+    wchar_t ws[64], wn[40], old[MAX_PATH], a[MAX_PATH + 4], b[MAX_PATH + 4];
+    if (GetFileAttributesW(log) != INVALID_FILE_ATTRIBUTES)
+        return;
+    MultiByteToWideChar(CP_UTF8, 0, site, -1, ws, 64);
+    MultiByteToWideChar(CP_UTF8, 0, name, -1, wn, 40);
+    swprintf(old, MAX_PATH, L"%s\\logs\\jobs\\%s-%s.log", root, ws, wn);
+    if (!MoveFileExW(old, log, 0))
+        return;
+    swprintf(a, MAX_PATH + 4, L"%s.1", old);
+    swprintf(b, MAX_PATH + 4, L"%s.1", log);
+    MoveFileExW(a, b, 0);
 }
 
 static int jb_site_dir(const wchar_t *root, const char *site, wchar_t *out)
@@ -423,6 +438,7 @@ static int jb_spawn(runjob_t *j)
     j->rd = rd;
     j->proc = pi.hProcess;
     j->pid = pi.dwProcessId;
+    jb_old_log(s_root, j->site, j->name, j->log);
     j->pump = CreateThread(NULL, 65536, jb_pump_main, j, 0, NULL);
     ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);

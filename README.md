@@ -245,7 +245,7 @@ The mail is kept in `data\mail`, readable by your account only, up to the newest
 
 ## Background jobs
 
-**Background jobs** in the **More** menu of a site, or `openlitespeed --job add <site> <name> <command>`, runs a long running command such as `php artisan queue:work`, `php artisan schedule:work` or `npm run dev` in the site folder, with the PHP and Node.js versions of that site first on the `PATH`. Jobs start and stop with the web server. A job that ends is started again after 1, 2, 4 and up to 60 seconds, and after 10 restarts in 10 minutes it stays stopped. Stopping a job ends every process it started. The output goes to `logs\jobs\<site>-<name>.log`, which the Logs page shows. With the Windows service, the service account runs the jobs and the mail catcher, as it runs PHP.
+**Background jobs** in the **More** menu of a site, or `openlitespeed --job add <site> <name> <command>`, runs a long running command such as `php artisan queue:work`, `php artisan schedule:work` or `npm run dev` in the site folder, with the PHP and Node.js versions of that site first on the `PATH`. Jobs start and stop with the web server. A job that ends is started again after 1, 2, 4 and up to 60 seconds, and after 10 restarts in 10 minutes it stays stopped. Stopping a job ends every process it started. The output goes to `logs\jobs\<site>.<name>.log`, which the Logs page shows. With the Windows service, the service account runs the jobs and the mail catcher, as it runs PHP.
 
 ## Node.js
 
