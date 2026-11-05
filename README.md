@@ -235,6 +235,8 @@ The switch in the Xdebug column of the PHP page, or `openlitespeed --php xdebug 
 
 Xdebug starts with every request and connects to a debugger on `127.0.0.1:9003`. Without a debugger the request goes on at once and nothing is written to the logs. The opcache JIT is off while Xdebug is on and comes back when Xdebug is turned off. The settings are kept at the end of `php.ini`, and the web server reloads so they apply.
 
+Xdebug cannot be turned on while OpenLiteSpeed is installed as a Windows service. Any program on the computer that listens on port 9003 gets the debug session and can run PHP code as the service account, so turn Xdebug off before you install the service.
+
 **VS Code:** **More > Open in VS Code** on the Sites page opens the site folder in VS Code when it is installed. Start a PHP debug session that listens on port 9003, for example with the PHP Debug extension, and open the site in the browser.
 
 ## Mail catcher

@@ -1618,6 +1618,12 @@ static int php_xdebug(const wchar_t *root, const char *arg, const char *act)
         fprintf(stderr, "usage: openlitespeed --php xdebug <dir> on|off|status\n");
         return 2;
     }
+    if (strcmp(act, "on") == 0 && ols_service_mode() != 0)
+    {
+        fprintf(stderr, "Xdebug is not turned on while OpenLiteSpeed is installed as a Windows service: any program on this "
+                        "computer that listens on port 9003 could run PHP code as the service account\n");
+        return 2;
+    }
     if (php_dir_arg(root, arg, dir) != 0)
         return 2;
     swprintf(cgi, MAX_PATH, L"%s\\php-cgi.exe", dir);
