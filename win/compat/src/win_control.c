@@ -253,16 +253,22 @@ int ols_win_control(const char *cmd)
         return 1;
     }
     if (strcmp(cmd, "stop") == 0)
-        return signal_server(SIGTERM, "stop");
+    {
+        int r = signal_server(SIGTERM, "stop");
+        ols_dev_helpers(0);
+        return r;
+    }
     if (strcmp(cmd, "start") == 0)
     {
+        int r = 0;
         pid = read_pid();
         if (server_alive(pid))
-        {
             printf("already running, pid %d\n", (int)pid);
-            return 0;
-        }
-        return start_detached();
+        else
+            r = start_detached();
+        if (r == 0)
+            ols_dev_helpers(2);
+        return r;
     }
     if (strcmp(cmd, "reload") == 0 || strcmp(cmd, "graceful") == 0)
     {
@@ -291,10 +297,14 @@ int ols_win_control(const char *cmd)
     }
     if (strcmp(cmd, "restart") == 0)
     {
+        int r;
         pid = read_pid();
         if (server_alive(pid) && signal_server(SIGTERM, "stop") != 0)
             return 1;
-        return start_detached();
+        ols_dev_helpers(0);
+        if ((r = start_detached()) == 0)
+            ols_dev_helpers(2);
+        return r;
     }
     pid = read_pid();
     if (server_alive(pid))
@@ -304,6 +314,26 @@ int ols_win_control(const char *cmd)
     }
     printf("not running\n");
     return 3;
+}
+
+int ols_service_mode(void)
+{
+    int installed, r;
+    SC_HANDLE svc = open_service(SERVICE_QUERY_STATUS, &installed);
+    if (!installed)
+        return 0;
+    if (svc)
+    {
+        r = svc_state(svc, NULL) == SERVICE_RUNNING ? 2 : 1;
+        CloseServiceHandle(svc);
+        return r;
+    }
+    return server_alive(read_pid()) ? 2 : 1;
+}
+
+int ols_server_running(void)
+{
+    return ols_service_mode() == 2 || server_alive(read_pid());
 }
 
 static int wait_new_pid(pid_t old)
@@ -695,6 +725,14 @@ static int apply_acls(const wchar_t *root, const wchar_t *sid)
     }
     for_each_vhost_logs(root, sid ? sddl : NULL);
     if (reset_private(root, 0) != 0)
+        rc = -1;
+    swprintf(p, MAX_PATH, L"%s\\data", root);
+    if (sid)
+        CreateDirectoryW(p, NULL);
+    swprintf(p, MAX_PATH, L"%s\\data\\mail", root);
+    if (sid)
+        CreateDirectoryW(p, NULL);
+    if (GetFileAttributesW(p) != INVALID_FILE_ATTRIBUTES && set_dacl(p, sid ? sddl : NULL, 0) != 0)
         rc = -1;
     return rc;
 }

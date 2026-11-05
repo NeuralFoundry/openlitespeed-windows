@@ -83,6 +83,8 @@ add_library(olscompat STATIC
     "${COMPAT}/src/win_status.c"
     "${COMPAT}/src/win_json.c"
     "${COMPAT}/src/win_runtime.c"
+    "${COMPAT}/src/win_mail.c"
+    "${COMPAT}/src/win_jobs.c"
 )
 target_include_directories(olscompat PRIVATE "${OLS_TOP}/win/common")
 target_link_libraries(olscompat PUBLIC wepoll ws2_32 mswsock bcrypt ntdll advapi32 userenv iphlpapi synchronization dbghelp shell32 crypt32 version)

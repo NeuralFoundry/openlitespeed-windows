@@ -117,6 +117,10 @@ int main(int argc, char *argv[])
         return ols_composer_main(argc - 2, argv + 2);
     if (argc >= 2 && strcmp(argv[1], "--site") == 0)
         return ols_site_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--mail") == 0)
+        return ols_mail_main(argc - 2, argv + 2);
+    if (argc >= 2 && strcmp(argv[1], "--job") == 0)
+        return ols_job_main(argc - 2, argv + 2);
     if (argc >= 4 && strcmp(argv[1], "--set-port") == 0)
         return ols_set_port(argv[2], argv[3]);
     if (argc >= 2
@@ -151,6 +155,8 @@ int main(int argc, char *argv[])
         return ols_gen_cert(argv[2], argv[3], argc >= 5 ? argv[4] : "localhost");
     if (argc >= 4 && strcmp(argv[1], "--admin-password") == 0)
         return ols_set_admin_password(argv[2], argc >= 5 ? argv[4] : "admin", argv[3]);
+    if (argc == 2 && strcmp(argv[1], "-d") == 0 && ols_worker_no() == 0)
+        ols_dev_helpers(1);
     return serverMain(argc, argv);
 }
 

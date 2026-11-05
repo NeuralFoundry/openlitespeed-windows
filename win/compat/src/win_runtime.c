@@ -1680,6 +1680,105 @@ static int php_xdebug(const wchar_t *root, const char *arg, const char *act)
     return 0;
 }
 
+#define MAIL_BEGIN "; openlitespeed mail begin"
+#define MAIL_END "; openlitespeed mail end"
+
+static int ini_block(const wchar_t *dir, const char *begin, const char *end, const char *const *lines, int n, int *changed)
+{
+    wchar_t ini[MAX_PATH];
+    inidoc_t d, o;
+    int i, j, r;
+    *changed = 0;
+    swprintf(ini, MAX_PATH, L"%s\\php.ini", dir);
+    if (!lines && !rt_exists(ini))
+        return 0;
+    if ((lines && php_make_ini(dir) != 0) || doc_load(ini, &d) != 0)
+        return -1;
+    if (doc_load(ini, &o) != 0)
+    {
+        doc_free(&d);
+        return -1;
+    }
+    for (i = 0; i < d.n; ++i)
+        if (strcmp(skip_sp(d.line[i]), begin) == 0)
+        {
+            for (j = i + 1; j < d.n && strcmp(skip_sp(d.line[j]), end) != 0; ++j)
+                ;
+            doc_remove(&d, i, j < d.n ? j - i + 1 : 1);
+            --i;
+        }
+    if (lines)
+    {
+        doc_insert(&d, d.n, begin);
+        for (i = 0; i < n; ++i)
+            doc_insert(&d, d.n, lines[i]);
+        doc_insert(&d, d.n, end);
+    }
+    *changed = !doc_same(&d, &o);
+    r = *changed ? doc_save(ini, &d) : 0;
+    doc_free(&d);
+    doc_free(&o);
+    return r;
+}
+
+int ols_php_mail_sync(const wchar_t *root, int on, int *changed)
+{
+    static wchar_t used[PHPD_MAX + 2][MAX_PATH];
+    wchar_t exe[MAX_PATH], ini[MAX_PATH], base[MAX_PATH], sect[16384], *e, full[MAX_PATH];
+    char fexe[MAX_PATH * 3], esc[MAX_PATH * 6], line[MAX_PATH * 6 + 64], *q;
+    const char *lines[2];
+    const char *s;
+    int i, k, nu = 0, c, r = 0, use;
+    size_t bl;
+    *changed = 0;
+    if (!GetModuleFileNameW(NULL, exe, MAX_PATH) || WideCharToMultiByte(CP_UTF8, 0, exe, -1, fexe, sizeof(fexe), NULL, NULL) <= 0)
+        return -1;
+    if (!strchr(fexe, '\''))
+        snprintf(line, sizeof(line), "sendmail_path = '\"%s\" --mail sendmail'", fexe);
+    else
+    {
+        for (s = fexe, q = esc; *s; ++s)
+        {
+            if (*s == '\\' || *s == '"' || *s == '$')
+                *q++ = '\\';
+            *q++ = *s;
+        }
+        *q = 0;
+        snprintf(line, sizeof(line), "sendmail_path = \"\\\"%s\\\" --mail sendmail\"", esc);
+    }
+    lines[0] = "[mail function]";
+    lines[1] = line;
+    php_detect_all(root);
+    if (ols_php_current(root, used[nu]) == 0)
+        ++nu;
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    if (GetPrivateProfileSectionW(L"sitephp", sect, 16384, ini) > 0)
+        for (e = sect; *e && nu < PHPD_MAX + 2; e += wcslen(e) + 1)
+        {
+            wchar_t *eq = wcschr(e, L'=');
+            if (eq && GetFullPathNameW(eq + 1, MAX_PATH, full, NULL))
+            {
+                size_t n = wcslen(full);
+                while (n > 3 && full[n - 1] == L'\\')
+                    full[--n] = 0;
+                wcscpy(used[nu++], full);
+            }
+        }
+    swprintf(base, MAX_PATH, L"%s\\php\\", root);
+    bl = wcslen(base);
+    for (i = 0; i < phpd_count; ++i)
+    {
+        use = on && _wcsnicmp(phpd_list[i].dir, base, bl) == 0;
+        for (k = 0; on && !use && k < nu; ++k)
+            use = _wcsicmp(used[k], phpd_list[i].dir) == 0;
+        if (ini_block(phpd_list[i].dir, MAIL_BEGIN, MAIL_END, use ? lines : NULL, 2, &c) != 0)
+            r = -1;
+        if (c)
+            *changed = 1;
+    }
+    return r;
+}
+
 typedef struct
 {
     const wchar_t *ini;
@@ -1760,7 +1859,7 @@ typedef struct
 } noded_t;
 
 static noded_t s_node[MAX_NODE];
-static int s_nnode;
+static int s_nnode, s_ndone;
 
 static void node_add(const wchar_t *exe, const wchar_t *source, int ours)
 {
@@ -1818,6 +1917,7 @@ static void node_detect(const wchar_t *root)
     wchar_t p[MAX_PATH], env[MAX_PATH], w[MAX_PATH];
     DWORD n;
     s_nnode = 0;
+    s_ndone = 1;
     swprintf(p, MAX_PATH, L"%s\\node", root);
     node_scan(p, L"*", L"node.exe", L"OpenLiteSpeed", 1);
     if (phpd_find_laragon(env))
@@ -1843,12 +1943,11 @@ static void node_detect(const wchar_t *root)
     qsort(s_node, s_nnode, sizeof(noded_t), node_cmp);
 }
 
-int ols_node_default(const wchar_t *root, wchar_t *out, size_t n)
+static int node_pick_default(const wchar_t *root, wchar_t *out, size_t n)
 {
     wchar_t ini[MAX_PATH], v[MAX_PATH];
     int i;
     swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
-    node_detect(root);
     if (GetPrivateProfileStringW(L"node", L"bin", L"", v, MAX_PATH, ini) && v[0])
         for (i = 0; i < s_nnode; ++i)
             if (_wcsicmp(s_node[i].exe, v) == 0)
@@ -1871,6 +1970,95 @@ int ols_node_default(const wchar_t *root, wchar_t *out, size_t n)
         return 0;
     }
     out[0] = 0;
+    return -1;
+}
+
+int ols_node_default(const wchar_t *root, wchar_t *out, size_t n)
+{
+    node_detect(root);
+    return node_pick_default(root, out, n);
+}
+
+int ols_node_known(const wchar_t *root, const wchar_t *exe, wchar_t *full)
+{
+    int i;
+    node_detect(root);
+    if (!GetFullPathNameW(exe, MAX_PATH, full, NULL))
+        return 0;
+    for (i = 0; i < s_nnode; ++i)
+        if (_wcsicmp(s_node[i].exe, full) == 0)
+        {
+            wcscpy(full, s_node[i].exe);
+            return 1;
+        }
+    return 0;
+}
+
+static int node_wanted_major(const wchar_t *dir)
+{
+    static const wchar_t *const names[] = { L".nvmrc", L".node-version" };
+    wchar_t f[MAX_PATH];
+    char *t = NULL, *p;
+    size_t n;
+    int i, major = 0;
+    for (i = 0; i < 2 && !major; ++i)
+    {
+        swprintf(f, MAX_PATH, L"%s\\%s", dir, names[i]);
+        if (rt_read(f, &t, &n, 4096) != 0)
+            continue;
+        p = t;
+        if ((unsigned char)p[0] == 0xef && (unsigned char)p[1] == 0xbb && (unsigned char)p[2] == 0xbf)
+            p += 3;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+            ++p;
+        if (*p == 'v' || *p == 'V')
+            ++p;
+        if (isdigit((unsigned char)*p))
+        {
+            char *q = p;
+            while (isdigit((unsigned char)*q))
+                ++q;
+            if (!*q || *q == '.' || *q == ' ' || *q == '\t' || *q == '\r' || *q == '\n')
+                major = atoi(p);
+        }
+        free(t);
+        t = NULL;
+    }
+    return major > 0 && major < 1000 ? major : 0;
+}
+
+int ols_site_node(const wchar_t *root, const wchar_t *ini, const char *site, const wchar_t *dir, wchar_t *out, size_t n,
+                  const char **from)
+{
+    wchar_t wn[64], v[MAX_PATH], full[MAX_PATH];
+    int i, major;
+    out[0] = 0;
+    *from = "";
+    if (!s_ndone)
+        node_detect(root);
+    if (site && MultiByteToWideChar(CP_UTF8, 0, site, -1, wn, 64) > 0
+        && GetPrivateProfileStringW(L"sitenode", wn, L"", v, MAX_PATH, ini) && v[0] && GetFullPathNameW(v, MAX_PATH, full, NULL)
+        && rt_exists(full))
+    {
+        wcsncpy(out, full, n - 1);
+        out[n - 1] = 0;
+        *from = "site";
+        return 0;
+    }
+    if (dir && dir[0] && (major = node_wanted_major(dir)) > 0)
+        for (i = 0; i < s_nnode; ++i)
+            if (s_node[i].major == major)
+            {
+                wcsncpy(out, s_node[i].exe, n - 1);
+                out[n - 1] = 0;
+                *from = "nvmrc";
+                return 0;
+            }
+    if (node_pick_default(root, out, n) == 0)
+    {
+        *from = "default";
+        return 0;
+    }
     return -1;
 }
 

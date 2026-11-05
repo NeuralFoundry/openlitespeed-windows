@@ -414,6 +414,15 @@ static int conf_safe(const char *s)
     return !strpbrk(s, "{}\r\n");
 }
 
+static void mail_sync(const wchar_t *root)
+{
+    wchar_t ini[MAX_PATH];
+    int changed;
+    swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
+    if (GetPrivateProfileIntW(L"mail", L"on", 0, ini))
+        ols_php_mail_sync(root, 1, &changed);
+}
+
 static int read_names(const wchar_t *ini, const wchar_t *sect, char (*names)[64], wchar_t (*vals)[MAX_PATH], int max)
 {
     wchar_t buf[16384], *e;
@@ -773,16 +782,19 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
     {
         wchar_t node[MAX_PATH], wn[64];
         char nodef[MAX_PATH * 3], binl[MAX_PATH * 3 + 64], body[4096 + MAX_PATH * 6];
-        nodef[0] = 0;
-        if (ols_node_default(root, node, MAX_PATH) == 0 && WideCharToMultiByte(CP_UTF8, 0, node, -1, nodef, sizeof(nodef), NULL, NULL) > 0)
-            for (q = nodef; *q; ++q)
-                if (*q == '\\')
-                    *q = '/';
+        const char *from;
         for (i = 0; i < napp; ++i)
         {
             if (!appon[i])
                 continue;
             MultiByteToWideChar(CP_UTF8, 0, appn[i], -1, wn, 64);
+            swprintf(p, MAX_PATH, L"%s\\%s", wwww, wn);
+            nodef[0] = 0;
+            if (appk[i] == 1 && ols_site_node(root, ini, appn[i], p, node, MAX_PATH, &from) == 0
+                && WideCharToMultiByte(CP_UTF8, 0, node, -1, nodef, sizeof(nodef), NULL, NULL) > 0)
+                for (q = nodef; *q; ++q)
+                    if (*q == '\\')
+                        *q = '/';
             swprintf(p, MAX_PATH, L"%s\\%s\\public", wwww, wn);
             CreateDirectoryW(p, NULL);
             binl[0] = 0;
@@ -963,6 +975,7 @@ int ols_dev_sites(const char *www, const char *tld, int with_root)
         return 1;
     }
     free(out);
+    mail_sync(root);
     printf("%d site(s)\n", count);
     return 0;
 }
@@ -1216,8 +1229,8 @@ int ols_site_main(int argc, char **argv)
     if (argc < 2 || !valid_label(argv[1]) || strcmp(argv[1], "localhost") == 0 || strcmp(argv[1], "phpmyadmin") == 0
         || MultiByteToWideChar(CP_UTF8, 0, argv[1], -1, wname, 64) <= 0)
     {
-        fprintf(stderr, "usage: openlitespeed --site php <name> <php folder|default> | app <name> node|python|off |\n"
-                        "       forget <name>\n");
+        fprintf(stderr, "usage: openlitespeed --site php <name> <php folder|default> | node <name> <node.exe|default> |\n"
+                        "       app <name> node|python|off | forget <name>\n");
         return 2;
     }
     swprintf(ini, MAX_PATH, L"%s\\conf\\olstray.ini", root);
@@ -1228,6 +1241,8 @@ int ols_site_main(int argc, char **argv)
     {
         WritePrivateProfileStringW(L"apps", wname, NULL, ini);
         WritePrivateProfileStringW(L"sitephp", wname, NULL, ini);
+        WritePrivateProfileStringW(L"sitenode", wname, NULL, ini);
+        ols_jobs_forget_site(root, argv[1]);
     }
     else if (!dir_exists(dir))
     {
@@ -1248,6 +1263,18 @@ int ols_site_main(int argc, char **argv)
         else if (!WritePrivateProfileStringW(L"sitephp", wname, full, ini))
             return 1;
     }
+    else if (strcmp(act, "node") == 0 && argc >= 3)
+    {
+        if (strcmp(argv[2], "default") == 0)
+            WritePrivateProfileStringW(L"sitenode", wname, NULL, ini);
+        else if (MultiByteToWideChar(CP_UTF8, 0, argv[2], -1, w, MAX_PATH) <= 0 || !ols_node_known(root, w, full))
+        {
+            fprintf(stderr, "that node.exe is not one OpenLiteSpeed found on this computer\n");
+            return 2;
+        }
+        else if (!WritePrivateProfileStringW(L"sitenode", wname, full, ini))
+            return 1;
+    }
     else if (strcmp(act, "app") == 0 && argc >= 3
              && (strcmp(argv[2], "node") == 0 || strcmp(argv[2], "python") == 0 || strcmp(argv[2], "off") == 0))
     {
@@ -1263,8 +1290,8 @@ int ols_site_main(int argc, char **argv)
     }
     else
     {
-        fprintf(stderr, "usage: openlitespeed --site php <name> <php folder|default> | app <name> node|python|off |\n"
-                        "       forget <name>\n");
+        fprintf(stderr, "usage: openlitespeed --site php <name> <php folder|default> | node <name> <node.exe|default> |\n"
+                        "       app <name> node|python|off | forget <name>\n");
         return 2;
     }
     rc = ols_dev_resync(root, ini);
@@ -1436,6 +1463,8 @@ int ols_new_site(const char *name, const char *tld, const char *flavor)
                 fprintf(stderr, "remove the folder %ls before you try again\n", dir);
             return 1;
         }
+        if (ols_mail_laravel_env(root, dir) != 0)
+            fprintf(stderr, "warning: the mail settings in .env could not be changed\n");
     }
     else if (flavor && (strcmp(flavor, "node") == 0 || strcmp(flavor, "python") == 0))
     {
@@ -1949,6 +1978,7 @@ int ols_set_php(const char *dir)
         return 1;
     }
     free(out);
+    mail_sync(root);
     printf("PHP %d.%d %s via %s: %s\n", major, minor, ts ? "TS" : "NTS", lsapi ? "LSAPI (lsphp)" : "FastCGI (php-cgi)", dir);
     return 0;
 }

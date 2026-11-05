@@ -165,16 +165,16 @@ void ols_dev_site_each(const wchar_t *root, ols_site_fn fn, void *ctx)
 
 typedef struct
 {
-    const wchar_t *ini, *www;
+    const wchar_t *root, *ini, *www;
     int first;
 } siteout_t;
 
 static void site_json(void *ctx, const char *tmpl, const char *member, const char *dom)
 {
     siteout_t *o = (siteout_t *)ctx;
-    wchar_t wn[64], f[MAX_PATH], dir[MAX_PATH] = L"", sp[MAX_PATH] = L"";
+    wchar_t wn[64], f[MAX_PATH], dir[MAX_PATH] = L"", sp[MAX_PATH] = L"", node[MAX_PATH] = L"";
     char url[160];
-    const char *type = "folder";
+    const char *type = "folder", *from = "";
     int port = 0, tun, pkg = 0;
     size_t n;
     MultiByteToWideChar(CP_UTF8, 0, member, -1, wn, 64);
@@ -215,6 +215,8 @@ static void site_json(void *ctx, const char *tmpl, const char *member, const cha
         n = wcslen(dir);
         while (n > 3 && dir[n - 1] == L'\\')
             dir[--n] = 0;
+        if (dir[0])
+            ols_site_node(o->root, o->ini, member, dir, node, MAX_PATH, &from);
     }
     tun = ols_tunnel_query(member, url, sizeof(url));
     printf("%s{\"name\":", o->first ? "" : ",");
@@ -227,13 +229,16 @@ static void site_json(void *ctx, const char *tmpl, const char *member, const cha
     jwstr(sp);
     printf(",\"pkg\":%s,\"dir\":", pkg ? "true" : "false");
     jwstr(dir);
-    printf("}");
+    printf(",\"node\":");
+    jwstr(node);
+    printf(",\"nodeFrom\":\"%s\"}", from);
     o->first = 0;
 }
 
 static void sites(const wchar_t *root, const wchar_t *ini, const wchar_t *www)
 {
     siteout_t o;
+    o.root = root;
     o.ini = ini;
     o.www = www;
     o.first = 1;
@@ -290,6 +295,8 @@ int ols_status_main(int argc, char **argv)
     printf(",\"tunnel\":{\"installed\":%s,\"token\":%s,\"named\":%s}", ti ? "true" : "false", tt ? "true" : "false",
            tn ? "true" : "false");
     ols_status_runtime(root, ini);
+    ols_mail_summary(root, ini);
+    ols_jobs_summary(root);
     {
         char py[MAX_PATH * 3];
         printf(",\"python\":%s", ols_find_runtime("python.exe", py, sizeof(py)) == 0 ? "true" : "false");
