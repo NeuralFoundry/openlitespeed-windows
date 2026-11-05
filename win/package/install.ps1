@@ -241,6 +241,40 @@ function Ini-Value([string]$file, [string]$section, [string]$key) {
     return $null
 }
 
+function Set-IniValues([string]$file, [object[]]$values) {
+    $lines = New-Object Collections.Generic.List[string]
+    if (Test-Path -LiteralPath $file) {
+        $bytes = [IO.File]::ReadAllBytes($file)
+        $enc = if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) { [Text.Encoding]::Unicode } else { [Text.Encoding]::Default }
+        foreach ($l in [IO.File]::ReadAllLines($file, $enc)) { $lines.Add($l) }
+    }
+    foreach ($v in $values) {
+        $start = -1
+        $end = $lines.Count
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*\[(.+)\]\s*$') {
+                if ($start -ge 0) { $end = $i; break }
+                if ($Matches[1].Trim() -eq $v[0]) { $start = $i }
+            }
+        }
+        $line = "$($v[1])=$($v[2])"
+        if ($start -lt 0) {
+            $lines.Add("[$($v[0])]")
+            $lines.Add($line)
+            continue
+        }
+        $at = -1
+        for ($i = $start + 1; $i -lt $end; $i++) {
+            if ($lines[$i] -match "^\s*$([regex]::Escape($v[1]))\s*=") { $at = $i; break }
+        }
+        if ($at -ge 0) { $lines[$at] = $line; continue }
+        $at = $end
+        while ($at -gt $start + 1 -and -not $lines[$at - 1].Trim()) { $at-- }
+        $lines.Insert($at, $line)
+    }
+    [IO.File]::WriteAllLines($file, $lines, [Text.Encoding]::Unicode)
+}
+
 function Port-Free([int]$port) {
     try {
         $l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, $port)
@@ -281,6 +315,23 @@ if ($Mode -eq 'laragon' -and -not $LaragonDir) { throw 'Laragon was not found' }
 if ($Mode -eq 'xampp' -and -not $XamppDir) { throw 'XAMPP was not found' }
 if ($LaragonDir) { Say "Laragon:  $LaragonDir" }
 if ($XamppDir) { Say "XAMPP:    $XamppDir" }
+
+$trayIni = Join-Path $Root 'conf\olstray.ini'
+if (-not $Www) {
+    $oldWww = Ini-Value $trayIni 'sites' 'www'
+    if ($oldWww -and (Test-Path -LiteralPath $oldWww -PathType Container)) {
+        $oldRoot = Split-Path $oldWww
+        if (-not $oldRoot -or -not (Test-Path -LiteralPath (Join-Path $oldRoot 'bin\openlitespeed.exe'))) { $Www = $oldWww }
+    }
+}
+if (-not $PSBoundParameters.ContainsKey('Tld')) {
+    $oldTld = Ini-Value $trayIni 'sites' 'tld'
+    if ($oldTld) { $Tld = $oldTld }
+}
+if (-not $PSBoundParameters.ContainsKey('Edition')) {
+    $oldEdition = Ini-Value $trayIni 'tray' 'edition'
+    if ($oldEdition -eq 'server' -or $oldEdition -eq 'full') { $Edition = $oldEdition }
+}
 
 if ($Mode -eq 'laragon') {
     $laragonIni = Join-Path $LaragonDir 'usr\laragon.ini'
@@ -358,11 +409,13 @@ foreach ($d in 'logs', 'tmp', 'conf\cert', 'admin\tmp', 'admin\logs', 'Example\l
 New-Item -ItemType Directory -Force $Www | Out-Null
 
 $conf = Join-Path $Root 'conf\httpd_config.conf'
-(Get-Content $conf -Raw).Replace('%HTTP_PORT%', "$HttpPort") | Set-Content $conf -Encoding ascii -NoNewline
+$text = Get-Content $conf -Raw
+if ($text.Contains('%HTTP_PORT%')) { $text.Replace('%HTTP_PORT%', "$HttpPort") | Set-Content $conf -Encoding ascii -NoNewline }
 Set-Php
 
 $adminConf = Join-Path $Root 'admin\conf\admin_config.conf'
-(Get-Content $adminConf -Raw).Replace('%ADMIN_PORT%', "$AdminPort") | Set-Content $adminConf -Encoding ascii -NoNewline
+$text = Get-Content $adminConf -Raw
+if ($text.Contains('%ADMIN_PORT%')) { $text.Replace('%ADMIN_PORT%', "$AdminPort") | Set-Content $adminConf -Encoding ascii -NoNewline }
 
 $key = Join-Path $Root 'admin\conf\webadmin.key'
 if (-not (Test-Path $key)) {
@@ -371,23 +424,26 @@ if (-not (Test-Path $key)) {
 }
 
 $generated = $false
-if (-not $AdminPassword) {
-    $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
-    $bytes = New-Object byte[] 16
-    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-    $AdminPassword = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
-    $generated = $true
+$htpasswd = Join-Path $Root 'admin\conf\htpasswd'
+if ($AdminPassword -or -not (Test-Path -LiteralPath $htpasswd) -or (Get-Item -LiteralPath $htpasswd).Length -eq 0) {
+    if (-not $AdminPassword) {
+        $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+        $bytes = New-Object byte[] 16
+        [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+        $AdminPassword = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
+        $generated = $true
+    }
+    $prevEncoding = $OutputEncoding
+    $OutputEncoding = New-Object System.Text.UTF8Encoding $false
+    $AdminPassword | & $Exe --admin-password $htpasswd '-' admin
+    $adminRc = $LASTEXITCODE
+    $OutputEncoding = $prevEncoding
+    if ($adminRc -ne 0) { throw 'setting the admin password failed' }
 }
-$prevEncoding = $OutputEncoding
-$OutputEncoding = New-Object System.Text.UTF8Encoding $false
-$AdminPassword | & $Exe --admin-password (Join-Path $Root 'admin\conf\htpasswd') '-' admin
-$adminRc = $LASTEXITCODE
-$OutputEncoding = $prevEncoding
-if ($adminRc -ne 0) { throw 'setting the admin password failed' }
 
 $withRoot = $Mode -ne 'standalone'
-$trayIni = Join-Path $Root 'conf\olstray.ini'
-Set-Content $trayIni "[sites]`r`nwww=$Www`r`ntld=$Tld`r`nroot=$([int]$withRoot)`r`nstack=$Mode`r`n[tray]`r`nedition=$Edition`r`n" -Encoding unicode
+Set-IniValues $trayIni @(@('sites', 'www', $Www), @('sites', 'tld', $Tld), @('sites', 'root', [string][int]$withRoot),
+    @('sites', 'stack', $Mode), @('tray', 'edition', $Edition))
 if ($withRoot) { & $Exe --dev-sites $Www $Tld --root | Out-Null } else { & $Exe --dev-sites $Www $Tld | Out-Null }
 $hostsOk = $false
 if ($isAdmin) {
@@ -396,11 +452,13 @@ if ($isAdmin) {
 }
 if ($Edition -eq 'full') {
     Say 'Downloading MariaDB and phpMyAdmin...'
-    if ($isAdmin) { & $Exe --db fetch } else { & $Exe --db install }
+    if ($isAdmin -or (Test-Path (Join-Path $Root 'data\client.cnf'))) { & $Exe --db fetch } else { & $Exe --db install }
     if ($LASTEXITCODE -ne 0) { Say 'MariaDB was not installed. Install it later from the dashboard.' }
-    Say 'Downloading Cloudflare Tunnel...'
-    & $Exe --tunnel install | Out-Null
-    if ($LASTEXITCODE -ne 0) { Say 'Cloudflare Tunnel was not downloaded. It is downloaded again when you share a site.' }
+    if (-not (Test-Path (Join-Path $Root 'bin\cloudflared.exe'))) {
+        Say 'Downloading Cloudflare Tunnel...'
+        & $Exe --tunnel install | Out-Null
+        if ($LASTEXITCODE -ne 0) { Say 'Cloudflare Tunnel was not downloaded. It is downloaded again when you share a site.' }
+    }
     if ($isAdmin) {
         & $Exe --dev-hosts | Out-Null
         $hostsOk = ($LASTEXITCODE -eq 0)
