@@ -328,6 +328,18 @@ static int sm_data(smtp_t *c, char **msg, size_t *len, int *big)
     return 0;
 }
 
+static int sm_http(const char *cmd)
+{
+    static const char *const verbs[] = { "GET", "POST", "PUT", "HEAD", "OPTIONS", "DELETE", "PATCH", "CONNECT", "TRACE" };
+    size_t i;
+    if (strchr(cmd, ':'))
+        return 1;
+    for (i = 0; i < sizeof(verbs) / sizeof(verbs[0]); ++i)
+        if (_stricmp(cmd, verbs[i]) == 0)
+            return 1;
+    return 0;
+}
+
 static int sm_auth_line(smtp_t *c, const char *prompt)
 {
     size_t l;
@@ -374,6 +386,11 @@ static DWORD WINAPI sm_session(LPVOID arg)
             *arg++ = 0;
         while (*arg == ' ')
             ++arg;
+        if (sm_http(cmd))
+        {
+            sm_send(c, "554 5.7.0 This is a mail server, closing connection\r\n");
+            break;
+        }
         if (_stricmp(cmd, "EHLO") == 0)
         {
             mail = 0;

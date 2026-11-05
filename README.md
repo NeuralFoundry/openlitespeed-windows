@@ -239,7 +239,7 @@ Xdebug starts with every request and connects to a debugger on `127.0.0.1:9003`.
 
 ## Mail catcher
 
-The switch on the Mail page, or `openlitespeed --mail on`, catches every mail that the local sites send, so nothing leaves the computer. PHP `mail()` goes to OpenLiteSpeed through `sendmail_path` in the `php.ini` of the PHP versions that OpenLiteSpeed runs, and apps that send through SMTP use host `127.0.0.1`, port 1025, no encryption and any user name and password. New Laravel sites get these settings in `.env`.
+The switch on the Mail page, or `openlitespeed --mail on`, catches every mail that the local sites send, so nothing leaves the computer. PHP `mail()` goes to OpenLiteSpeed through `sendmail_path` in the `php.ini` of the PHP versions that OpenLiteSpeed runs, and apps that send through SMTP use host `127.0.0.1`, port 1025, no encryption and any user name and password. New Laravel sites get these settings in `.env`. A connection that starts like a web request is closed, so a web page in the browser cannot send mail to the catcher.
 
 The mail is kept in `data\mail`, readable by your account only, up to the newest 1000 messages. The Mail page shows each message with its text and HTML parts and lets you save the attachments. The HTML part runs without scripts and loads nothing from the internet.
 
