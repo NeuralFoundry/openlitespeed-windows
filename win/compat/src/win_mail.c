@@ -2,6 +2,7 @@
 
 #define MAIL_LIMIT 26214400
 #define MAIL_KEEP 1000
+#define MAIL_STORE (512ULL << 20)
 #define MAIL_CONNS 20
 #define MAIL_RCPTS 100
 #define MAIL_IDLE 60000
@@ -150,6 +151,7 @@ static int ml_store(const wchar_t *root, const char *data, size_t len, const cha
     unsigned char rnd[4];
     char id[32], *buf;
     size_t pre = 0, cap, i;
+    unsigned long long total;
     char **names;
     int n, r;
     if (ml_prepare(root, dir) != 0)
@@ -187,10 +189,14 @@ static int ml_store(const wchar_t *root, const char *data, size_t len, const cha
     if (idout)
         strcpy(idout, id);
     n = ml_names(dir, &names);
-    for (i = MAIL_KEEP; i < (size_t)n; ++i)
+    for (i = 0, total = 0; i < (size_t)n; ++i)
     {
+        WIN32_FILE_ATTRIBUTE_DATA fa;
         ml_path(dir, names[i], L".eml", eml);
-        DeleteFileW(eml);
+        if (GetFileAttributesExW(eml, GetFileExInfoStandard, &fa))
+            total += ((unsigned long long)fa.nFileSizeHigh << 32) | fa.nFileSizeLow;
+        if (i > 0 && (i >= MAIL_KEEP || total > MAIL_STORE))
+            DeleteFileW(eml);
     }
     ml_names_free(names, n);
     return 0;
