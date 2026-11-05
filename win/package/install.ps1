@@ -176,7 +176,7 @@ function Install-Php([string]$branch) {
         $tmp = New-PrivateTemp
         $zip = Join-Path $tmp 'php.zip'
         Say "Downloading PHP $($info.version)..."
-        & (Join-Path $env:SystemRoot 'System32\curl.exe') -sfL --proto =https -o $zip "$base/$($entry.path)"
+        & (Join-Path $env:SystemRoot 'System32\curl.exe') -q -sfL --proto =https -o $zip "$base/$($entry.path)"
         if ($LASTEXITCODE -ne 0) { Invoke-WebRequest "$base/$($entry.path)" -OutFile $zip -UseBasicParsing }
         $fs = [IO.File]::Open($zip, 'Open', 'Read', 'Read')
         try {

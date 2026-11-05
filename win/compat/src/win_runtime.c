@@ -137,7 +137,7 @@ int ols_download(const wchar_t *url, const wchar_t *file, long long max, const c
             return 1;
     swprintf(exe, MAX_PATH, L"%s\\curl.exe", sys);
     swprintf(cmd, sizeof(cmd) / sizeof(cmd[0]),
-             L"\"%s\" -fsS --proto =https --proto-redir =https --tlsv1.2 --connect-timeout 20 --max-time 1800 "
+             L"\"%s\" -q -fsS --proto =https --proto-redir =https --tlsv1.2 --connect-timeout 20 --max-time 1800 "
              L"--max-filesize %lld -L -o \"%s\" %s",
              exe, max, file, url);
     if (what)

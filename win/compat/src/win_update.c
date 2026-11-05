@@ -73,7 +73,7 @@ static int download(const char *url, const wchar_t *out)
         return -1;
     DeleteFileW(out);
     swprintf(cmd, MAX_PATH * 6,
-             L"\"%s\\curl.exe\" -fsS --proto =https --tlsv1.2 --ssl-revoke-best-effort --connect-timeout 20 "
+             L"\"%s\\curl.exe\" -q -fsS --proto =https --tlsv1.2 --ssl-revoke-best-effort --connect-timeout 20 "
              L"--max-time 900 -L -o \"%s\" \"%s\"",
              sys, out, wurl);
     return run_wait(cmd, 960000) == 0 ? 0 : -1;

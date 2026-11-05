@@ -1003,7 +1003,7 @@ static int install_wordpress(const wchar_t *dir)
         return 1;
     swprintf(zip, MAX_PATH, L"%s\\.wp-download.zip", dir);
     swprintf(cmd, MAX_PATH * 4,
-             L"\"%s\\curl.exe\" -fsS --proto =https --tlsv1.2 --connect-timeout 20 --max-time 900 -L -o \"%s\" "
+             L"\"%s\\curl.exe\" -q -fsS --proto =https --tlsv1.2 --connect-timeout 20 --max-time 900 -L -o \"%s\" "
              L"https://wordpress.org/latest.zip",
              sys, zip);
     printf("downloading WordPress...\n");

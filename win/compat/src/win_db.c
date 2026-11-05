@@ -175,7 +175,7 @@ static int fetch(const wchar_t *url, const wchar_t *zip, const char *sha, long l
         return 1;
     swprintf(exe, MAX_PATH, L"%s\\curl.exe", sys);
     swprintf(cmd, MAX_PATH * 4,
-             L"\"%s\" -fsS --proto =https --tlsv1.2 --connect-timeout 20 --max-time 1800 -L -o \"%s\" %s", exe, zip,
+             L"\"%s\" -q -fsS --proto =https --tlsv1.2 --connect-timeout 20 --max-time 1800 -L -o \"%s\" %s", exe, zip,
              url);
     printf("downloading %s...\n", what);
     fflush(stdout);

@@ -141,7 +141,7 @@ static int install(const tun_t *t)
     swprintf(tmp, MAX_PATH, L"%s\\cloudflared.download", parent);
     DeleteFileW(tmp);
     swprintf(cmd, MAX_PATH * 4,
-             L"\"%s\" -fsS --proto =https --tlsv1.2 --connect-timeout 20 --max-time 900 -L -o \"%s\" %s", curl, tmp,
+             L"\"%s\" -q -fsS --proto =https --tlsv1.2 --connect-timeout 20 --max-time 900 -L -o \"%s\" %s", curl, tmp,
              CFD_URL);
     printf("downloading cloudflared %s...\n", CFD_VERSION);
     fflush(stdout);
