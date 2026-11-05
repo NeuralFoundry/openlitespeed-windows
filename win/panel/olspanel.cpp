@@ -683,7 +683,7 @@ static bool pick_file(bool save, const std::wstring &name, std::wstring &out)
 static bool save_as(const std::wstring &name, std::wstring &out)
 {
     ComPtr<IFileDialog> d;
-    ComPtr<IShellItem> it;
+    ComPtr<IShellItem> it, dl;
     COMDLG_FILTERSPEC f[] = { { L"All files", L"*.*" } };
     DWORD opt = 0;
     PWSTR p = nullptr;
@@ -691,6 +691,8 @@ static bool save_as(const std::wstring &name, std::wstring &out)
         return false;
     d->SetFileTypes(1, f);
     d->SetFileName(name.c_str());
+    if (SUCCEEDED(SHGetKnownFolderItem(FOLDERID_Downloads, KF_FLAG_DEFAULT, NULL, IID_PPV_ARGS(&dl))))
+        d->SetDefaultFolder(dl.Get());
     d->GetOptions(&opt);
     d->SetOptions(opt | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR | FOS_OVERWRITEPROMPT);
     if (FAILED(d->Show(g_wnd)) || FAILED(d->GetResult(&it)) || FAILED(it->GetDisplayName(SIGDN_FILESYSPATH, &p)) || !p)
