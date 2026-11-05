@@ -5,6 +5,7 @@
     "license": "GPL-3.0-only",
     "notes": [
         "Start the server with: openlitespeed -s start",
+        "Set the WebAdmin password with: openlitespeed --admin-password \"$dir\\admin\\conf\\htpasswd\" <password>",
         "PHP needs the Microsoft Visual C++ runtime. If it is missing, run once as administrator: & \"$dir\\install.ps1\" -Mode standalone -PhpOnly"
     ],
     "architecture": {
