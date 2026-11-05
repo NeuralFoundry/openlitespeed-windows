@@ -1661,7 +1661,7 @@ int ols_dev_hosts(int clear)
     const char *p, *end;
     size_t len, blen = 0, bcap = 0;
     UINT n;
-    int changed;
+    int changed, names = 0;
     if (root_dir(root, MAX_PATH) < 0
         || WideCharToMultiByte(CP_UTF8, 0, root, -1, rootfwd, sizeof(rootfwd), NULL, NULL) <= 0)
         return 2;
@@ -1702,6 +1702,7 @@ int ols_dev_hosts(int clear)
             continue;
         snprintf(alias, sizeof(alias), "127.0.0.1 %s www.%s\r\n::1 %s www.%s\r\n", dom, dom, dom, dom);
         buf_str(&block, &blen, &bcap, alias);
+        ++names;
     }
     free(text);
     buf_str(&block, &blen, &bcap, te);
@@ -1719,15 +1720,18 @@ int ols_dev_hosts(int clear)
         return 1;
     }
     htext = remove_legacy_hosts(htext, &changed);
-    if (clear)
+    if (clear || !names)
     {
         block[0] = 0;
-        if (!strstr(htext, tb))
+        p = strstr(htext, tb);
+        if (!p || !strstr(p, te))
         {
             free(block);
             if (!changed)
             {
                 free(htext);
+                if (!clear)
+                    printf("hosts file is up to date\n");
                 return 0;
             }
             out = htext;
@@ -1735,6 +1739,12 @@ int ols_dev_hosts(int clear)
         }
     }
     out = replace_block(htext, tb, te, block);
+    if (out && !block[0] && (p = strstr(htext, tb)) != NULL)
+    {
+        size_t at = (size_t)(p - htext);
+        if (at >= 3 && htext[at - 1] == '\n' && htext[at - 2] == '\r' && htext[at - 3] == '\n')
+            memmove(out + at - 2, out + at, strlen(out + at) + 1);
+    }
     if (out && !changed && strcmp(out, htext) == 0)
     {
         free(out);
