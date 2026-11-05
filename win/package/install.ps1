@@ -282,8 +282,8 @@ if ($Mode -eq 'xampp' -and -not $XamppDir) { throw 'XAMPP was not found' }
 if ($LaragonDir) { Say "Laragon:  $LaragonDir" }
 if ($XamppDir) { Say "XAMPP:    $XamppDir" }
 
-$laragonIni = Join-Path $LaragonDir 'usr\laragon.ini'
 if ($Mode -eq 'laragon') {
+    $laragonIni = Join-Path $LaragonDir 'usr\laragon.ini'
     if (-not $PhpPath -and -not $DownloadPhp) {
         $v = Ini-Value $laragonIni 'php' 'Version'
         if ($v -and (Test-Path "$LaragonDir\bin\php\$v\php-cgi.exe")) { $PhpPath = "$LaragonDir\bin\php\$v" }
