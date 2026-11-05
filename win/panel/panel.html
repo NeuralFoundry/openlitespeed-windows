@@ -1139,7 +1139,7 @@ td code { font: 12px var(--code); overflow-wrap: anywhere; }
     }
     const name = param(part.h["content-disposition"], "filename") || param(ct, "name");
     const data = body(part), cid = (part.h["content-id"] || "").replace(/^<|>$/g, "");
-    if (cid && type.startsWith("image/")) out.cid[cid] = "data:" + type + ";base64," + btoa(data);
+    if (cid && /^image\/[a-z0-9.+-]+$/.test(type) && out.cid.size < 256 && !out.cid.has(cid)) out.cid.set(cid, "data:" + type + ";base64," + btoa(data));
     if (disp === "attachment" || type === "message/rfc822" || (disp !== "inline" && name && !type.startsWith("text/"))) out.att.push({ name: name || "attachment", type, data });
     else if (type === "text/html" && !out.html) out.html = textOf(data, param(ct, "charset"));
     else if (type === "text/plain" && !out.text) out.text = textOf(data, param(ct, "charset"));
@@ -1149,7 +1149,7 @@ td code { font: 12px var(--code); overflow-wrap: anywhere; }
   async function openMail(x) {
     let raw;
     try { raw = binStr(await call("mail.read", { mail: x.id })); } catch (e) { say(e.message, true); return; }
-    const top = splitHead(raw), out = { html: "", text: "", att: [], cid: {} };
+    const top = splitHead(raw), out = { html: "", text: "", att: [], cid: new Map() };
     walk(top, out, 0);
     mailView = x;
     $("mv-subject").textContent = words(top.h.subject) || "(no subject)";
@@ -1164,7 +1164,13 @@ td code { font: 12px var(--code); overflow-wrap: anywhere; }
       f.setAttribute("sandbox", "");
       f.setAttribute("referrerpolicy", "no-referrer");
       f.title = "HTML part";
-      const html = out.html.replace(/<(link|i?frame|frameset|object|embed)(?=[\s\/>])/gi, "<x-$1").replace(/cid:([^"'\s)>]+)/gi, (m, id) => out.cid[id] || m);
+      let room = 50 * 1048576;
+      const html = out.html.replace(/<(link|i?frame|frameset|object|embed)(?=[\s\/>])/gi, "<x-$1").replace(/cid:([^"'\s)>]+)/gi, (m, id) => {
+        const u = out.cid.get(id);
+        if (!u || u.length > room) return m;
+        room -= u.length;
+        return u;
+      });
       f.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; font-src data:">' + html;
       bodyBox.replaceChildren(f);
     };
